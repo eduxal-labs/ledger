@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+package authentication;
+
+import "types/user.proto";
+import "types/verification.proto";
+
+message Login {
+  /// This is the user's phone number.
+  string phone = 1;
+}
+
+message Verify {
+  /// This is the verification id.
+  string id = 1;
+  /// This is the actual code the user received.
+  string code = 2;
+}
+
+message Registered {
+  /// This is the user's setup token for first user registration.
+  string token = 1;
+}
+
+message Authenticated {
+  /// This is the user's access token.
+  string access_token = 1;
+  /// This is the user's refresh token.
+  string refresh_token = 2;
+  /// This is the user's information.
+  user.User user = 3;
+  /// This is the user's signed profile url but only for PUT it expires after 1 hour.
+  string profile = 4;
+}
+
+message Verified {
+  oneof verified {
+    /// This response will be provided if the current user tied to login for the first time.
+    Registered registered = 1;
+    /// This response will be provided if the user is not new or was earlier invited.
+    Authenticated authenticated = 2;
+  }
+}
+
+message Setup {
+  string token = 1;
+  string name = 2;
+}
+
+message Refresh {
+  string refresh_token = 1;
+}
+
+message ChangePhone {
+    string token = 1;
+    string phone = 2;
+}
+
+message ConfirmChangePhone {
+    string token = 1;
+    string id = 2;
+    string code = 3;
+}
+
+service Authentication {
+  rpc login(Login) returns (verification.Verification);
+  rpc verify(Verify) returns (Verified);
+  rpc setup(Setup) returns (Authenticated);
+  rpc refresh(Refresh) returns (Authenticated);
+  rpc changePhone(ChangePhone) returns (verification.Verification);
+  rpc confirmChangePhone(ConfirmChangePhone) returns (Authenticated);
+}

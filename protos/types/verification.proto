@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package verification;
+
+message Verification {
+    string id = 1;
+    optional string user = 2;
+    string phone = 3;
+    Purpose purpose = 4;
+}
+
+
+enum Purpose {
+    Verify = 0;
+    ChangePhone = 1;
+    Delete = 2;
+}

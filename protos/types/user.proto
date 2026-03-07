@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+package user;
+
+message User {
+  /// This is the user's id.
+  string id = 1;
+  /// This is the user's phone number.
+  string phone = 2;
+  /// The name of the user.
+  string name = 3;
+  /// The email address of the user.
+  optional string email = 4;
+  /// What kind of a user this is: normal, system, super.
+  Level level = 5;
+  /// The current status of the user.
+  Status status = 6;
+  /// A presigned GET only url to view the user's profile page if there is one.
+  string profile = 7;
+  /// The time on which this record was created.
+  int64 created = 8;
+  /// The time on which this record was last updated.
+  int64 updated = 9;
+}
+
+message Update {
+  /// This is the user's id.
+  optional string id = 1;
+  /// This is the user's phone number.
+  optional string phone = 2;
+  /// The name of the user.
+  optional string name = 3;
+  /// The email address of the user.
+  optional string email = 4;
+  /// What kind of a user this is: normal, system, super.
+  optional Level level = 5;
+  /// The current status of the user.
+  optional Status status = 6;
+  /// A presigned GET only url to view the user's profile page if there is one.
+  optional string profile = 7;
+  /// The time on which this record was created.
+  optional int64 created = 8;
+  /// The time on which this record was last updated.
+  optional int64 updated = 9;
+}
+
+enum Level {
+  /// These are normal users of the software.
+  Normal = 0;
+  /// These are staff/managers/workers/owners of the system.
+  System = 1;
+  /// These are the Owners/Workers with full privilages.
+  Super = 2;
+}
+
+enum Status {
+  /// This indicates that this is an invite user and not yet signed up to the platform.
+  Invited = 0;
+  /// This indicates that the user is active.
+  Active = 1;
+  /// This indicates that the user is suspended.
+  Suspended = 2;
+  /// This indicates that the user is deleted.
+  Deleted = 3;
+}
