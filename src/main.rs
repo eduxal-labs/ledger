@@ -1,5 +1,11 @@
+mod config;
 mod db;
+mod proto;
+mod server;
+mod services;
+mod types;
 
-fn main() {
-    println!("Hello, world!");
+#[tokio::main]
+async fn main() -> server::Result<()> {
+    server::start().await
 }
