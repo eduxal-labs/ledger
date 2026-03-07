@@ -409,3 +409,462 @@ Follow conventional commits:
 - `refactor:` — Code restructuring without behavior change
 
 Write detailed commit bodies explaining **what** was added and **why**, not just file lists. Group related changes into logical commits.
+---
+
+## Two-Agent Workflow
+
+This project uses two distinct agent roles that share this `AGENT.md` as their common rule book.
+
+### Orchestrator Agent
+
+**Trigger:** The user describes a feature, change, bug fix, or any non-trivial request.
+
+**Responsibilities:**
+1. Read `AGENT.md` in full.
+2. Read relevant source files in `src/` to understand current project state.
+3. Read `migrations/` if the work touches the database layer.
+4. Ask the user as many clarifying questions as needed — do not guess.
+5. Produce a detailed, ordered task list and **insert it into `TASKS.md`** at the appropriate position (based on priority/dependency).
+6. Remove completed tasks from `TASKS.md` when the user confirms they are done or when the executor marks them.
+7. Each task MUST be **self-sufficient** for the executor — see task format below.
+
+**The orchestrator never writes application code.** It only writes tasks.
+
+### Executor Agent
+
+**Trigger:** The user says simple words like "continue", "go ahead", "next", or similar.
+
+**Responsibilities:**
+1. Read `AGENT.md` in full.
+2. Read `TASKS.md` — pick up the first unchecked `[ ]` task.
+3. The task itself should contain everything needed. If clarification is needed, read the source file(s) referenced in the task. Avoid exploring the broader codebase.
+4. Execute the task exactly as specified.
+5. Mark the task as `[x]` in `TASKS.md`.
+6. If the task list is now empty (all done), delete all content from `TASKS.md` except the header.
+
+**The executor never invents new tasks or architectural decisions.** It executes what the orchestrator wrote.
+
+### Self-Sufficient Task Format
+
+Every task in `TASKS.md` must follow this structure so the executor can work without exploration:
+
+```
+### Task XX: <Title>
+**Files to create/modify:** `src/path/to/file.rs`
+**Reference files to read:** `../server/src/path/to/reference.rs` (if porting)
+**Depends on:** Task YY (if any)
+
+**Specification:**
+Exact description with method signatures, struct definitions, imports.
+If porting from ../server/, specify what to copy vs what to change.
+
+**Update after completion:**
+- [ ] Mark this task `[x]`
+```
+
+---
+
+## Reference: `../server/` as Pattern Source
+
+The old server at `../server/` (pre-local-first implementation) contains patterns and types that must be ported into this codebase. It is **NOT the active backend** — it is reference code only.
+
+| File in `../server/` | What to port | Notes |
+|---|---|---|
+| `src/types/role/permissions.rs` | `Permissions` struct — array of `Actions` per `Resource`, binary serialization (`ToSql`/`FromSql` for `Binary`), operator overloading (+, -, +=, -=), proto conversion | Adapt from `u8` Actions to `u16` Actions. Binary encoding changes from 2-byte pairs to 3-byte pairs. |
+| `src/types/role/action.rs` | `Action` enum (bitmask values) + proto conversions | Expand from 5 actions to 9. Change `repr(u8)` to `repr(u16)`. |
+| `src/types/role/actions.rs` | `Actions` bitmask wrapper with `contains`/`iter`/operators | Change inner type from `u8` to `u16`. |
+| `src/types/role/resource.rs` | `Resource` enum + `Count` derive + proto conversions + `TryFrom<u8>` | Expand from 5 resources to 18. |
+| `src/types/role/organisation.rs` | `Organisation` enum (System, Account, School(Id)) + `FromStr` | Port as-is. |
+| `src/types/role/role.rs` | `Role` struct (Diesel Queryable), `Reference`, `Assigner`, `Update`, `Assignment` | Adapt for new `Permissions` type (blob, not text). |
+| `src/types/member/role.rs` | `Role`/`Roles` bitmask (Owner=1, Guardian=2, Student=4, Teacher=8, Staff=16) | Port as-is. |
+| `src/types/member/membership.rs` | `Membership` struct (school id, name, roles bitmask) | Port as-is. |
+| `src/db/database/authorize.rs` | `Authorize` trait impl — Super bypass, system role loading, school+system role merging | Port as-is, matching the three-tier permission model. |
+| `src/db/database/traits.rs` | Extended traits: `Load`, `Authorize`, `List`, `Search`, `Delete`, `Purge` + `Database` blanket impl | Ledger currently only has `Create`, `Find`, `Update`, `Database`. Port the rest. |
+
+**Preservation rule:** The owner's code is handcrafted and clean. Agents must match the established patterns: operator overloading for bitmask types, trait-based DB abstraction, proto adapter pattern, `FromStr` everywhere, single `Error` enum. Read the actual `../ledger/` source files to absorb the style before writing.
+
+---
+
+## Three-Tier Permission Model
+
+### The Three User Levels
+
+```
+enum UserLevel { normal = 0, system = 1, super_ = 2 }
+```
+
+### Super Users (level = 2) — Unrestricted God Mode
+
+- **See everything.** No filtering on sync. Receive all `server_logs` entries for all tables, all schools.
+- **Write anything.** No permission checks on push. Can write to any table, any school, any system table.
+- **Bypass all authorization.** The `Authorize` trait returns `Ok(())` immediately for Super users.
+- **Can see deleted records** in the system dashboard (only level that can).
+
+### System Users (level = 1) — Globally Scoped but Role-Gated
+
+- **NOT full access.** System users have permissions determined by their assigned system-level roles (where `scopes.school IS NULL`).
+- **Not restricted to any specific school** — if a system user has `Read` on `Schools`, they see ALL schools. If they have `Read` on `Students`, they see ALL students across all schools. The "system" part means their scope is global, not school-bound.
+- **But only see resources their roles grant.** A system user without `Students.Read` does NOT receive student data during sync.
+- **Can also be school members.** A system user who is also a teacher at School A gets their system-level roles PLUS their school-level roles for School A merged together:
+
+```rust
+// From ../server/src/db/database/authorize.rs — the pattern to follow
+Organisation::School(id) => {
+    let mut roles = self.load((id, &user))?;  // school-scoped roles
+    if user.level == Level::System {
+        let system = self.load(&user)?;         // system-scoped roles (school IS NULL)
+        roles.extend(system);                   // merge both
+    }
+    // ... then check required permissions against merged roles
+}
+Organisation::System => self.load(&user),       // system roles only
+```
+
+- **Cannot see deleted records** in the system dashboard.
+
+### Normal Users (level = 0) — Membership-Based
+
+- **Only see schools where they are a member** (owner, teacher, staff, student, or guardian).
+- **See their own user row** always.
+- **See co-members** (other users who share a school with them).
+- **See all plans** (global, needed for subscription UI).
+- **Do NOT see system roles/scopes.**
+- **Within a school:** currently, membership = full school visibility. Fine-grained per-table filtering deferred.
+
+### Server Permission Checking Flow
+
+```
+1. Parse access_token from gRPC metadata → get user_id
+2. Load user → check level:
+   - Super → skip all checks, grant full access
+   - System → load system-scoped roles, check resource+action against aggregated permissions
+   - Normal → check school membership + (future) school-scoped role permissions
+3. For school context: System users get school roles + system roles merged
+4. Subtract required permissions from aggregated permissions
+5. If remaining permissions are empty → authorized. Otherwise → Error::Forbidden
+```
+
+---
+
+## Resource & Action Design
+
+### Design Principles
+
+1. **Resources are logical domain entities**, NOT a 1:1 mapping to the 30 database tables. Join/junction tables are absorbed as actions on their parent resource.
+2. **Actions expand beyond CRUD.** Relationship operations like Assign, Revoke, Enroll become actions, not separate resources.
+3. **Actions apply bidirectionally.** "Assign a teacher to a subject" = "assign a subject to a teacher" — same join operation. The resource is whichever entity makes sense from both perspectives.
+4. **Not every action applies to every resource.** The UI shows only relevant actions per resource. The bitmask uses the same bit positions globally.
+5. **Members are split** into separate resources (Owners, Teachers, Staff) — because a role that can add teachers should not automatically be able to add owners.
+
+### Action Enum (u16 bitmask)
+
+| Action | Bit | Description |
+|---|---|---|
+| Create | 0 | Create a new record |
+| Read | 1 | View records |
+| Update | 2 | Modify existing records |
+| Delete | 3 | Soft-delete / deactivate |
+| Purge | 4 | Permanent delete (Super-only) |
+| Assign | 5 | Add a relationship (enroll student, assign teacher to subject, assign role to user) |
+| Unassign | 6 | Remove a relationship (unenroll, unassign teacher, revoke role) |
+| Mark | 7 | Record data (attendance, scores) |
+| Approve | 8 | Approve/verify (payments, workflows) |
+
+Bits 9-15 are reserved for future expansion. `repr(u16)` on `Action`, inner type of `Actions` is `u16`.
+
+### Resource Enum (~18 logical resources)
+
+| # | Resource | Covers tables | Notable non-CRUD actions |
+|---|---|---|---|
+| 1 | Users | `users` | Level/status changes |
+| 2 | Schools | `schools`, `settings` | |
+| 3 | Owners | `owners` | |
+| 4 | Teachers | `teachers` | |
+| 5 | Staff | `staff` | |
+| 6 | Students | `students`, `guardians` | Assign (enroll → `enrollments`), Unassign (unenroll) |
+| 7 | Departments | `departments` | |
+| 8 | Classes | `class_teachers`, `subjects`, `timetable` | Assign (teacher→subject, teacher→class, timetable entry), Unassign |
+| 9 | Attendance | `attendance` | Mark |
+| 10 | Lessons | `lessons` | |
+| 11 | Exams | `exams`, `papers` | |
+| 12 | Grades | `grades`, `mastery` | Mark |
+| 13 | Fees | `fees`, `invoices` | |
+| 14 | Payments | `payments` | Approve |
+| 15 | Announcements | `announcements` | |
+| 16 | Roles | `roles`, `scopes` | Assign (role→user), Unassign (revoke) |
+| 17 | Plans | `plans`, `subscriptions`, `discounts` | |
+| 18 | AI | `aiusage` | |
+
+### Permissions Storage Format
+
+The `Permissions` struct is an array of `Actions` (u16 bitmask) indexed by `Resource`:
+
+```rust
+struct Permissions([Actions; Resource::COUNT]);  // ~18 resources × 2 bytes = 36 bytes max
+```
+
+**Database storage:** Binary blob — sparse encoding:
+- 3 bytes per non-empty resource: `[resource_id: u8, actions_lo: u8, actions_hi: u8]` (little-endian u16)
+- Empty resources are skipped
+- Max size: 18 resources × 3 bytes = 54 bytes (but typically much smaller)
+- `roles.permissions` column: `blob` type (NOT `text`)
+- `ToSql`/`FromSql` impls follow the same pattern as `../server/src/types/role/permissions.rs` but with 3-byte tuples instead of 2-byte
+
+**Proto wire format:** `repeated Permission { Resource resource = 1; repeated Action actions = 2; }`
+
+### Action Context Per Resource (UI Display)
+
+| Resource | Shown Actions |
+|---|---|
+| Users | Read, Update, Delete |
+| Schools | Create, Read, Update, Delete |
+| Owners | Create, Read, Delete |
+| Teachers | Create, Read, Update, Delete |
+| Staff | Create, Read, Update, Delete |
+| Students | Create, Read, Update, Delete, Assign, Unassign |
+| Departments | Create, Read, Update, Delete |
+| Classes | Create, Read, Update, Delete, Assign, Unassign |
+| Attendance | Read, Mark |
+| Lessons | Create, Read, Update, Delete |
+| Exams | Create, Read, Update, Delete |
+| Grades | Read, Mark, Update, Delete |
+| Fees | Create, Read, Update, Delete |
+| Payments | Create, Read, Update, Delete, Approve |
+| Announcements | Create, Read, Update, Delete |
+| Roles | Create, Read, Update, Delete, Assign, Unassign |
+| Plans | Create, Read, Update, Delete |
+| AI | Read, Update |
+
+Purge is never shown in the UI — implicitly granted to Super users only.
+
+---
+
+## Sync Engine Specification
+
+### Two gRPC Streams
+
+```protobuf
+service Sync {
+  rpc PushChanges (stream MutationBatch) returns (stream PushAck);
+  rpc WatchChanges (WatchRequest) returns (stream SyncDelta);
+}
+```
+
+- **PushChanges:** Client sends batches of local mutations. Server validates permissions, applies to DB, logs to `server_logs`, returns per-mutation results.
+- **WatchChanges:** Client sends `WatchRequest{last_seq}`. Server streams all `server_logs` entries with `seq > last_seq`, filtered by the user's permissions. Keeps stream open for real-time push.
+
+### Change Tracking
+
+- **Server:** `server_logs` table with auto-incrementing `seq`, `user_id`, `tbl`, `op`, `row_key`, `row_data` (JSON), `school_id`.
+- **Client:** `logs` table queues local mutations. `accounts.lastSeq` tracks server cursor.
+
+### File Sync via S3
+
+Files piggyback on data push/watch streams. Client logs a mutation on the parent record → server detects file-bearing record → returns presigned PUT URL in `PushAck` → client uploads via HTTP PUT → server notifies other clients via `SyncDelta` with GET URLs.
+
+### Conflict Resolution
+
+Last-write-wins by arrival order. Server always applies. Result propagates to all clients.
+
+### Initial Sync (Cold Start)
+
+Client sends `WatchRequest{last_seq: 0}`. Server sends ALL visible data as Insert deltas. Client writes in batched transactions (100 rows per batch).
+
+### Proto Message Structure
+
+```protobuf
+// Client → Server
+message MutationBatch {
+  string batch_id = 1;            // UUID for idempotency
+  repeated Mutation mutations = 2;
+}
+message Mutation {
+  int32 table = 1;                // LogTable enum (0-29)
+  int32 operation = 2;            // 0=Insert, 1=Update, 2=Delete
+  string row_key = 3;             // "|"-delimited PK values
+  optional int32 columns = 4;     // Bitmask of changed columns (Update only)
+  RowData data = 5;               // The row data (Insert/Update only)
+}
+
+// Server → Client (push ack)
+message PushAck {
+  string batch_id = 1;
+  bool success = 2;
+  optional string error = 3;
+  int64 server_seq = 4;           // Sequence number after applying batch
+  repeated MutationResult results = 5;
+}
+message MutationResult {
+  int32 index = 1;                // Index in the batch
+  bool success = 2;
+  optional string error = 3;
+  int32 code = 4;                 // 0=ok, 1=permission_denied, 2=conflict, 3=validation, 4=not_found
+  repeated FileUrl file_urls = 5; // Presigned URLs for file-bearing records
+}
+
+// Client → Server (watch request)
+message WatchRequest { int64 last_seq = 1; }
+
+// Server → Client (streaming deltas)
+message SyncDelta {
+  int64 seq = 1;
+  int32 table = 2;
+  int32 operation = 3;
+  string row_key = 4;
+  RowData data = 5;
+  repeated FileUrl file_urls = 6;
+}
+
+message FileUrl {
+  string path = 1;
+  optional string put_url = 2;
+  optional string get_url = 3;
+  int64 expiry = 4;
+}
+
+// RowData = oneof with 30 per-table *Row messages
+// Each *Row has all columns as optional proto3 fields matching schema types.
+```
+
+### `server_logs` Table
+
+```sql
+CREATE TABLE server_logs (
+    seq       INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id   TEXT    NOT NULL,
+    tbl       SMALLINT NOT NULL,       -- LogTable enum (0-29)
+    op        SMALLINT NOT NULL,       -- 0=Insert, 1=Update, 2=Delete
+    row_key   TEXT    NOT NULL,
+    row_data  TEXT,                     -- Full JSON of the row (null for Delete)
+    school_id TEXT,                     -- NULL for system tables (users, plans, roles where school IS NULL)
+    created   BIGINT  NOT NULL DEFAULT (unixepoch('now'))
+);
+```
+
+`school_id` enables permission filtering: Super users see all rows. System users see rows for resources they have Read access on (globally). Normal users see rows where `school_id IN (their_schools)` plus system-table rules (own user row, all plans).
+
+### Sync Permission Filtering
+
+**For WatchChanges (What Data to Send):**
+
+| User Level | Filtering Rule |
+|---|---|
+| Super | `WHERE seq > last_seq` — no filter, send everything |
+| System | For each resource the user has `Read` on: send ALL records globally for that resource's tables. If the user also has school memberships, additionally send school-scoped data for resources they DON'T have system-level Read on. |
+| Normal | Send data only for schools where user is a member. Plus own user row. Plus all plans. No system roles/scopes. |
+
+**For PushChanges (What Mutations to Accept):**
+
+| User Level | Validation Rule |
+|---|---|
+| Super | Accept everything. No checks. |
+| System | Check system-scoped roles for the required resource+action. If writing to a school-scoped table, also check school membership OR system-level permission for that resource. |
+| Normal | Check school membership. Must be a member of the school referenced in the mutation. (Future: check school-scoped role permissions.) |
+
+**Error Codes for Failed Push Mutations:**
+
+| Code | Meaning | Client Action |
+|---|---|---|
+| 0 | Success | Delete log entry |
+| 1 | Permission denied | Mark failed, show in notifications |
+| 2 | Conflict | Apply server version, delete log |
+| 3 | Validation error | Mark failed, user must fix |
+| 4 | Not found | Mark failed (updates), delete (deletes) |
+
+---
+
+## Division of Labour
+
+| Agent | Owns |
+|---|---|
+| **Server agent** | All Rust code in this repo: `src/`, `protos/`, `migrations/`, `build.rs` |
+| **Client agent** | All Dart code in `../eduxal/`: `lib/`, `schema.sql`, `generate.sh` |
+
+Proto definitions are created by the server agent. The client agent consumes them via `../eduxal/generate.sh` which runs `protoc` against this repo's `protos/` directory.
+
+---
+
+## User Creation Rules & Invitation Flow
+
+### Two Types of User Creation
+
+There are two distinct operations that result in a new `users` row:
+
+#### 1. Invitation (Anyone → Normal Invited Users Only)
+
+Any user — regardless of level or permissions — can **invite** a normal user. This happens implicitly when adding a member to a school. The user creation is a **side effect** of the member creation, not an independent operation.
+
+**Server enforcement:**
+- `status` MUST be `Invited` — reject anything else
+- `level` MUST be `Normal` — reject anything else
+- Only `phone` and `name` are accepted from the client — all other fields set to server defaults
+- NOT gated by `Users.Create` permission — gated by the member table permission (`Teachers.Create`, `Staff.Create`, `Owners.Create`, etc.)
+
+#### 2. Privileged User Creation (System/Super Users)
+
+| Creator Level | Can Create Normal (Invited) | Can Create System (Invited) | Can Create Super (Invited) |
+|---|---|---|---|
+| Normal | ✅ Only as side effect of member creation | ❌ | ❌ |
+| System (with `Users.Create`) | ✅ | ✅ | ❌ |
+| System (without `Users.Create`) | ✅ Only as side effect of member creation | ❌ | ❌ |
+| Super | ✅ | ✅ | ✅ |
+
+**All created users start as `status = Invited`** regardless of who creates them.
+
+### Server Validation for User Insert
+
+```
+// In PushChanges handler, when processing a users Insert:
+1. if status != Invited → reject (code 3: validation_error)
+2. match level:
+   - Normal → allow (anyone can create normal invites)
+   - System → require Users.Create permission (code 1 if missing)
+   - Super  → require pusher.level == Super (code 1 if not super)
+3. Server only accepts phone + name from client. Sets defaults for all other fields.
+```
+
+### Invitation-Aware Member Creation (Phone Conflict Resolution)
+
+**The problem:** Two school admins (offline) both invite the same phone number. The first push creates the user. The second push hits a `UNIQUE(phone)` constraint conflict. But this is a resolvable conflict — both admins intended to add that phone number as a member of their school.
+
+**Batch guarantee:** The client MUST always send the user invite + member creation in the **same `MutationBatch`**. The server uses this to detect the "invitation pattern."
+
+**Server logic when processing a member table Insert** (`owners`, `teachers`, `staff`, `students`, `guardians`):
+
+```
+1. Check if this member mutation references a user that was also
+   CREATED in the same batch (i.e., it's an invitation)
+
+2. If yes → this is an invitation flow:
+   a. Try to insert the user
+   b. If phone conflict:
+      - Look up existing user by phone number
+      - If existing user status == Deleted → reject (code 4: not_found)
+      - Rewrite the member's `user` field to the existing user's ID
+      - Insert the member with the corrected user ID
+      - For the user mutation: return code 2 (conflict)
+      - For the member mutation: return code 0 (success) with corrected row data
+      - Log to server_logs:
+        * Delete on users table for the orphaned user ID (so all clients clean up)
+        * Insert on the member table with the corrected user field
+
+3. If no → normal member creation (user already exists), just validate and insert
+```
+
+**What streams to other clients via WatchChanges:**
+- `SyncDelta { op: Delete, table: users, row_key: "orphaned_id" }` — all clients remove the orphan
+- `SyncDelta { op: Insert, table: <member_table>, ... }` — with the corrected `user` field pointing to the real existing user
+
+The pushing client receives:
+- `PushAck` with code 2 on the user mutation (apply server version = delete orphan locally)
+- `PushAck` with code 0 on the member mutation (success, but with corrected row data)
+
+### Member Tables That Trigger Invitation Flow
+
+All five member tables follow the same pattern:
+- `owners` (school owner)
+- `teachers` (teacher at school)
+- `staff` (staff member at school)
+- `students` (student — though students may be minors without phones, TBD)
+- `guardians` (parent/guardian of a student)
+
