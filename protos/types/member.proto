@@ -1,0 +1,18 @@
+syntax = "proto3";
+package member;
+
+enum Role {
+  OWNER = 0;
+  GUARDIAN = 1;
+  STUDENT = 2;
+  TEACHER = 3;
+  STAFF = 4;
+}
+
+message Membership {
+  string id = 1;
+  string name = 2;
+  repeated Role roles = 3;
+  optional string logo = 4;
+  int64 created = 5;
+}

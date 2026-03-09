@@ -1,3 +1,6 @@
 /target
 .env
 database.db
+database.db-journal
+changelog.bin
+changelog.bin.deletes

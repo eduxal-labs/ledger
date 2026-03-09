@@ -420,7 +420,7 @@ CREATE TABLE roles (
     school text,
     name text not null,
     description text,
-    permissions text not null, -- json map of permissions.
+    permissions blob not null default X'',
     created bigint not null default (unixepoch('now')),
     updated bigint not null default (unixepoch('now')),
     foreign key (school) references schools(id) ON DELETE CASCADE

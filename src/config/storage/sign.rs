@@ -9,7 +9,7 @@ const REGION: &str = "auto";
 const SERVICE: &str = "s3";
 
 /// time to live of 3 days.
-const TTL: u64 = 3 * 24 * 60 * 60;
+pub const TTL: u64 = 3 * 24 * 60 * 60;
 
 const ACCOUNT_ID: &'static str = env!("R2_ACCOUNT_ID");
 const BUCKET: &'static str = env!("R2_BUCKET");
@@ -108,7 +108,7 @@ fn hmac_sha256(key: &[u8], data: &str) -> Vec<u8> {
 ///
 /// - `with_write` — if true, also generates a PUT presigned URL
 /// - `expires_in` — seconds until URLs expire
-fn url(key: &str, ttl: u64, write: bool) -> String {
+pub fn url(key: &str, ttl: u64, write: bool) -> String {
     let (method, content_type) = match write {
         true => ("PUT", Some("image/*")),
         false => ("GET", None),

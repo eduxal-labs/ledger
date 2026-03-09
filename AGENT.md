@@ -52,6 +52,7 @@ ledger/
     ├── server.rs                   # Tonic server wiring
     ├── config/                     # External integrations (WhatsApp, OTP engine, R2 signing)
     ├── db/                         # Database layer (Diesel, SQLite)
+    │   ├── changelog.rs            #   Append-only binary change log (changelog.bin + deletes sidecar)
     │   ├── schema/                 #   Auto-generated Diesel schema (DO NOT HAND-EDIT)
     │   └── database/               #   Connection pool, traits, table impls
     ├── proto/                      # Generated proto wrappers + hand-written service traits
@@ -389,6 +390,12 @@ Use `.resolve()` for idempotent seed operations. Use `.on_conflict(err)` for use
 
 10. **The `macros` crate is a local dependency** — It's at `./macros` and provides `key!` and `Count`. It runs at compile time with full access to environment variables.
 
+11. **Changelog is two files** — `changelog.bin` (fixed-width 24-byte records for all changes) and `changelog.bin.deletes` (variable-width records for deletes only). Delete operations must append to BOTH files: a `Record` in the main changelog and a `DeleteRecord` in the sidecar. Forgetting the sidecar means watch clients won't learn about deletes.
+
+12. **`LOG` is thread-local** — Each thread gets its own `ChangeLog` file handle, similar to `CONN`. Access via `LOG.with(|cell| cell.borrow_mut().append(...))`.
+
+13. **Don't store row data in the changelog** — The changelog only tracks *what* changed (table, operation, columns, timestamp). Actual row data is fetched from the real database tables during sync. The real tables are the single source of truth.
+
 ## Testing
 
 Tests are co-located in the same files using `#[cfg(test)] mod tests { ... }`. See `src/types/phone.rs` and `src/config/storage/sign.rs` for examples. When writing tests:
@@ -495,7 +502,7 @@ enum UserLevel { normal = 0, system = 1, super_ = 2 }
 
 ### Super Users (level = 2) — Unrestricted God Mode
 
-- **See everything.** No filtering on sync. Receive all `server_logs` entries for all tables, all schools.
+- **See everything.** No filtering on sync. Receive all changelog entries for all tables, all schools.
 - **Write anything.** No permission checks on push. Can write to any table, any school, any system table.
 - **Bypass all authorization.** The `Authorize` trait returns `Ok(())` immediately for Super users.
 - **Can see deleted records** in the system dashboard (only level that can).
@@ -650,13 +657,13 @@ service Sync {
 }
 ```
 
-- **PushChanges:** Client sends batches of local mutations. Server validates permissions, applies to DB, logs to `server_logs`, returns per-mutation results.
-- **WatchChanges:** Client sends `WatchRequest{last_seq}`. Server streams all `server_logs` entries with `seq > last_seq`, filtered by the user's permissions. Keeps stream open for real-time push.
+- **PushChanges:** Client sends batches of local mutations. Server validates permissions, applies to DB, appends to the binary changelog, returns per-mutation results.
+- **WatchChanges:** Client sends `WatchRequest{last_seq}` where `last_seq` is a byte-offset cursor into the changelog. Server reads new changelog records from that offset, fetches current row data from real tables, filters by permissions, and streams deltas. Keeps stream open for real-time push.
 
 ### Change Tracking
 
-- **Server:** `server_logs` table with auto-incrementing `seq`, `user_id`, `tbl`, `op`, `row_key`, `row_data` (JSON), `school_id`.
-- **Client:** `logs` table queues local mutations. `accounts.lastSeq` tracks server cursor.
+- **Server:** Append-only binary changelog (`changelog.bin`) with fixed-width 24-byte records tracking *what* changed (who, which table, what operation, which columns, when). A separate deletes sidecar file (`changelog.bin.deletes`) stores variable-width records for delete operations (table + row_key + timestamp). The real database tables are the single source of truth for row data — the changelog only tracks metadata.
+- **Client:** `logs` table queues local mutations. `accounts.lastSeq` tracks the server byte-offset cursor.
 
 ### File Sync via S3
 
@@ -691,7 +698,7 @@ message PushAck {
   string batch_id = 1;
   bool success = 2;
   optional string error = 3;
-  int64 server_seq = 4;           // Sequence number after applying batch
+  int64 server_seq = 4;           // Byte-offset cursor into changelog after applying batch
   repeated MutationResult results = 5;
 }
 message MutationResult {
@@ -703,11 +710,11 @@ message MutationResult {
 }
 
 // Client → Server (watch request)
-message WatchRequest { int64 last_seq = 1; }
+message WatchRequest { int64 last_seq = 1; }  // Byte-offset cursor (0 = cold start)
 
 // Server → Client (streaming deltas)
 message SyncDelta {
-  int64 seq = 1;
+  int64 seq = 1;                  // Byte-offset cursor after this delta
   int32 table = 2;
   int32 operation = 3;
   string row_key = 4;
@@ -726,22 +733,44 @@ message FileUrl {
 // Each *Row has all columns as optional proto3 fields matching schema types.
 ```
 
-### `server_logs` Table
+### Binary Changelog (`src/db/changelog.rs`)
 
-```sql
-CREATE TABLE server_logs (
-    seq       INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id   TEXT    NOT NULL,
-    tbl       SMALLINT NOT NULL,       -- LogTable enum (0-29)
-    op        SMALLINT NOT NULL,       -- 0=Insert, 1=Update, 2=Delete
-    row_key   TEXT    NOT NULL,
-    row_data  TEXT,                     -- Full JSON of the row (null for Delete)
-    school_id TEXT,                     -- NULL for system tables (users, plans, roles where school IS NULL)
-    created   BIGINT  NOT NULL DEFAULT (unixepoch('now'))
-);
+**Main changelog** (`changelog.bin`) — fixed-width 24-byte records:
+
+| Offset | Field    | Size    | Content                                          |
+|--------|----------|---------|--------------------------------------------------|
+| 0      | user     | 12 bytes| Raw ObjectId bytes (who made the change)         |
+| 12     | table    | 1 byte  | `LogTable` enum discriminant (1–30)              |
+| 13     | op       | 1 byte  | 0=Insert, 1=Update, 2=Delete                     |
+| 14     | columns  | 2 bytes | Bitmask of changed columns (LE u16, 0 for Insert/Delete) |
+| 16     | created  | 8 bytes | Unix timestamp in seconds (LE i64)               |
+
+**Sync cursor:** byte offset into the file. Client stores the offset (not a sequence number). Next sync reads from that offset. With fixed-width records, `cursor = file_size` means "fully synced".
+
+**Deletes sidecar** (`changelog.bin.deletes`) — variable-width records for delete operations. Since deleted rows no longer exist in the real tables, the row_key must be stored explicitly:
+
+| Field    | Size          | Content                            |
+|----------|---------------|------------------------------------|
+| table    | 1 byte        | `LogTable` discriminant            |
+| key_len  | 1 byte        | Length of the UTF-8 row_key (max 255) |
+| key      | key_len bytes | The row_key string                 |
+| created  | 8 bytes       | LE i64 unix timestamp (seconds)    |
+
+**Key design insight:** The changelog does NOT store `row_key` or `school_id` for inserts/updates. When the watch loop detects changes, it fetches current row data from the real database tables using timestamp-based range queries (`WHERE updated >= min_timestamp`). The `school_id` for permission filtering comes from the fetched row data itself. For deletes, the sidecar file provides the `row_key` so the client knows which row to remove.
+
+**Thread-local access:**
+
+```rust
+use crate::db::changelog::LOG;
+// Append a change record
+LOG.with(|cell| cell.borrow_mut().append(&record))?;
+// Append a delete record
+LOG.with(|cell| cell.borrow_mut().append_delete(table as u8, &row_key))?;
 ```
 
-`school_id` enables permission filtering: Super users see all rows. System users see rows for resources they have Read access on (globally). Normal users see rows where `school_id IN (their_schools)` plus system-table rules (own user row, all plans).
+Permission filtering happens in two phases:
+1. `SyncFilter::table_visible(table)` — quick check: does this user have any access to this table type?
+2. `SyncFilter::row_visible(table, row_key, school_id)` — per-row check after fetching from the real table.
 
 ### Sync Permission Filtering
 
@@ -749,7 +778,7 @@ CREATE TABLE server_logs (
 
 | User Level | Filtering Rule |
 |---|---|
-| Super | `WHERE seq > last_seq` — no filter, send everything |
+| Super | Read all changelog records from cursor — no filter, send everything |
 | System | For each resource the user has `Read` on: send ALL records globally for that resource's tables. If the user also has school memberships, additionally send school-scoped data for resources they DON'T have system-level Read on. |
 | Normal | Send data only for schools where user is a member. Plus own user row. Plus all plans. No system roles/scopes. |
 
@@ -844,9 +873,9 @@ Any user — regardless of level or permissions — can **invite** a normal user
       - Insert the member with the corrected user ID
       - For the user mutation: return code 2 (conflict)
       - For the member mutation: return code 0 (success) with corrected row data
-      - Log to server_logs:
-        * Delete on users table for the orphaned user ID (so all clients clean up)
-        * Insert on the member table with the corrected user field
+      - Append to changelog:
+        * Delete record (in deletes sidecar) on users table for the orphaned user ID (so all clients clean up)
+        * Insert record on the member table with the corrected user field
 
 3. If no → normal member creation (user already exists), just validate and insert
 ```

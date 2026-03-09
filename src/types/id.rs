@@ -22,6 +22,10 @@ impl Id {
     pub fn system() -> Self {
         Self([0u8; 12])
     }
+
+    pub fn bytes(self) -> [u8; 12] {
+        self.0
+    }
 }
 
 impl Default for Id {

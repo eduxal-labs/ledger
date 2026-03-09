@@ -3,10 +3,11 @@ use crate::types::error::OnConflict;
 use diesel::RunQueryDsl;
 use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
 
+mod authorize;
 pub mod tables;
 pub mod traits;
 
-const MIGRATIONS: EmbeddedMigrations = embed_migrations!();
+pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!();
 
 type Database = std::cell::RefCell<diesel::SqliteConnection>;
 
@@ -32,6 +33,7 @@ impl New for diesel::SqliteConnection {
             Some("abdulhakimuthman100@gmail.com"),
         )?;
         conn.create(user).resolve()?;
+
         Ok(conn)
     }
 }
@@ -46,6 +48,7 @@ const PRAMGMAS: &str = r#"
 PRAGMA foreign_keys = ON;
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
+PRAGMA busy_timeout = 5000;
 PRAGMA temp_store = MEMORY;
 PRAGMA cache_size = -65536;
 PRAGMA mmap_size = 268435456;

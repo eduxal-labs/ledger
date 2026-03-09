@@ -1,7 +1,10 @@
 pub mod command;
 pub mod error;
 pub mod id;
+pub mod member;
+pub mod paginated;
 pub mod phone;
+pub mod role;
 pub mod token;
 pub mod user;
 pub mod verification;

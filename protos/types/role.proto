@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+package role;
+
+enum Resource {
+  USERS = 0;
+  SCHOOLS = 1;
+  OWNERS = 2;
+  TEACHERS = 3;
+  STAFF = 4;
+  STUDENTS = 5;
+  DEPARTMENTS = 6;
+  CLASSES = 7;
+  ATTENDANCE = 8;
+  LESSONS = 9;
+  EXAMS = 10;
+  GRADES = 11;
+  FEES = 12;
+  PAYMENTS = 13;
+  ANNOUNCEMENTS = 14;
+  ROLES = 15;
+  PLANS = 16;
+  AI = 17;
+}
+
+enum Action {
+  CREATE = 0;
+  READ = 1;
+  UPDATE = 2;
+  DELETE = 3;
+  PURGE = 4;
+  ASSIGN = 5;
+  UNASSIGN = 6;
+  MARK = 7;
+  APPROVE = 8;
+}
+
+message Permission {
+  Resource resource = 1;
+  repeated Action actions = 2;
+}
+
+message Role {
+  string id = 1;
+  string name = 2;
+  repeated Permission permissions = 3;
+  int64 created = 4;
+}
+
+message Assignment {
+  string id = 1;
+  string name = 2;
+  int64 assigned = 3;
+  optional string profile = 4;
+}

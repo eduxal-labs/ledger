@@ -1,0 +1,609 @@
+syntax = "proto3";
+
+package sync;
+
+import "types/member.proto";
+import "types/role.proto";
+
+service Sync {
+  rpc PushChanges(stream MutationBatch) returns (stream PushAck);
+  rpc WatchChanges(WatchRequest) returns (stream SyncDelta);
+}
+
+message MutationBatch {
+  string batch_id = 1;
+  repeated Mutation mutations = 2;
+}
+
+message Mutation {
+  int32 table = 1;
+  int32 operation = 2; // 0=Insert, 1=Update, 2=Delete
+  string row_key = 3;
+  InsertData insert = 4; // set when operation=0
+  UpdateData update = 5; // set when operation=1
+  // Delete has no data — row_key is sufficient
+}
+
+message PushAck {
+  string batch_id = 1;
+  bool success = 2;
+  optional string error = 3;
+  int64 server_seq = 4;
+  repeated MutationResult results = 5;
+}
+
+message MutationResult {
+  int32 index = 1;
+  bool success = 2;
+  optional string error = 3;
+  int32 code = 4;
+  repeated FileUrl file_urls = 5;
+}
+
+message WatchRequest {
+  int64 last_seq = 1;
+}
+
+message SyncDelta {
+  int64 seq = 1;
+  int32 table = 2;
+  int32 operation = 3; // 0=Insert (upsert), 2=Delete
+  string row_key = 4;
+  InsertData data = 5; // populated for Insert/upsert; absent for Delete
+  repeated FileUrl file_urls = 6;
+}
+
+message FileUrl {
+  string path = 1;
+  optional string put_url = 2;
+  optional string get_url = 3;
+  int64 expiry = 4;
+}
+
+// ---------------------------------------------------------------------------
+// InsertData — one variant per table (30 total)
+// ---------------------------------------------------------------------------
+
+message InsertData {
+  oneof row {
+    UserInsert user = 1;
+    SchoolInsert school = 2;
+    OwnerInsert owner = 3;
+    StudentInsert student = 4;
+    GuardianInsert guardian = 5;
+    DepartmentInsert department = 6;
+    TeacherInsert teacher = 7;
+    StaffInsert staff_member = 8;
+    TermInsert term = 9;
+    ClassTeacherInsert class_teacher = 10;
+    EnrollmentInsert enrollment = 11;
+    SubjectInsert subject = 12;
+    AttendanceInsert attendance = 13;
+    TimetableInsert timetable = 14;
+    LessonInsert lesson = 15;
+    ExamInsert exam = 16;
+    PaperInsert paper = 17;
+    GradeInsert grade = 18;
+    FeeInsert fee = 19;
+    InvoiceInsert invoice = 20;
+    PaymentInsert payment = 21;
+    AnnouncementInsert announcement = 22;
+    MasteryInsert mastery = 23;
+    AiUsageInsert ai_usage = 24;
+    SettingsInsert settings = 25;
+    RoleInsert role = 26;
+    ScopeInsert scope = 27;
+    PlanInsert plan = 28;
+    SubscriptionInsert subscription = 29;
+    DiscountInsert discount = 30;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// UpdateData — only tables that support updates (~24 variants)
+// Field numbers match InsertData for table-number consistency.
+// ---------------------------------------------------------------------------
+
+message UpdateData {
+  oneof row {
+    UserUpdate user = 1;
+    SchoolUpdate school = 2;
+    StudentUpdate student = 4;
+    GuardianUpdate guardian = 5;
+    DepartmentUpdate department = 6;
+    TeacherUpdate teacher = 7;
+    StaffUpdate staff_member = 8;
+    TermUpdate term = 9;
+    ClassTeacherUpdate class_teacher = 10;
+    AttendanceUpdate attendance = 13;
+    TimetableUpdate timetable = 14;
+    ExamUpdate exam = 16;
+    PaperUpdate paper = 17;
+    GradeUpdate grade = 18;
+    FeeUpdate fee = 19;
+    InvoiceUpdate invoice = 20;
+    PaymentUpdate payment = 21;
+    AnnouncementUpdate announcement = 22;
+    MasteryUpdate mastery = 23;
+    AiUsageUpdate ai_usage = 24;
+    SettingsUpdate settings = 25;
+    RoleUpdate role = 26;
+    PlanUpdate plan = 28;
+    SubscriptionUpdate subscription = 29;
+    DiscountUpdate discount = 30;
+  }
+}
+
+// ===========================================================================
+// Per-table Insert messages
+// All required fields present; optional only where the DB column is nullable.
+// created/updated timestamps are excluded — server sets them.
+// id fields for server-generated PKs are excluded — they come from row_key.
+// ===========================================================================
+
+message UserInsert {
+  string id = 1;
+  string phone = 2;
+  optional string email = 3;
+  string name = 4;
+  int32 level = 5;
+  int32 status = 6;
+}
+
+message SchoolInsert {
+  string id = 1;
+  string name = 2;
+  optional string motto = 3;
+  optional string phone = 4;
+  optional string email = 5;
+  int32 county = 6;
+  optional string domain = 7;
+  optional int32 established = 8;
+  int32 status = 9;
+}
+
+message OwnerInsert {
+  string school = 1;
+  string user = 2;
+}
+
+message StudentInsert {
+  string school = 1;
+  int32 adm = 2;
+  optional string user = 3;
+  string name = 4;
+  optional int32 dob = 5;
+  optional int32 gender = 6;
+  optional string documents = 7;
+  optional int32 admitted = 8;
+  int32 status = 9;
+}
+
+message GuardianInsert {
+  string school = 1;
+  string user = 2;
+  int32 student = 3;
+  int32 relationship = 4;
+  int32 role = 5;
+}
+
+message DepartmentInsert {
+  string school = 1;
+  string name = 2;
+  optional string description = 3;
+}
+
+message TeacherInsert {
+  string school = 1;
+  string user = 2;
+  optional int32 hired = 3;
+  optional string role = 4;
+  optional string department = 5;
+  int32 status = 6;
+}
+
+message StaffInsert {
+  string school = 1;
+  string user = 2;
+  optional string idnumber = 3;
+  optional string role = 4;
+  optional string department = 5;
+  int32 status = 6;
+}
+
+message TermInsert {
+  string school = 1;
+  int32 year = 2;
+  int32 term = 3;
+  int64 start = 4;
+  int64 end = 5;
+}
+
+message ClassTeacherInsert {
+  string school = 1;
+  int32 year = 2;
+  int32 term = 3;
+  int32 grade = 4;
+  int32 stream = 5;
+  string teacher = 6;
+  int32 start = 7;
+  optional int32 end = 8;
+}
+
+message EnrollmentInsert {
+  string school = 1;
+  int32 year = 2;
+  int32 term = 3;
+  int32 grade = 4;
+  int32 stream = 5;
+  int32 student = 6;
+}
+
+message SubjectInsert {
+  string school = 1;
+  int32 year = 2;
+  int32 term = 3;
+  int32 grade = 4;
+  int32 stream = 5;
+  int32 subject = 6;
+  string teacher = 7;
+}
+
+message AttendanceInsert {
+  string school = 1;
+  int32 year = 2;
+  int32 term = 3;
+  int32 grade = 4;
+  int32 stream = 5;
+  int32 student = 6;
+  int32 date = 7;
+  int32 status = 8;
+}
+
+message TimetableInsert {
+  string school = 1;
+  int32 year = 2;
+  int32 term = 3;
+  int32 grade = 4;
+  int32 stream = 5;
+  int32 subject = 6;
+  string teacher = 7;
+  int32 day = 8;
+  int32 start = 9;
+  int32 end = 10;
+}
+
+message LessonInsert {
+  string school = 1;
+  int32 year = 2;
+  int32 term = 3;
+  int32 grade = 4;
+  int32 stream = 5;
+  int32 date = 6;
+  int32 subject = 7;
+  string teacher = 8;
+}
+
+message ExamInsert {
+  string id = 1;
+  string school = 2;
+  int32 year = 3;
+  int32 term = 4;
+  int32 grade = 5;
+  optional int32 stream = 6;
+  bool personalized = 7;
+  int32 type = 8;
+  int32 start = 9;
+  int32 end = 10;
+  string teacher = 11;
+}
+
+message PaperInsert {
+  string school = 1;
+  string exam = 2;
+  int32 subject = 3;
+  optional int32 paper = 4;
+  string invigilator = 5;
+  int64 start = 6;
+  int64 end = 7;
+  int32 status = 8;
+}
+
+message GradeInsert {
+  string school = 1;
+  string exam = 2;
+  int32 student = 3;
+  int32 subject = 4;
+  optional int32 paper = 5;
+  float score = 6;
+  int32 total = 7;
+}
+
+message FeeInsert {
+  string id = 1;
+  string school = 2;
+  int32 year = 3;
+  int32 term = 4;
+  int32 grade = 5;
+  string title = 6;
+  string description = 7;
+  float amount = 8;
+  bool mandatory = 9;
+  int64 due = 10;
+}
+
+message InvoiceInsert {
+  string id = 1;
+  string school = 2;
+  int32 year = 3;
+  int32 term = 4;
+  optional string fee = 5;
+  optional string description = 6;
+  int32 student = 7;
+  float amount = 8;
+  int32 status = 9;
+  optional int64 due = 10;
+}
+
+message PaymentInsert {
+  string id = 1;
+  optional string invoice = 2;
+  optional string school = 3;
+  optional int32 student = 4;
+  float amount = 5;
+  int32 method = 6;
+  optional string reference = 7;
+  optional string recorder = 8;
+  optional int32 date = 9;
+}
+
+message AnnouncementInsert {
+  string id = 1;
+  string school = 2;
+  string title = 3;
+  string content = 4;
+  optional int32 grade = 5;
+  optional int32 stream = 6;
+  int32 audience = 7;
+  optional string author = 8;
+}
+
+message MasteryInsert {
+  string school = 1;
+  int32 student = 2;
+  int32 grade = 3;
+  int32 subject = 4;
+  int32 topic = 5;
+  float score = 6;
+}
+
+message AiUsageInsert {
+  string school = 1;
+  int32 student = 2;
+  int32 year = 3;
+  int32 term = 4;
+  int32 allocated = 5;
+  int32 used = 6;
+}
+
+message SettingsInsert {
+  string school = 1;
+  string data = 2;
+  optional string mpesa = 3;
+}
+
+message RoleInsert {
+  string id = 1;
+  optional string school = 2;
+  string name = 3;
+  optional string description = 4;
+  bytes permissions = 5;
+}
+
+message ScopeInsert {
+  optional string school = 1;
+  string user = 2;
+  string role = 3;
+}
+
+message PlanInsert {
+  string id = 1;
+  string name = 2;
+  optional string description = 3;
+  float amount = 4;
+  int32 levels = 5;
+  int32 status = 6;
+  optional string features = 7;
+}
+
+message SubscriptionInsert {
+  string school = 1;
+  string plan = 2;
+  int32 year = 3;
+  int32 term = 4;
+  int32 student = 5;
+  optional string invoice = 6;
+  float discount = 7;
+  int32 status = 8;
+}
+
+message DiscountInsert {
+  string school = 1;
+  string plan = 2;
+  int32 year = 3;
+  int32 term = 4;
+  int32 grade = 5;
+  float amount = 6;
+  int32 unit = 7;
+}
+
+// ===========================================================================
+// Per-table Update messages
+// All fields optional — only set fields are applied as partial updates.
+// Tables that are insert+delete only have no Update message.
+// ===========================================================================
+
+message UserUpdate {
+  optional string phone = 1;
+  optional string email = 2;
+  optional string name = 3;
+  optional int32 level = 4;
+  optional int32 status = 5;
+}
+
+message SchoolUpdate {
+  optional string name = 1;
+  optional string motto = 2;
+  optional string phone = 3;
+  optional string email = 4;
+  optional int32 county = 5;
+  optional string domain = 6;
+  optional int32 established = 7;
+  optional int32 status = 8;
+}
+
+message StudentUpdate {
+  optional string user = 1;
+  optional string name = 2;
+  optional int32 dob = 3;
+  optional int32 gender = 4;
+  optional string documents = 5;
+  optional int32 admitted = 6;
+  optional int32 status = 7;
+}
+
+message GuardianUpdate {
+  optional int32 relationship = 1;
+  optional int32 role = 2;
+}
+
+message DepartmentUpdate {
+  optional string description = 1;
+}
+
+message TeacherUpdate {
+  optional int32 hired = 1;
+  optional string role = 2;
+  optional string department = 3;
+  optional int32 status = 4;
+}
+
+message StaffUpdate {
+  optional string idnumber = 1;
+  optional string role = 2;
+  optional string department = 3;
+  optional int32 status = 4;
+}
+
+message TermUpdate {
+  optional int64 start = 1;
+  optional int64 end = 2;
+}
+
+message ClassTeacherUpdate {
+  optional int32 start = 1;
+  optional int32 end = 2;
+}
+
+message AttendanceUpdate {
+  optional int32 status = 1;
+}
+
+message TimetableUpdate {
+  optional string teacher = 1;
+  optional int32 end = 2;
+}
+
+message ExamUpdate {
+  optional int32 stream = 1;
+  optional bool personalized = 2;
+  optional int32 type = 3;
+  optional int32 start = 4;
+  optional int32 end = 5;
+  optional string teacher = 6;
+}
+
+message PaperUpdate {
+  optional string invigilator = 1;
+  optional int64 start = 2;
+  optional int64 end = 3;
+  optional int32 status = 4;
+}
+
+message GradeUpdate {
+  optional float score = 1;
+  optional int32 total = 2;
+}
+
+message FeeUpdate {
+  optional string title = 1;
+  optional string description = 2;
+  optional float amount = 3;
+  optional bool mandatory = 4;
+  optional int64 due = 5;
+}
+
+message InvoiceUpdate {
+  optional string fee = 1;
+  optional string description = 2;
+  optional float amount = 3;
+  optional int32 status = 4;
+  optional int64 due = 5;
+}
+
+message PaymentUpdate {
+  optional string invoice = 1;
+  optional float amount = 2;
+  optional int32 method = 3;
+  optional string reference = 4;
+  optional string recorder = 5;
+  optional int32 date = 6;
+}
+
+message AnnouncementUpdate {
+  optional string title = 1;
+  optional string content = 2;
+  optional int32 grade = 3;
+  optional int32 stream = 4;
+  optional int32 audience = 5;
+}
+
+message MasteryUpdate {
+  optional float score = 1;
+}
+
+message AiUsageUpdate {
+  optional int32 allocated = 1;
+  optional int32 used = 2;
+}
+
+message SettingsUpdate {
+  optional string data = 1;
+  optional string mpesa = 2;
+}
+
+message RoleUpdate {
+  optional string name = 1;
+  optional string description = 2;
+  optional bytes permissions = 3;
+}
+
+message PlanUpdate {
+  optional string name = 1;
+  optional string description = 2;
+  optional float amount = 3;
+  optional int32 levels = 4;
+  optional int32 status = 5;
+  optional string features = 6;
+}
+
+message SubscriptionUpdate {
+  optional string invoice = 1;
+  optional float discount = 2;
+  optional int32 status = 3;
+}
+
+message DiscountUpdate {
+  optional float amount = 1;
+  optional int32 unit = 2;
+}

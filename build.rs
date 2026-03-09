@@ -11,7 +11,13 @@ fn main() -> Result<(), Box<dyn Error>> {
             "crate::proto::time::Timestamp",
         )
         .extern_path(".google.protobuf.Empty", "()")
-        .compile_protos(&["./protos/services/authentication.proto"], &["./protos/"])?;
+        .compile_protos(
+            &[
+                "./protos/services/authentication.proto",
+                "./protos/services/sync.proto",
+            ],
+            &["./protos/"],
+        )?;
     Ok(())
 }
 

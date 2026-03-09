@@ -18,6 +18,10 @@ pub trait Conflict: Sized {
     fn conflict(&self) -> bool;
 }
 
+pub trait ForeignKeyError: Sized {
+    fn foreign_key(&self) -> bool;
+}
+
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("invalid id")]
@@ -62,6 +66,10 @@ pub enum Error {
     Forbidden,
     #[error("conflict")]
     Conflict,
+    #[error("foreign key constraint violated")]
+    ForeignKey,
+    #[error("database is busy, try again")]
+    DatabaseLocked,
     #[error("slow down")]
     SlowDown,
     #[error("nothing to update")]
@@ -72,10 +80,25 @@ pub enum Error {
 
 impl From<DieselError> for Error {
     fn from(err: DieselError) -> Self {
-        if let DieselError::DatabaseError(kind, _) = err
-            && let ErrorKind::UniqueViolation = kind
-        {
-            return Error::Conflict;
+        match &err {
+            DieselError::DatabaseError(kind, info) => match kind {
+                ErrorKind::UniqueViolation => return Error::Conflict,
+                ErrorKind::ForeignKeyViolation => {
+                    error!("foreign key violation: {}", info.message());
+                    return Error::ForeignKey;
+                }
+                // SQLite reports SQLITE_BUSY / SQLITE_LOCKED as Unknown
+                // with messages containing "database is locked" or "database table is locked".
+                ErrorKind::Unknown => {
+                    let msg = info.message();
+                    if msg.contains("locked") || msg.contains("busy") {
+                        error!("database locked: {msg}");
+                        return Error::DatabaseLocked;
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
         }
         error!("{}", err);
         Error::Internal
@@ -130,6 +153,8 @@ impl From<Error> for Status {
             Error::InvalidCounty => Status::invalid_argument("invalid county"),
             Error::Forbidden => Status::permission_denied("permission denied"),
             Error::Conflict => Status::already_exists("record already exists"),
+            Error::ForeignKey => Status::failed_precondition("referenced record does not exist"),
+            Error::DatabaseLocked => Status::unavailable("database is busy, try again"),
             Error::SlowDown => Status::resource_exhausted("please try again after a few minutes"),
             Error::NothingToUpdate => Status::failed_precondition("nothing to update"),
             Error::Internal => Status::internal("internal server error"),
@@ -140,6 +165,12 @@ impl From<Error> for Status {
 impl Conflict for Error {
     fn conflict(&self) -> bool {
         matches!(self, Self::Conflict)
+    }
+}
+
+impl ForeignKeyError for Error {
+    fn foreign_key(&self) -> bool {
+        matches!(self, Self::ForeignKey)
     }
 }
 

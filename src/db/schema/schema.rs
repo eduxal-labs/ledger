@@ -259,7 +259,7 @@ diesel::table! {
         school -> Nullable<Text>,
         name -> Text,
         description -> Nullable<Text>,
-        permissions -> Text,
+        permissions -> Binary,
         created -> BigInt,
         updated -> BigInt,
     }
