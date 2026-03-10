@@ -2,43 +2,39 @@ syntax = "proto3";
 
 package sync;
 
-import "types/member.proto";
-import "types/role.proto";
-
 service Sync {
-  rpc PushChanges(stream MutationBatch) returns (stream PushAck);
+  // Client streams actions one at a time, server responds to each
+  rpc PushActions(stream ActionRequest) returns (stream ActionResponse);
+  // Server streams changes to client (UNCHANGED from current)
   rpc WatchChanges(WatchRequest) returns (stream SyncDelta);
 }
 
-message MutationBatch {
-  string batch_id = 1;
-  repeated Mutation mutations = 2;
+// ─── Push (Client → Server) ───
+
+message ActionRequest {
+  int32 id = 1; // Client-assigned ID for correlation (log row ID)
+  int32 action = 2; // SyncAction enum value
+  bytes payload = 3; // Serialized action-specific proto message
 }
 
-message Mutation {
-  int32 table = 1;
-  int32 operation = 2; // 0=Insert, 1=Update, 2=Delete
+message ActionResponse {
+  int32 id = 1; // Matches ActionRequest.id
+  bool success = 2;
+  int32 code = 3; // 0=ok, 1=permission_denied, 2=conflict, 3=validation, 4=not_found
+  string error = 4; // Human-readable error message
+  repeated ActionRow rows = 5; // Affected rows (for client to update local DB)
+  repeated FileUrl file_urls = 6; // Presigned URLs if action involves files
+}
+
+// A row returned by the server after an action executes
+message ActionRow {
+  int32 table = 1; // Which table this row belongs to (same numbering as InsertData oneof)
+  int32 operation = 2; // 0=upsert, 2=delete
   string row_key = 3;
-  InsertData insert = 4; // set when operation=0
-  UpdateData update = 5; // set when operation=1
-  // Delete has no data — row_key is sufficient
+  InsertData data = 4; // Full row data (for upsert); absent for delete
 }
 
-message PushAck {
-  string batch_id = 1;
-  bool success = 2;
-  optional string error = 3;
-  int64 server_seq = 4;
-  repeated MutationResult results = 5;
-}
-
-message MutationResult {
-  int32 index = 1;
-  bool success = 2;
-  optional string error = 3;
-  int32 code = 4;
-  repeated FileUrl file_urls = 5;
-}
+// ─── Watch (Server → Client) — UNCHANGED ───
 
 message WatchRequest {
   int64 last_seq = 1;
@@ -49,7 +45,7 @@ message SyncDelta {
   int32 table = 2;
   int32 operation = 3; // 0=Insert (upsert), 2=Delete
   string row_key = 4;
-  InsertData data = 5; // populated for Insert/upsert; absent for Delete
+  InsertData data = 5;
   repeated FileUrl file_urls = 6;
 }
 
@@ -60,9 +56,739 @@ message FileUrl {
   int64 expiry = 4;
 }
 
-// ---------------------------------------------------------------------------
-// InsertData — one variant per table (30 total)
-// ---------------------------------------------------------------------------
+// ─── Action Payload Messages (77 total) ───
+// Each action has a purpose-built payload message.
+// These replace the old per-table Insert/Update messages for the push direction.
+
+// --- Schools (3 actions) ---
+
+message CreateSchoolPayload {
+  string id = 1; // Client-generated school ID
+  string name = 2;
+  optional string motto = 3;
+  optional string phone = 4;
+  optional string email = 5;
+  int32 county = 6;
+  optional string domain = 7;
+  optional int32 established = 8;
+  // Owner info (invitation pattern)
+  string owner_id = 10; // Client-generated user ID for owner
+  string owner_phone = 11;
+  string owner_name = 12;
+  optional string owner_email = 13;
+}
+
+message UpdateSchoolPayload {
+  string id = 1;
+  optional string name = 2;
+  optional string motto = 3;
+  optional string phone = 4;
+  optional string email = 5;
+  optional int32 county = 6;
+  optional string domain = 7;
+  optional int32 established = 8;
+  optional int32 status = 9;
+}
+
+message DeleteSchoolPayload {
+  string id = 1;
+}
+
+// --- Teachers (3 actions) ---
+
+message CreateTeacherPayload {
+  string school = 1;
+  string user_id = 2; // Client-generated user ID
+  string phone = 3;
+  string name = 4;
+  optional string email = 5;
+  optional int32 hired = 6;
+  optional string role = 7;
+  optional string department = 8;
+}
+
+message UpdateTeacherPayload {
+  string school = 1;
+  string user = 2;
+  optional int32 hired = 3;
+  optional string role = 4;
+  optional string department = 5;
+  optional int32 status = 6;
+}
+
+message DeleteTeacherPayload {
+  string school = 1;
+  string user = 2;
+}
+
+// --- Staff (3 actions) ---
+
+message CreateStaffPayload {
+  string school = 1;
+  string user_id = 2;
+  string phone = 3;
+  string name = 4;
+  optional string email = 5;
+  optional string idnumber = 6;
+  optional string role = 7;
+  optional string department = 8;
+}
+
+message UpdateStaffPayload {
+  string school = 1;
+  string user = 2;
+  optional string idnumber = 3;
+  optional string role = 4;
+  optional string department = 5;
+  optional int32 status = 6;
+}
+
+message DeleteStaffPayload {
+  string school = 1;
+  string user = 2;
+}
+
+// --- Owners (2 actions) ---
+
+message CreateOwnerPayload {
+  string school = 1;
+  string user_id = 2;
+  string phone = 3;
+  string name = 4;
+  optional string email = 5;
+}
+
+message DeleteOwnerPayload {
+  string school = 1;
+  string user = 2;
+}
+
+// --- Students (3 actions) ---
+
+message CreateStudentPayload {
+  string school = 1;
+  int32 adm = 2;
+  optional string user = 3;
+  string name = 4;
+  optional int32 dob = 5;
+  optional int32 gender = 6;
+  optional string documents = 7;
+  optional int32 admitted = 8;
+}
+
+message UpdateStudentPayload {
+  string school = 1;
+  int32 adm = 2;
+  optional string user = 3;
+  optional string name = 4;
+  optional int32 dob = 5;
+  optional int32 gender = 6;
+  optional string documents = 7;
+  optional int32 admitted = 8;
+  optional int32 status = 9;
+}
+
+message DeleteStudentPayload {
+  string school = 1;
+  int32 adm = 2;
+}
+
+// --- Enrollments (2 actions) ---
+
+message EnrollStudentPayload {
+  string school = 1;
+  int32 year = 2;
+  int32 term = 3;
+  int32 grade = 4;
+  int32 stream = 5;
+  int32 student = 6;
+}
+
+message UnenrollStudentPayload {
+  string school = 1;
+  int32 year = 2;
+  int32 term = 3;
+  int32 grade = 4;
+  int32 stream = 5;
+  int32 student = 6;
+}
+
+// --- Guardians (3 actions) ---
+
+message CreateGuardianPayload {
+  string school = 1;
+  string user_id = 2;
+  string phone = 3;
+  string name = 4;
+  optional string email = 5;
+  int32 student = 6;
+  int32 relationship = 7;
+  int32 role = 8;
+}
+
+message UpdateGuardianPayload {
+  string school = 1;
+  string user = 2;
+  int32 student = 3;
+  optional int32 relationship = 4;
+  optional int32 role = 5;
+}
+
+message DeleteGuardianPayload {
+  string school = 1;
+  string user = 2;
+  int32 student = 3;
+}
+
+// --- Departments (3 actions) ---
+
+message CreateDepartmentPayload {
+  string school = 1;
+  string name = 2;
+  optional string description = 3;
+}
+
+message UpdateDepartmentPayload {
+  string school = 1;
+  string name = 2;
+  optional string description = 3;
+}
+
+message DeleteDepartmentPayload {
+  string school = 1;
+  string name = 2;
+}
+
+// --- Terms (3 actions) ---
+
+message CreateTermPayload {
+  string school = 1;
+  int32 year = 2;
+  int32 term = 3;
+  int64 start = 4;
+  int64 end = 5;
+}
+
+message UpdateTermPayload {
+  string school = 1;
+  int32 year = 2;
+  int32 term = 3;
+  optional int64 start = 4;
+  optional int64 end = 5;
+}
+
+message DeleteTermPayload {
+  string school = 1;
+  int32 year = 2;
+  int32 term = 3;
+}
+
+// --- Class Teachers (2 actions) ---
+
+message AssignClassTeacherPayload {
+  string school = 1;
+  int32 year = 2;
+  int32 term = 3;
+  int32 grade = 4;
+  int32 stream = 5;
+  string teacher = 6;
+  int32 start = 7;
+  optional int32 end = 8;
+}
+
+message UnassignClassTeacherPayload {
+  string school = 1;
+  int32 year = 2;
+  int32 term = 3;
+  int32 grade = 4;
+  int32 stream = 5;
+  string teacher = 6;
+}
+
+// --- Subjects (2 actions) ---
+
+message AssignSubjectPayload {
+  string school = 1;
+  int32 year = 2;
+  int32 term = 3;
+  int32 grade = 4;
+  int32 stream = 5;
+  int32 subject = 6;
+  string teacher = 7;
+}
+
+message UnassignSubjectPayload {
+  string school = 1;
+  int32 year = 2;
+  int32 term = 3;
+  int32 grade = 4;
+  int32 stream = 5;
+  int32 subject = 6;
+}
+
+// --- Timetable (3 actions) ---
+
+message CreateTimetableEntryPayload {
+  string school = 1;
+  int32 year = 2;
+  int32 term = 3;
+  int32 grade = 4;
+  int32 stream = 5;
+  int32 subject = 6;
+  string teacher = 7;
+  int32 day = 8;
+  int32 start = 9;
+  int32 end = 10;
+}
+
+message UpdateTimetableEntryPayload {
+  string school = 1;
+  int32 year = 2;
+  int32 term = 3;
+  int32 grade = 4;
+  int32 stream = 5;
+  int32 subject = 6;
+  int32 day = 7;
+  int32 start = 8;
+  optional string teacher = 9;
+  optional int32 end = 10;
+}
+
+message DeleteTimetableEntryPayload {
+  string school = 1;
+  int32 year = 2;
+  int32 term = 3;
+  int32 grade = 4;
+  int32 stream = 5;
+  int32 subject = 6;
+  int32 day = 7;
+  int32 start = 8;
+}
+
+// --- Attendance (2 actions) ---
+
+message AttendanceRecord {
+  int32 student = 1;
+  int32 status = 2;
+}
+
+message MarkAttendancePayload {
+  string school = 1;
+  int32 year = 2;
+  int32 term = 3;
+  int32 grade = 4;
+  int32 stream = 5;
+  int32 date = 6;
+  repeated AttendanceRecord records = 7;
+}
+
+message DeleteAttendancePayload {
+  string school = 1;
+  int32 year = 2;
+  int32 term = 3;
+  int32 grade = 4;
+  int32 stream = 5;
+  int32 student = 6;
+  int32 date = 7;
+}
+
+// --- Lessons (2 actions) ---
+
+message CreateLessonPayload {
+  string school = 1;
+  int32 year = 2;
+  int32 term = 3;
+  int32 grade = 4;
+  int32 stream = 5;
+  int32 date = 6;
+  int32 subject = 7;
+  string teacher = 8;
+}
+
+message DeleteLessonPayload {
+  string school = 1;
+  int32 year = 2;
+  int32 term = 3;
+  int32 grade = 4;
+  int32 stream = 5;
+  int32 date = 6;
+  int32 subject = 7;
+  string teacher = 8;
+}
+
+// --- Exams (3 actions) ---
+
+message CreateExamPayload {
+  string id = 1;
+  string school = 2;
+  int32 year = 3;
+  int32 term = 4;
+  int32 grade = 5;
+  optional int32 stream = 6;
+  bool personalized = 7;
+  int32 type = 8;
+  int32 start = 9;
+  int32 end = 10;
+  string teacher = 11;
+}
+
+message UpdateExamPayload {
+  string id = 1;
+  optional int32 stream = 2;
+  optional bool personalized = 3;
+  optional int32 type = 4;
+  optional int32 start = 5;
+  optional int32 end = 6;
+  optional string teacher = 7;
+}
+
+message DeleteExamPayload {
+  string id = 1;
+}
+
+// --- Papers (3 actions) ---
+
+message CreatePaperPayload {
+  string school = 1;
+  string exam = 2;
+  int32 subject = 3;
+  optional int32 paper = 4;
+  string invigilator = 5;
+  int64 start = 6;
+  int64 end = 7;
+}
+
+message UpdatePaperPayload {
+  string school = 1;
+  string exam = 2;
+  int32 subject = 3;
+  optional int32 paper = 4;
+  optional string invigilator = 5;
+  optional int64 start = 6;
+  optional int64 end = 7;
+  optional int32 status = 8;
+}
+
+message DeletePaperPayload {
+  string school = 1;
+  string exam = 2;
+  int32 subject = 3;
+  optional int32 paper = 4;
+}
+
+// --- Grades (4 actions) ---
+
+message GradeRecord {
+  int32 student = 1;
+  float score = 2;
+  int32 total = 3;
+}
+
+message MarkGradesPayload {
+  string school = 1;
+  string exam = 2;
+  int32 subject = 3;
+  optional int32 paper = 4;
+  repeated GradeRecord records = 5;
+}
+
+message UpdateGradePayload {
+  string school = 1;
+  string exam = 2;
+  int32 student = 3;
+  int32 subject = 4;
+  optional int32 paper = 5;
+  optional float score = 6;
+  optional int32 total = 7;
+}
+
+message DeleteGradePayload {
+  string school = 1;
+  string exam = 2;
+  int32 student = 3;
+  int32 subject = 4;
+  optional int32 paper = 5;
+}
+
+message UpdateMasteryPayload {
+  string school = 1;
+  int32 student = 2;
+  int32 grade = 3;
+  int32 subject = 4;
+  int32 topic = 5;
+  float score = 6;
+}
+
+// --- Fees (3 actions) ---
+
+message CreateFeePayload {
+  string id = 1;
+  string school = 2;
+  int32 year = 3;
+  int32 term = 4;
+  int32 grade = 5;
+  string title = 6;
+  string description = 7;
+  float amount = 8;
+  bool mandatory = 9;
+  int64 due = 10;
+}
+
+message UpdateFeePayload {
+  string id = 1;
+  optional string title = 2;
+  optional string description = 3;
+  optional float amount = 4;
+  optional bool mandatory = 5;
+  optional int64 due = 6;
+}
+
+message DeleteFeePayload {
+  string id = 1;
+}
+
+// --- Invoices (3 actions) ---
+
+message CreateInvoicePayload {
+  string id = 1;
+  string school = 2;
+  int32 year = 3;
+  int32 term = 4;
+  optional string fee = 5;
+  optional string description = 6;
+  int32 student = 7;
+  float amount = 8;
+  optional int64 due = 9;
+}
+
+message UpdateInvoicePayload {
+  string id = 1;
+  optional string fee = 2;
+  optional string description = 3;
+  optional float amount = 4;
+  optional int32 status = 5;
+  optional int64 due = 6;
+}
+
+message DeleteInvoicePayload {
+  string id = 1;
+}
+
+// --- Payments (4 actions) ---
+
+message CreatePaymentPayload {
+  string id = 1;
+  optional string invoice = 2;
+  optional string school = 3;
+  optional int32 student = 4;
+  float amount = 5;
+  int32 method = 6;
+  optional string reference = 7;
+  optional string recorder = 8;
+  optional int32 date = 9;
+}
+
+message UpdatePaymentPayload {
+  string id = 1;
+  optional string invoice = 2;
+  optional float amount = 3;
+  optional int32 method = 4;
+  optional string reference = 5;
+  optional string recorder = 6;
+  optional int32 date = 7;
+}
+
+message DeletePaymentPayload {
+  string id = 1;
+}
+
+message ApprovePaymentPayload {
+  string id = 1;
+}
+
+// --- Announcements (3 actions) ---
+
+message CreateAnnouncementPayload {
+  string id = 1;
+  string school = 2;
+  string title = 3;
+  string content = 4;
+  optional int32 grade = 5;
+  optional int32 stream = 6;
+  int32 audience = 7;
+  optional string author = 8;
+}
+
+message UpdateAnnouncementPayload {
+  string id = 1;
+  optional string title = 2;
+  optional string content = 3;
+  optional int32 grade = 4;
+  optional int32 stream = 5;
+  optional int32 audience = 6;
+}
+
+message DeleteAnnouncementPayload {
+  string id = 1;
+}
+
+// --- Roles (5 actions) ---
+
+message CreateRolePayload {
+  string id = 1;
+  optional string school = 2;
+  string name = 3;
+  optional string description = 4;
+  bytes permissions = 5;
+}
+
+message UpdateRolePayload {
+  string id = 1;
+  optional string name = 2;
+  optional string description = 3;
+  optional bytes permissions = 4;
+}
+
+message DeleteRolePayload {
+  string id = 1;
+}
+
+message AssignRolePayload {
+  optional string school = 1;
+  string user = 2;
+  string role = 3;
+}
+
+message UnassignRolePayload {
+  optional string school = 1;
+  string user = 2;
+  string role = 3;
+}
+
+// --- Users (2 actions) ---
+
+message UpdateUserPayload {
+  string id = 1;
+  optional string phone = 2;
+  optional string email = 3;
+  optional string name = 4;
+  optional int32 level = 5;
+  optional int32 status = 6;
+}
+
+message DeleteUserPayload {
+  string id = 1;
+}
+
+// --- Settings (1 action) ---
+
+message UpdateSettingsPayload {
+  string school = 1;
+  optional string data = 2;
+  optional string mpesa = 3;
+}
+
+// --- Plans (3 actions) ---
+
+message CreatePlanPayload {
+  string id = 1;
+  string name = 2;
+  optional string description = 3;
+  float amount = 4;
+  int32 levels = 5;
+  optional string features = 6;
+}
+
+message UpdatePlanPayload {
+  string id = 1;
+  optional string name = 2;
+  optional string description = 3;
+  optional float amount = 4;
+  optional int32 levels = 5;
+  optional int32 status = 6;
+  optional string features = 7;
+}
+
+message DeletePlanPayload {
+  string id = 1;
+}
+
+// --- AI Usage (1 action) ---
+
+message UpdateAiUsagePayload {
+  string school = 1;
+  int32 student = 2;
+  int32 year = 3;
+  int32 term = 4;
+  optional int32 allocated = 5;
+  optional int32 used = 6;
+}
+
+// --- Subscriptions (3 actions) ---
+
+message CreateSubscriptionPayload {
+  string school = 1;
+  string plan = 2;
+  int32 year = 3;
+  int32 term = 4;
+  int32 student = 5;
+  optional string invoice = 6;
+  float discount = 7;
+}
+
+message UpdateSubscriptionPayload {
+  string school = 1;
+  string plan = 2;
+  int32 year = 3;
+  int32 term = 4;
+  int32 student = 5;
+  optional string invoice = 6;
+  optional float discount = 7;
+  optional int32 status = 8;
+}
+
+message DeleteSubscriptionPayload {
+  string school = 1;
+  string plan = 2;
+  int32 year = 3;
+  int32 term = 4;
+  int32 student = 5;
+}
+
+// --- Discounts (3 actions) ---
+
+message CreateDiscountPayload {
+  string school = 1;
+  string plan = 2;
+  int32 year = 3;
+  int32 term = 4;
+  int32 grade = 5;
+  float amount = 6;
+  int32 unit = 7;
+}
+
+message UpdateDiscountPayload {
+  string school = 1;
+  string plan = 2;
+  int32 year = 3;
+  int32 term = 4;
+  int32 grade = 5;
+  optional float amount = 6;
+  optional int32 unit = 7;
+}
+
+message DeleteDiscountPayload {
+  string school = 1;
+  string plan = 2;
+  int32 year = 3;
+  int32 term = 4;
+  int32 grade = 5;
+}
+
+// ===========================================================================
+// InsertData (KEPT — used by WatchChanges/SyncDelta and ActionRow)
+// This is the READ direction format (server → client via watch stream)
+// ===========================================================================
 
 message InsertData {
   oneof row {
@@ -99,46 +825,10 @@ message InsertData {
   }
 }
 
-// ---------------------------------------------------------------------------
-// UpdateData — only tables that support updates (~24 variants)
-// Field numbers match InsertData for table-number consistency.
-// ---------------------------------------------------------------------------
-
-message UpdateData {
-  oneof row {
-    UserUpdate user = 1;
-    SchoolUpdate school = 2;
-    StudentUpdate student = 4;
-    GuardianUpdate guardian = 5;
-    DepartmentUpdate department = 6;
-    TeacherUpdate teacher = 7;
-    StaffUpdate staff_member = 8;
-    TermUpdate term = 9;
-    ClassTeacherUpdate class_teacher = 10;
-    AttendanceUpdate attendance = 13;
-    TimetableUpdate timetable = 14;
-    ExamUpdate exam = 16;
-    PaperUpdate paper = 17;
-    GradeUpdate grade = 18;
-    FeeUpdate fee = 19;
-    InvoiceUpdate invoice = 20;
-    PaymentUpdate payment = 21;
-    AnnouncementUpdate announcement = 22;
-    MasteryUpdate mastery = 23;
-    AiUsageUpdate ai_usage = 24;
-    SettingsUpdate settings = 25;
-    RoleUpdate role = 26;
-    PlanUpdate plan = 28;
-    SubscriptionUpdate subscription = 29;
-    DiscountUpdate discount = 30;
-  }
-}
-
 // ===========================================================================
-// Per-table Insert messages
+// Per-table Insert messages (30 total)
+// Used by InsertData for SyncDelta (watch) and ActionRow (push response).
 // All required fields present; optional only where the DB column is nullable.
-// created/updated timestamps are excluded — server sets them.
-// id fields for server-generated PKs are excluded — they come from row_key.
 // ===========================================================================
 
 message UserInsert {
@@ -435,175 +1125,4 @@ message DiscountInsert {
   int32 grade = 5;
   float amount = 6;
   int32 unit = 7;
-}
-
-// ===========================================================================
-// Per-table Update messages
-// All fields optional — only set fields are applied as partial updates.
-// Tables that are insert+delete only have no Update message.
-// ===========================================================================
-
-message UserUpdate {
-  optional string phone = 1;
-  optional string email = 2;
-  optional string name = 3;
-  optional int32 level = 4;
-  optional int32 status = 5;
-}
-
-message SchoolUpdate {
-  optional string name = 1;
-  optional string motto = 2;
-  optional string phone = 3;
-  optional string email = 4;
-  optional int32 county = 5;
-  optional string domain = 6;
-  optional int32 established = 7;
-  optional int32 status = 8;
-}
-
-message StudentUpdate {
-  optional string user = 1;
-  optional string name = 2;
-  optional int32 dob = 3;
-  optional int32 gender = 4;
-  optional string documents = 5;
-  optional int32 admitted = 6;
-  optional int32 status = 7;
-}
-
-message GuardianUpdate {
-  optional int32 relationship = 1;
-  optional int32 role = 2;
-}
-
-message DepartmentUpdate {
-  optional string description = 1;
-}
-
-message TeacherUpdate {
-  optional int32 hired = 1;
-  optional string role = 2;
-  optional string department = 3;
-  optional int32 status = 4;
-}
-
-message StaffUpdate {
-  optional string idnumber = 1;
-  optional string role = 2;
-  optional string department = 3;
-  optional int32 status = 4;
-}
-
-message TermUpdate {
-  optional int64 start = 1;
-  optional int64 end = 2;
-}
-
-message ClassTeacherUpdate {
-  optional int32 start = 1;
-  optional int32 end = 2;
-}
-
-message AttendanceUpdate {
-  optional int32 status = 1;
-}
-
-message TimetableUpdate {
-  optional string teacher = 1;
-  optional int32 end = 2;
-}
-
-message ExamUpdate {
-  optional int32 stream = 1;
-  optional bool personalized = 2;
-  optional int32 type = 3;
-  optional int32 start = 4;
-  optional int32 end = 5;
-  optional string teacher = 6;
-}
-
-message PaperUpdate {
-  optional string invigilator = 1;
-  optional int64 start = 2;
-  optional int64 end = 3;
-  optional int32 status = 4;
-}
-
-message GradeUpdate {
-  optional float score = 1;
-  optional int32 total = 2;
-}
-
-message FeeUpdate {
-  optional string title = 1;
-  optional string description = 2;
-  optional float amount = 3;
-  optional bool mandatory = 4;
-  optional int64 due = 5;
-}
-
-message InvoiceUpdate {
-  optional string fee = 1;
-  optional string description = 2;
-  optional float amount = 3;
-  optional int32 status = 4;
-  optional int64 due = 5;
-}
-
-message PaymentUpdate {
-  optional string invoice = 1;
-  optional float amount = 2;
-  optional int32 method = 3;
-  optional string reference = 4;
-  optional string recorder = 5;
-  optional int32 date = 6;
-}
-
-message AnnouncementUpdate {
-  optional string title = 1;
-  optional string content = 2;
-  optional int32 grade = 3;
-  optional int32 stream = 4;
-  optional int32 audience = 5;
-}
-
-message MasteryUpdate {
-  optional float score = 1;
-}
-
-message AiUsageUpdate {
-  optional int32 allocated = 1;
-  optional int32 used = 2;
-}
-
-message SettingsUpdate {
-  optional string data = 1;
-  optional string mpesa = 2;
-}
-
-message RoleUpdate {
-  optional string name = 1;
-  optional string description = 2;
-  optional bytes permissions = 3;
-}
-
-message PlanUpdate {
-  optional string name = 1;
-  optional string description = 2;
-  optional float amount = 3;
-  optional int32 levels = 4;
-  optional int32 status = 5;
-  optional string features = 6;
-}
-
-message SubscriptionUpdate {
-  optional string invoice = 1;
-  optional float discount = 2;
-  optional int32 status = 3;
-}
-
-message DiscountUpdate {
-  optional float amount = 1;
-  optional int32 unit = 2;
 }
