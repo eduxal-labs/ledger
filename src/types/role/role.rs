@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::db::schema::{roles, scopes};
 use crate::types::id::Id;
 use crate::types::paginated::Offset;

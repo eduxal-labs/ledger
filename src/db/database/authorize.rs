@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::db::database::traits::{Authorize, Load};
 use crate::db::schema::{owners, roles, schools, scopes, users};
 use crate::types::error::{Error, Result};

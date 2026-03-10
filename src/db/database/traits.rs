@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::types::error::Result;
 use crate::types::paginated::Paginated;
 use crate::types::token::Token;

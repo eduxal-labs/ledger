@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::types::id::Id;
 use chrono::Utc;
 use hmac::{Hmac, Mac};

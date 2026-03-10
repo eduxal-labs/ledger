@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::proto::services::sync::*;
 use diesel::QueryableByName;
 use diesel::sql_types::{BigInt, Binary, Bool, Float, Integer, Nullable, SmallInt, Text};

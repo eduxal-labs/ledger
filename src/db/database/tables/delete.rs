@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::types::error::{Error, Result};
 use diesel::RunQueryDsl;
 use diesel::SqliteConnection as Conn;

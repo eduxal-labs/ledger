@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::proto::services::sync::*;
 use crate::types::error::Result;
 use diesel::RunQueryDsl;

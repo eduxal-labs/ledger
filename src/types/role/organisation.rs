@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::types::error::Error;
 use crate::types::id::Id;
 use std::str::FromStr;

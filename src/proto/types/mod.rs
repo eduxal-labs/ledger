@@ -4,6 +4,7 @@ pub mod user {
 pub mod verification {
     tonic::include_proto!("verification");
 }
+#[allow(dead_code)]
 pub mod role {
     tonic::include_proto!("role");
 }

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::config::Config;
 use crate::config::storage::sign;
 use crate::db::changelog::{LOG, Record};

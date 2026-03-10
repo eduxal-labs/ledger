@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use super::delete;
 use super::insert;
 use super::rows::*;
