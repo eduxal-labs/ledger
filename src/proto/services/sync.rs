@@ -12,11 +12,11 @@ pub trait Sync: Send + ::std::marker::Sync + 'static + Sized {
 
     fn new(config: Self::Config) -> SyncServer<Self>;
 
-    fn push_changes(
+    fn push_actions(
         &self,
         token: Token,
-        stream: Streaming<MutationBatch>,
-    ) -> impl Future<Output = Result<mpsc::Receiver<PushAck>>> + Send;
+        stream: Streaming<ActionRequest>,
+    ) -> impl Future<Output = Result<mpsc::Receiver<ActionResponse>>> + Send;
 
     fn watch_changes(
         &self,
@@ -27,15 +27,15 @@ pub trait Sync: Send + ::std::marker::Sync + 'static + Sized {
 
 #[tonic::async_trait]
 impl<T: Sync> sync_server::Sync for T {
-    type PushChangesStream =
-        tokio_stream::wrappers::ReceiverStream<std::result::Result<PushAck, Status>>;
+    type PushActionsStream =
+        tokio_stream::wrappers::ReceiverStream<std::result::Result<ActionResponse, Status>>;
     type WatchChangesStream =
         std::pin::Pin<Box<dyn Stream<Item = std::result::Result<SyncDelta, Status>> + Send>>;
 
-    async fn push_changes(
+    async fn push_actions(
         &self,
-        request: Request<Streaming<MutationBatch>>,
-    ) -> std::result::Result<Response<Self::PushChangesStream>, Status> {
+        request: Request<Streaming<ActionRequest>>,
+    ) -> std::result::Result<Response<Self::PushActionsStream>, Status> {
         let token: Token = request
             .metadata()
             .get("authorization")
@@ -47,13 +47,13 @@ impl<T: Sync> sync_server::Sync for T {
             .parse()?;
 
         let stream = request.into_inner();
-        let rx = Sync::push_changes(self, token, stream).await?;
+        let rx = Sync::push_actions(self, token, stream).await?;
 
         let (tx_out, rx_out) = mpsc::channel(64);
         tokio::spawn(async move {
             let mut rx = rx;
-            while let Some(ack) = rx.recv().await {
-                if tx_out.send(Ok(ack)).await.is_err() {
+            while let Some(resp) = rx.recv().await {
+                if tx_out.send(Ok(resp)).await.is_err() {
                     break;
                 }
             }

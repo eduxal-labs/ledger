@@ -9,7 +9,7 @@ use diesel::sql_types::{BigInt, Binary, Bool, Float, Integer, Nullable, SmallInt
 // users (PK: id)
 // ---------------------------------------------------------------------------
 
-pub fn update_user(conn: &mut Conn, row_key: &str, row: &UserUpdate) -> Result<()> {
+pub fn update_user(conn: &mut Conn, row_key: &str, row: &UpdateUserPayload) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     sql_query(
         "UPDATE users SET \
@@ -36,7 +36,7 @@ pub fn update_user(conn: &mut Conn, row_key: &str, row: &UserUpdate) -> Result<(
 // schools (PK: id)
 // ---------------------------------------------------------------------------
 
-pub fn update_school(conn: &mut Conn, row_key: &str, row: &SchoolUpdate) -> Result<()> {
+pub fn update_school(conn: &mut Conn, row_key: &str, row: &UpdateSchoolPayload) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     sql_query(
         "UPDATE schools SET \
@@ -69,7 +69,7 @@ pub fn update_school(conn: &mut Conn, row_key: &str, row: &SchoolUpdate) -> Resu
 // students (PK: school|adm)
 // ---------------------------------------------------------------------------
 
-pub fn update_student(conn: &mut Conn, row_key: &str, row: &StudentUpdate) -> Result<()> {
+pub fn update_student(conn: &mut Conn, row_key: &str, row: &UpdateStudentPayload) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     let parts: Vec<&str> = row_key.split('|').collect();
     let (school, adm) = (
@@ -108,7 +108,7 @@ pub fn update_student(conn: &mut Conn, row_key: &str, row: &StudentUpdate) -> Re
 // guardians (PK: school|user|student)
 // ---------------------------------------------------------------------------
 
-pub fn update_guardian(conn: &mut Conn, row_key: &str, row: &GuardianUpdate) -> Result<()> {
+pub fn update_guardian(conn: &mut Conn, row_key: &str, row: &UpdateGuardianPayload) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     let parts: Vec<&str> = row_key.split('|').collect();
     let (school, user, student) = (
@@ -139,7 +139,11 @@ pub fn update_guardian(conn: &mut Conn, row_key: &str, row: &GuardianUpdate) -> 
 // departments (PK: school|name)
 // ---------------------------------------------------------------------------
 
-pub fn update_department(conn: &mut Conn, row_key: &str, row: &DepartmentUpdate) -> Result<()> {
+pub fn update_department(
+    conn: &mut Conn,
+    row_key: &str,
+    row: &UpdateDepartmentPayload,
+) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     let parts: Vec<&str> = row_key.split('|').collect();
     let (school, name) = (parts[0], parts[1]);
@@ -161,7 +165,7 @@ pub fn update_department(conn: &mut Conn, row_key: &str, row: &DepartmentUpdate)
 // teachers (PK: school|user)
 // ---------------------------------------------------------------------------
 
-pub fn update_teacher(conn: &mut Conn, row_key: &str, row: &TeacherUpdate) -> Result<()> {
+pub fn update_teacher(conn: &mut Conn, row_key: &str, row: &UpdateTeacherPayload) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     let parts: Vec<&str> = row_key.split('|').collect();
     let (school, user) = (parts[0], parts[1]);
@@ -189,7 +193,7 @@ pub fn update_teacher(conn: &mut Conn, row_key: &str, row: &TeacherUpdate) -> Re
 // staff (PK: school|user)
 // ---------------------------------------------------------------------------
 
-pub fn update_staff(conn: &mut Conn, row_key: &str, row: &StaffUpdate) -> Result<()> {
+pub fn update_staff(conn: &mut Conn, row_key: &str, row: &UpdateStaffPayload) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     let parts: Vec<&str> = row_key.split('|').collect();
     let (school, user) = (parts[0], parts[1]);
@@ -217,7 +221,7 @@ pub fn update_staff(conn: &mut Conn, row_key: &str, row: &StaffUpdate) -> Result
 // terms (PK: school|year|term)
 // ---------------------------------------------------------------------------
 
-pub fn update_term(conn: &mut Conn, row_key: &str, row: &TermUpdate) -> Result<()> {
+pub fn update_term(conn: &mut Conn, row_key: &str, row: &UpdateTermPayload) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     let parts: Vec<&str> = row_key.split('|').collect();
     let (school, year, term) = (
@@ -248,13 +252,16 @@ pub fn update_term(conn: &mut Conn, row_key: &str, row: &TermUpdate) -> Result<(
 
 // ---------------------------------------------------------------------------
 // class_teachers (PK: school|year|term|grade|stream|teacher)
-// NOTE: no `updated` column on this table
+// NOTE: no `updated` column on this table.
+// In the new action-based system class teachers are assigned/unassigned,
+// not updated. This helper is kept for potential future use.
 // ---------------------------------------------------------------------------
 
 pub fn update_class_teacher(
     conn: &mut Conn,
     row_key: &str,
-    row: &ClassTeacherUpdate,
+    start: Option<i32>,
+    end: Option<i32>,
 ) -> Result<()> {
     let parts: Vec<&str> = row_key.split('|').collect();
     let (school, year, term, grade, stream, teacher) = (
@@ -279,8 +286,8 @@ pub fn update_class_teacher(
          \"end\" = COALESCE(?, \"end\") \
          WHERE school = ? AND year = ? AND term = ? AND grade = ? AND stream = ? AND teacher = ?",
     )
-    .bind::<Nullable<Integer>, _>(row.start)
-    .bind::<Nullable<Integer>, _>(row.end)
+    .bind::<Nullable<Integer>, _>(start)
+    .bind::<Nullable<Integer>, _>(end)
     .bind::<Text, _>(school)
     .bind::<Integer, _>(year)
     .bind::<SmallInt, _>(term)
@@ -295,7 +302,9 @@ pub fn update_class_teacher(
 // attendance (PK: school|year|term|grade|stream|student|date)
 // ---------------------------------------------------------------------------
 
-pub fn update_attendance(conn: &mut Conn, row_key: &str, row: &AttendanceUpdate) -> Result<()> {
+// In the new action-based system, attendance is marked via batch records
+// in MarkAttendancePayload. This helper updates a single attendance row.
+pub fn update_attendance(conn: &mut Conn, row_key: &str, status: i16) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     let parts: Vec<&str> = row_key.split('|').collect();
     let (school, year, term, grade, stream, student, date) = (
@@ -321,11 +330,11 @@ pub fn update_attendance(conn: &mut Conn, row_key: &str, row: &AttendanceUpdate)
     );
     sql_query(
         "UPDATE attendance SET \
-         status = COALESCE(?, status), \
+         status = ?, \
          updated = ? \
          WHERE school = ? AND year = ? AND term = ? AND grade = ? AND stream = ? AND student = ? AND date = ?",
     )
-    .bind::<Nullable<SmallInt>, _>(row.status.map(|v| v as i16))
+    .bind::<SmallInt, _>(status)
     .bind::<BigInt, _>(now)
     .bind::<Text, _>(school)
     .bind::<Integer, _>(year)
@@ -342,7 +351,11 @@ pub fn update_attendance(conn: &mut Conn, row_key: &str, row: &AttendanceUpdate)
 // timetable (PK: school|year|term|grade|stream|subject|day|start)
 // ---------------------------------------------------------------------------
 
-pub fn update_timetable(conn: &mut Conn, row_key: &str, row: &TimetableUpdate) -> Result<()> {
+pub fn update_timetable(
+    conn: &mut Conn,
+    row_key: &str,
+    row: &UpdateTimetableEntryPayload,
+) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     let parts: Vec<&str> = row_key.split('|').collect();
     let (school, year, term, grade, stream, subject, day, start) = (
@@ -396,7 +409,7 @@ pub fn update_timetable(conn: &mut Conn, row_key: &str, row: &TimetableUpdate) -
 // exams (PK: id)
 // ---------------------------------------------------------------------------
 
-pub fn update_exam(conn: &mut Conn, row_key: &str, row: &ExamUpdate) -> Result<()> {
+pub fn update_exam(conn: &mut Conn, row_key: &str, row: &UpdateExamPayload) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     sql_query(
         "UPDATE exams SET \
@@ -426,7 +439,7 @@ pub fn update_exam(conn: &mut Conn, row_key: &str, row: &ExamUpdate) -> Result<(
 // paper is nullable in PK
 // ---------------------------------------------------------------------------
 
-pub fn update_paper(conn: &mut Conn, row_key: &str, row: &PaperUpdate) -> Result<()> {
+pub fn update_paper(conn: &mut Conn, row_key: &str, row: &UpdatePaperPayload) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     let parts: Vec<&str> = row_key.split('|').collect();
     let school = parts[0];
@@ -470,7 +483,7 @@ pub fn update_paper(conn: &mut Conn, row_key: &str, row: &PaperUpdate) -> Result
 // paper is nullable in PK
 // ---------------------------------------------------------------------------
 
-pub fn update_grade(conn: &mut Conn, row_key: &str, row: &GradeUpdate) -> Result<()> {
+pub fn update_grade(conn: &mut Conn, row_key: &str, row: &UpdateGradePayload) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     let parts: Vec<&str> = row_key.split('|').collect();
     let school = parts[0];
@@ -513,7 +526,7 @@ pub fn update_grade(conn: &mut Conn, row_key: &str, row: &GradeUpdate) -> Result
 // fees (PK: id)
 // ---------------------------------------------------------------------------
 
-pub fn update_fee(conn: &mut Conn, row_key: &str, row: &FeeUpdate) -> Result<()> {
+pub fn update_fee(conn: &mut Conn, row_key: &str, row: &UpdateFeePayload) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     sql_query(
         "UPDATE fees SET \
@@ -540,7 +553,7 @@ pub fn update_fee(conn: &mut Conn, row_key: &str, row: &FeeUpdate) -> Result<()>
 // invoices (PK: id)
 // ---------------------------------------------------------------------------
 
-pub fn update_invoice(conn: &mut Conn, row_key: &str, row: &InvoiceUpdate) -> Result<()> {
+pub fn update_invoice(conn: &mut Conn, row_key: &str, row: &UpdateInvoicePayload) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     sql_query(
         "UPDATE invoices SET \
@@ -567,7 +580,7 @@ pub fn update_invoice(conn: &mut Conn, row_key: &str, row: &InvoiceUpdate) -> Re
 // payments (PK: id)
 // ---------------------------------------------------------------------------
 
-pub fn update_payment(conn: &mut Conn, row_key: &str, row: &PaymentUpdate) -> Result<()> {
+pub fn update_payment(conn: &mut Conn, row_key: &str, row: &UpdatePaymentPayload) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     sql_query(
         "UPDATE payments SET \
@@ -596,7 +609,11 @@ pub fn update_payment(conn: &mut Conn, row_key: &str, row: &PaymentUpdate) -> Re
 // announcements (PK: id)
 // ---------------------------------------------------------------------------
 
-pub fn update_announcement(conn: &mut Conn, row_key: &str, row: &AnnouncementUpdate) -> Result<()> {
+pub fn update_announcement(
+    conn: &mut Conn,
+    row_key: &str,
+    row: &UpdateAnnouncementPayload,
+) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     sql_query(
         "UPDATE announcements SET \
@@ -623,7 +640,7 @@ pub fn update_announcement(conn: &mut Conn, row_key: &str, row: &AnnouncementUpd
 // mastery (PK: school|student|grade|subject|topic)
 // ---------------------------------------------------------------------------
 
-pub fn update_mastery(conn: &mut Conn, row_key: &str, row: &MasteryUpdate) -> Result<()> {
+pub fn update_mastery(conn: &mut Conn, row_key: &str, row: &UpdateMasteryPayload) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     let parts: Vec<&str> = row_key.split('|').collect();
     let (school, student, grade, subject, topic) = (
@@ -643,11 +660,11 @@ pub fn update_mastery(conn: &mut Conn, row_key: &str, row: &MasteryUpdate) -> Re
     );
     sql_query(
         "UPDATE mastery SET \
-         score = COALESCE(?, score), \
+         score = ?, \
          updated = ? \
          WHERE school = ? AND student = ? AND grade = ? AND subject = ? AND topic = ?",
     )
-    .bind::<Nullable<Float>, _>(row.score)
+    .bind::<Float, _>(row.score)
     .bind::<BigInt, _>(now)
     .bind::<Text, _>(school)
     .bind::<Integer, _>(student)
@@ -662,7 +679,7 @@ pub fn update_mastery(conn: &mut Conn, row_key: &str, row: &MasteryUpdate) -> Re
 // aiusage (PK: school|student|year|term)
 // ---------------------------------------------------------------------------
 
-pub fn update_ai_usage(conn: &mut Conn, row_key: &str, row: &AiUsageUpdate) -> Result<()> {
+pub fn update_ai_usage(conn: &mut Conn, row_key: &str, row: &UpdateAiUsagePayload) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     let parts: Vec<&str> = row_key.split('|').collect();
     let (school, student, year, term) = (
@@ -699,7 +716,7 @@ pub fn update_ai_usage(conn: &mut Conn, row_key: &str, row: &AiUsageUpdate) -> R
 // settings (PK: school)
 // ---------------------------------------------------------------------------
 
-pub fn update_settings(conn: &mut Conn, row_key: &str, row: &SettingsUpdate) -> Result<()> {
+pub fn update_settings(conn: &mut Conn, row_key: &str, row: &UpdateSettingsPayload) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     sql_query(
         "UPDATE settings SET \
@@ -720,7 +737,7 @@ pub fn update_settings(conn: &mut Conn, row_key: &str, row: &SettingsUpdate) -> 
 // roles (PK: id)
 // ---------------------------------------------------------------------------
 
-pub fn update_role(conn: &mut Conn, row_key: &str, row: &RoleUpdate) -> Result<()> {
+pub fn update_role(conn: &mut Conn, row_key: &str, row: &UpdateRolePayload) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     sql_query(
         "UPDATE roles SET \
@@ -743,7 +760,7 @@ pub fn update_role(conn: &mut Conn, row_key: &str, row: &RoleUpdate) -> Result<(
 // plans (PK: id)
 // ---------------------------------------------------------------------------
 
-pub fn update_plan(conn: &mut Conn, row_key: &str, row: &PlanUpdate) -> Result<()> {
+pub fn update_plan(conn: &mut Conn, row_key: &str, row: &UpdatePlanPayload) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     sql_query(
         "UPDATE plans SET \
@@ -772,7 +789,11 @@ pub fn update_plan(conn: &mut Conn, row_key: &str, row: &PlanUpdate) -> Result<(
 // subscriptions (PK: school|plan|year|term|student)
 // ---------------------------------------------------------------------------
 
-pub fn update_subscription(conn: &mut Conn, row_key: &str, row: &SubscriptionUpdate) -> Result<()> {
+pub fn update_subscription(
+    conn: &mut Conn,
+    row_key: &str,
+    row: &UpdateSubscriptionPayload,
+) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     let parts: Vec<&str> = row_key.split('|').collect();
     let (school, plan, year, term, student) = (
@@ -813,7 +834,7 @@ pub fn update_subscription(conn: &mut Conn, row_key: &str, row: &SubscriptionUpd
 // discounts (PK: school|plan|year|term|grade)
 // ---------------------------------------------------------------------------
 
-pub fn update_discount(conn: &mut Conn, row_key: &str, row: &DiscountUpdate) -> Result<()> {
+pub fn update_discount(conn: &mut Conn, row_key: &str, row: &UpdateDiscountPayload) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     let parts: Vec<&str> = row_key.split('|').collect();
     let (school, plan, year, term, grade) = (
