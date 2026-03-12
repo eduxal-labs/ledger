@@ -9,7 +9,7 @@ use tonic::transport::Server;
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + 'static>>;
 
 pub async fn start() -> Result<()> {
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 50051));
+    let addr = std::net::SocketAddr::from(([0, 0, 0, 0], 50051));
     let config = Arc::new(Configuration::default());
     let authenticator = Authenticator::new(config.clone());
     let sync = SyncService::new(config.clone());

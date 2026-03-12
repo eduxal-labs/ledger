@@ -750,6 +750,24 @@ async fn watch_loop(
         last_cursor as u64
     };
 
+    let changelog_len = LOG.with(|cell| cell.borrow().len().unwrap_or(0));
+
+    // If the cursor is misaligned or ahead of the changelog, fall back to
+    // a full snapshot.  This handles:
+    //   - Corrupted/stale lastSeq from the client
+    //   - Server restart with a fresh changelog
+    //   - Client from a different server instance
+    let cursor_valid = cursor % 24 == 0 && cursor <= changelog_len;
+    if !cursor_valid && cursor != 0 {
+        warn!(
+            user_id = %user.id,
+            cursor = cursor,
+            changelog_len = changelog_len,
+            "[SYNC] WATCH → invalid cursor (misaligned or ahead), falling back to full snapshot"
+        );
+        cursor = 0;
+    }
+
     // Track the delete-file cursor separately.  On initial connect we
     // start from the current end of the deletes file (the full snapshot
     // already captured all live rows, so historical deletes are moot).
@@ -766,6 +784,23 @@ async fn watch_loop(
         cursor = LOG.with(|cell| cell.borrow().len().unwrap_or(0));
         delete_cursor = LOG.with(|cell| cell.borrow().delete_cursor().unwrap_or(0));
         info!(user_id = %user.id, cursor = cursor, delete_cursor = delete_cursor, "[SYNC] WATCH → snapshot done, cursor={}, delete_cursor={}", cursor, delete_cursor);
+
+        // Send a bookmark delta so the client learns the cursor position
+        // after the full snapshot.  table=0 signals "no data, just a cursor
+        // update" — the client should persist seq as lastSeq and ignore
+        // the rest of the fields.
+        let bookmark = SyncDelta {
+            seq: cursor as i64,
+            table: 0,
+            operation: OP_INSERT,
+            row_key: String::new(),
+            data: None,
+            file_urls: vec![],
+        };
+        if tx.send(Ok(bookmark)).await.is_err() {
+            return Err(());
+        }
+        info!(user_id = %user.id, seq = cursor, "[SYNC] WATCH → sent snapshot bookmark seq={}", cursor);
     }
 
     // --- Incremental sync loop ---
@@ -812,6 +847,8 @@ async fn watch_loop(
         delete_cursor = new_delete_cursor;
 
         let mut needs_rebuild = false;
+
+        let mut deltas_sent: usize = 0;
 
         // Collect changed tables with minimum timestamps (Insert/Update only).
         let mut table_min_ts: HashMap<u8, i64> = HashMap::new();
@@ -898,6 +935,7 @@ async fn watch_loop(
                 if tx.send(Ok(delta)).await.is_err() {
                     return Err(());
                 }
+                deltas_sent += 1;
             }
         }
 
@@ -940,6 +978,23 @@ async fn watch_loop(
             );
 
             if tx.send(Ok(delta)).await.is_err() {
+                return Err(());
+            }
+            deltas_sent += 1;
+        }
+
+        // If we processed changelog records but sent no visible deltas,
+        // send a bookmark so the client advances its stored cursor.
+        if deltas_sent == 0 && (!records.is_empty() || !delete_records.is_empty()) {
+            let bookmark = SyncDelta {
+                seq: cursor as i64,
+                table: 0,
+                operation: OP_INSERT,
+                row_key: String::new(),
+                data: None,
+                file_urls: vec![],
+            };
+            if tx.send(Ok(bookmark)).await.is_err() {
                 return Err(());
             }
         }

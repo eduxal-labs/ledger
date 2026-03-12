@@ -637,6 +637,7 @@ BEGIN
         WHERE school = NEW.school
           AND start < NEW.end
           AND end   > NEW.start
+          AND NOT (year = NEW.year AND term = NEW.term)
     );
 END;
 
