@@ -418,38 +418,53 @@ Follow conventional commits:
 Write detailed commit bodies explaining **what** was added and **why**, not just file lists. Group related changes into logical commits.
 ---
 
-## Two-Agent Workflow
+## Three-Agent Workflow
 
-This project uses two distinct agent roles that share this `AGENT.md` as their common rule book.
+This project uses three distinct agent roles that share this `AGENT.md` as their common rule book.
+
+### Examiner Agent
+
+**Trigger:** The user describes a feature, change, bug fix, or any non-trivial request in conversational language.
+
+**Responsibilities:**
+1. Read `AGENT.md` in full.
+2. Read relevant source files in `src/` and `migrations/` to understand current project state.
+3. Ask the user as many clarifying questions as needed — do not guess.
+4. Research the codebase thoroughly: understand current implementations, identify patterns, find bugs, map dependencies.
+5. Produce a **comprehensive, detailed task list** organized into tracks with dependency annotations, and **write it into `TASKS.md`**.
+6. Each task MUST be **self-sufficient** for the executor — see task format below.
+7. Annotate which tasks can run in parallel and which have blocking dependencies.
+
+**The examiner never writes application code.** It only researches and writes tasks.
 
 ### Orchestrator Agent
 
-**Trigger:** The user describes a feature, change, bug fix, or any non-trivial request.
+**Trigger:** The user says simple words like "continue", "go ahead", "next", or similar — when `TASKS.md` has unchecked tasks.
 
 **Responsibilities:**
 1. Read `AGENT.md` in full.
-2. Read relevant source files in `src/` to understand current project state.
-3. Read `migrations/` if the work touches the database layer.
-4. Ask the user as many clarifying questions as needed — do not guess.
-5. Produce a detailed, ordered task list and **insert it into `TASKS.md`** at the appropriate position (based on priority/dependency).
-6. Remove completed tasks from `TASKS.md` when the user confirms they are done or when the executor marks them.
-7. Each task MUST be **self-sufficient** for the executor — see task format below.
+2. Read `TASKS.md` — scan all unchecked `[ ]` tasks.
+3. Identify which tasks can be executed **in parallel** (no dependencies between them) and which must be **sequential** (blocking dependencies).
+4. For parallel-eligible tasks: spawn multiple executor sub-agents simultaneously, assigning each to different files/directories to avoid conflicts.
+5. For sequential/blocking tasks: execute them one at a time in dependency order.
+6. After each task (or parallel batch) completes, verify the task is marked `[x]`.
+7. After each task or batch, trigger a git commit with a descriptive message.
+8. If the task list is now empty (all done), delete all content from `TASKS.md` except the header.
 
-**The orchestrator never writes application code.** It only writes tasks.
+**The orchestrator never writes application code directly.** It delegates to executor agents and manages the execution flow.
 
 ### Executor Agent
 
-**Trigger:** The user says simple words like "continue", "go ahead", "next", or similar.
+**Trigger:** Spawned by the orchestrator (as a sub-agent) to execute a specific task.
 
 **Responsibilities:**
-1. Read `AGENT.md` in full.
-2. Read `TASKS.md` — pick up the first unchecked `[ ]` task.
-3. The task itself should contain everything needed. If clarification is needed, read the source file(s) referenced in the task. Avoid exploring the broader codebase.
-4. Execute the task exactly as specified.
-5. Mark the task as `[x]` in `TASKS.md`.
-6. If the task list is now empty (all done), delete all content from `TASKS.md` except the header.
+1. Read `AGENT.md` in full (or receive relevant sections from orchestrator).
+2. The task specification (from `TASKS.md`) should contain everything needed. If clarification is needed, read the source file(s) referenced in the task. Avoid exploring the broader codebase.
+3. Execute the task exactly as specified.
+4. Mark the task as `[x]` in `TASKS.md`.
+5. Report completion (or failure with details) back to the orchestrator.
 
-**The executor never invents new tasks or architectural decisions.** It executes what the orchestrator wrote.
+**The executor never invents new tasks or architectural decisions.** It executes what the examiner wrote and the orchestrator dispatched.
 
 ### Self-Sufficient Task Format
 
@@ -458,17 +473,18 @@ Every task in `TASKS.md` must follow this structure so the executor can work wit
 ```
 ### Task XX: <Title>
 **Files to create/modify:** `src/path/to/file.rs`
-**Reference files to read:** `../server/src/path/to/reference.rs` (if porting)
+**Reference files to read:** `src/path/to/reference.rs` (if needed)
 **Depends on:** Task YY (if any)
+**Parallel group:** P1 (tasks sharing a group ID can run in parallel)
 
 **Specification:**
 Exact description with method signatures, struct definitions, imports.
-If porting from ../server/, specify what to copy vs what to change.
+If the executor needs content from another file, the examiner INLINES it here.
 
 **Update after completion:**
 - [ ] Mark this task `[x]`
+- [ ] Orchestrator: git commit after this task
 ```
-
 ---
 
 ## Reference: `../server/` as Pattern Source

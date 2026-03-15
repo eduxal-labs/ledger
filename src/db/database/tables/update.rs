@@ -415,7 +415,7 @@ pub fn update_exam(conn: &mut Conn, row_key: &str, row: &UpdateExamPayload) -> R
     let now = chrono::Utc::now().timestamp();
     sql_query(
         "UPDATE exams SET \
-         stream = COALESCE(?, stream), \
+         name = COALESCE(?, name), \
          personalized = COALESCE(?, personalized), \
          \"type\" = COALESCE(?, \"type\"), \
          start = COALESCE(?, start), \
@@ -424,7 +424,7 @@ pub fn update_exam(conn: &mut Conn, row_key: &str, row: &UpdateExamPayload) -> R
          updated = ? \
          WHERE id = ?",
     )
-    .bind::<Nullable<SmallInt>, _>(row.stream.map(|v| v as i16))
+    .bind::<Nullable<Text>, _>(row.name.as_deref())
     .bind::<Nullable<Bool>, _>(row.personalized)
     .bind::<Nullable<SmallInt>, _>(row.r#type.map(|v| v as i16))
     .bind::<Nullable<Integer>, _>(row.start)
@@ -447,7 +447,7 @@ pub fn update_paper(conn: &mut Conn, row_key: &str, row: &UpdatePaperPayload) ->
     let school = parts[0];
     let exam = parts[1];
     let subject = parts[2]
-        .parse::<i16>()
+        .parse::<i32>()
         .map_err(|_| crate::types::error::Error::Internal)?;
     let paper: Option<i16> = if parts[3].is_empty() {
         None
@@ -460,6 +460,7 @@ pub fn update_paper(conn: &mut Conn, row_key: &str, row: &UpdatePaperPayload) ->
     };
     sql_query(
         "UPDATE papers SET \
+         topic = COALESCE(?, topic), \
          invigilator = COALESCE(?, invigilator), \
          start = COALESCE(?, start), \
          \"end\" = COALESCE(?, \"end\"), \
@@ -467,6 +468,7 @@ pub fn update_paper(conn: &mut Conn, row_key: &str, row: &UpdatePaperPayload) ->
          updated = ? \
          WHERE school = ? AND exam = ? AND subject = ? AND paper IS ?",
     )
+    .bind::<Nullable<Integer>, _>(row.topic)
     .bind::<Nullable<Text>, _>(row.invigilator.as_deref())
     .bind::<Nullable<BigInt>, _>(row.start)
     .bind::<Nullable<BigInt>, _>(row.end)
@@ -474,7 +476,7 @@ pub fn update_paper(conn: &mut Conn, row_key: &str, row: &UpdatePaperPayload) ->
     .bind::<BigInt, _>(now)
     .bind::<Text, _>(school)
     .bind::<Text, _>(exam)
-    .bind::<SmallInt, _>(subject)
+    .bind::<Integer, _>(subject)
     .bind::<Nullable<SmallInt>, _>(paper)
     .execute(conn)?;
     Ok(())
@@ -645,34 +647,30 @@ pub fn update_announcement(
 pub fn update_mastery(conn: &mut Conn, row_key: &str, row: &UpdateMasteryPayload) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     let parts: Vec<&str> = row_key.split('|').collect();
-    let (school, student, grade, subject, topic) = (
+    let (school, student, subject, topic) = (
         parts[0],
         parts[1]
             .parse::<i32>()
             .map_err(|_| crate::types::error::Error::Internal)?,
         parts[2]
-            .parse::<i16>()
+            .parse::<i32>()
             .map_err(|_| crate::types::error::Error::Internal)?,
         parts[3]
-            .parse::<i16>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
-        parts[4]
-            .parse::<i16>()
+            .parse::<i32>()
             .map_err(|_| crate::types::error::Error::Internal)?,
     );
     sql_query(
         "UPDATE mastery SET \
          score = ?, \
          updated = ? \
-         WHERE school = ? AND student = ? AND grade = ? AND subject = ? AND topic = ?",
+         WHERE school = ? AND student = ? AND subject = ? AND topic = ?",
     )
     .bind::<Float, _>(row.score)
     .bind::<BigInt, _>(now)
     .bind::<Text, _>(school)
     .bind::<Integer, _>(student)
-    .bind::<SmallInt, _>(grade)
-    .bind::<SmallInt, _>(subject)
-    .bind::<SmallInt, _>(topic)
+    .bind::<Integer, _>(subject)
+    .bind::<Integer, _>(topic)
     .execute(conn)?;
     Ok(())
 }
@@ -710,27 +708,6 @@ pub fn update_ai_usage(conn: &mut Conn, row_key: &str, row: &UpdateAiUsagePayloa
     .bind::<Integer, _>(student)
     .bind::<Integer, _>(year)
     .bind::<SmallInt, _>(term)
-    .execute(conn)?;
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// settings (PK: school)
-// ---------------------------------------------------------------------------
-
-pub fn update_settings(conn: &mut Conn, row_key: &str, row: &UpdateSettingsPayload) -> Result<()> {
-    let now = chrono::Utc::now().timestamp();
-    sql_query(
-        "UPDATE settings SET \
-         data = COALESCE(?, data), \
-         mpesa = COALESCE(?, mpesa), \
-         updated = ? \
-         WHERE school = ?",
-    )
-    .bind::<Nullable<Text>, _>(row.data.as_deref())
-    .bind::<Nullable<Text>, _>(row.mpesa.as_deref())
-    .bind::<BigInt, _>(now)
-    .bind::<Text, _>(row_key)
     .execute(conn)?;
     Ok(())
 }
@@ -828,6 +805,98 @@ pub fn update_subscription(
     .bind::<Integer, _>(year)
     .bind::<SmallInt, _>(term)
     .bind::<Integer, _>(student)
+    .execute(conn)?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// subjects catalog (PK: id)
+// ---------------------------------------------------------------------------
+
+pub fn update_subject_catalog(conn: &mut Conn, id: i32, row: &UpdateSubjectPayload) -> Result<()> {
+    let now = chrono::Utc::now().timestamp();
+    sql_query(
+        "UPDATE subjects SET \
+         name = COALESCE(?, name), \
+         curriculum = COALESCE(?, curriculum), \
+         updated = ? \
+         WHERE id = ?",
+    )
+    .bind::<Nullable<Text>, _>(row.name.as_deref())
+    .bind::<Nullable<SmallInt>, _>(row.curriculum.map(|v| v as i16))
+    .bind::<BigInt, _>(now)
+    .bind::<Integer, _>(id)
+    .execute(conn)?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// topics (PK: id)
+// ---------------------------------------------------------------------------
+
+pub fn update_topic(conn: &mut Conn, id: i32, row: &UpdateTopicPayload) -> Result<()> {
+    let now = chrono::Utc::now().timestamp();
+    sql_query(
+        "UPDATE topics SET \
+         subject = COALESCE(?, subject), \
+         grade = COALESCE(?, grade), \
+         name = COALESCE(?, name), \
+         updated = ? \
+         WHERE id = ?",
+    )
+    .bind::<Nullable<Integer>, _>(row.subject)
+    .bind::<Nullable<SmallInt>, _>(row.grade.map(|v| v as i16))
+    .bind::<Nullable<Text>, _>(row.name.as_deref())
+    .bind::<BigInt, _>(now)
+    .bind::<Integer, _>(id)
+    .execute(conn)?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// streams (PK: school|grade|stream)
+// ---------------------------------------------------------------------------
+
+pub fn update_stream(conn: &mut Conn, row: &UpdateStreamPayload) -> Result<()> {
+    let now = chrono::Utc::now().timestamp();
+    sql_query(
+        "UPDATE streams SET \
+         name = COALESCE(?, name), \
+         updated = ? \
+         WHERE school = ? AND grade = ? AND stream = ?",
+    )
+    .bind::<Nullable<Text>, _>(row.name.as_deref())
+    .bind::<BigInt, _>(now)
+    .bind::<Text, _>(&row.school)
+    .bind::<SmallInt, _>(row.grade as i16)
+    .bind::<SmallInt, _>(row.stream as i16)
+    .execute(conn)?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// mpesa (PK: school)
+// ---------------------------------------------------------------------------
+
+pub fn update_mpesa(conn: &mut Conn, row: &UpdateMpesaPayload) -> Result<()> {
+    let now = chrono::Utc::now().timestamp();
+    sql_query(
+        "UPDATE mpesa SET \
+         consumer_key = COALESCE(?, consumer_key), \
+         consumer_secret = COALESCE(?, consumer_secret), \
+         passkey = COALESCE(?, passkey), \
+         shortcode = COALESCE(?, shortcode), \
+         env = COALESCE(?, env), \
+         updated = ? \
+         WHERE school = ?",
+    )
+    .bind::<Nullable<Text>, _>(row.consumer_key.as_deref())
+    .bind::<Nullable<Text>, _>(row.consumer_secret.as_deref())
+    .bind::<Nullable<Text>, _>(row.passkey.as_deref())
+    .bind::<Nullable<Text>, _>(row.shortcode.as_deref())
+    .bind::<Nullable<SmallInt>, _>(row.env.map(|v| v as i16))
+    .bind::<BigInt, _>(now)
+    .bind::<Text, _>(&row.school)
     .execute(conn)?;
     Ok(())
 }

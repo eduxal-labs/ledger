@@ -94,6 +94,20 @@ pub mod sync_action {
     pub const CREATE_DISCOUNT: i32 = 74;
     pub const UPDATE_DISCOUNT: i32 = 75;
     pub const DELETE_DISCOUNT: i32 = 76;
+    pub const CREATE_SUBJECT: i32 = 77;
+    pub const UPDATE_SUBJECT: i32 = 78;
+    pub const DELETE_SUBJECT: i32 = 79;
+    pub const CREATE_TOPIC: i32 = 80;
+    pub const UPDATE_TOPIC: i32 = 81;
+    pub const DELETE_TOPIC: i32 = 82;
+    pub const CREATE_STREAM: i32 = 83;
+    pub const UPDATE_STREAM: i32 = 84;
+    pub const DELETE_STREAM: i32 = 85;
+    pub const CREATE_MPESA: i32 = 86;
+    pub const UPDATE_MPESA: i32 = 87;
+    pub const DELETE_MPESA: i32 = 88;
+    pub const ADD_EXAM_GRADE: i32 = 89;
+    pub const REMOVE_EXAM_GRADE: i32 = 90;
 }
 
 /// Result of executing a single action. Contains the rows to return to the
@@ -258,6 +272,30 @@ pub fn action_permission(action_id: i32) -> Result<(Resource, Action)> {
         UPDATE_DISCOUNT => Ok((Resource::Plans, Action::Update)),
         DELETE_DISCOUNT => Ok((Resource::Plans, Action::Delete)),
 
+        // Subjects (global catalog)
+        CREATE_SUBJECT => Ok((Resource::Subjects, Action::Create)),
+        UPDATE_SUBJECT => Ok((Resource::Subjects, Action::Update)),
+        DELETE_SUBJECT => Ok((Resource::Subjects, Action::Delete)),
+
+        // Topics (global catalog)
+        CREATE_TOPIC => Ok((Resource::Subjects, Action::Create)),
+        UPDATE_TOPIC => Ok((Resource::Subjects, Action::Update)),
+        DELETE_TOPIC => Ok((Resource::Subjects, Action::Delete)),
+
+        // Streams
+        CREATE_STREAM => Ok((Resource::Schools, Action::Create)),
+        UPDATE_STREAM => Ok((Resource::Schools, Action::Update)),
+        DELETE_STREAM => Ok((Resource::Schools, Action::Delete)),
+
+        // Mpesa
+        CREATE_MPESA => Ok((Resource::Schools, Action::Create)),
+        UPDATE_MPESA => Ok((Resource::Schools, Action::Update)),
+        DELETE_MPESA => Ok((Resource::Schools, Action::Delete)),
+
+        // ExamGrades
+        ADD_EXAM_GRADE => Ok((Resource::Exams, Action::Assign)),
+        REMOVE_EXAM_GRADE => Ok((Resource::Exams, Action::Unassign)),
+
         _ => {
             tracing::error!("action_permission: unknown action {action_id}");
             Err(Error::Internal)
@@ -301,12 +339,16 @@ const TBL_PAYMENTS: i32 = 21;
 const TBL_ANNOUNCEMENTS: i32 = 22;
 const TBL_MASTERY: i32 = 23;
 const TBL_AI_USAGE: i32 = 24;
-const TBL_SETTINGS: i32 = 25;
 const TBL_ROLES: i32 = 26;
 const TBL_SCOPES: i32 = 27;
 const TBL_PLANS: i32 = 28;
 const TBL_SUBSCRIPTIONS: i32 = 29;
 const TBL_DISCOUNTS: i32 = 30;
+const TBL_SUBJECT_CATALOG: i32 = 31;
+const TBL_TOPICS: i32 = 32;
+const TBL_STREAMS: i32 = 33;
+const TBL_MPESA: i32 = 34;
+const TBL_EXAM_GRADES: i32 = 35;
 
 // Changelog operation constants
 const OP_INSERT: u8 = 0;
@@ -355,22 +397,6 @@ fn fetch_owner(conn: &mut Conn, school: &str, user: &str) -> Result<OwnerRow> {
         .next()
         .ok_or_else(|| {
             tracing::error!("owner not found: {school}|{user}");
-            Error::Internal
-        })
-}
-
-fn fetch_settings(conn: &mut Conn, school: &str) -> Result<SettingsRow> {
-    sql_query("SELECT school, data, mpesa, created, updated FROM settings WHERE school = ?")
-        .bind::<Text, _>(school)
-        .load::<SettingsRow>(conn)
-        .map_err(|e| {
-            tracing::error!("fetch_settings failed: {e}");
-            Error::Internal
-        })?
-        .into_iter()
-        .next()
-        .ok_or_else(|| {
-            tracing::error!("settings not found: {school}");
             Error::Internal
         })
 }
@@ -592,34 +618,34 @@ fn fetch_class_teacher(
     })
 }
 
-fn fetch_subject(
+fn fetch_subject_teacher(
     conn: &mut Conn,
     school: &str,
     year: i32,
     term: i16,
     grade: i16,
     stream: i16,
-    subject: i16,
-) -> Result<SubjectRow> {
+    subject: i32,
+) -> Result<SubjectTeacherRow> {
     sql_query(
         "SELECT school, year, term, grade, stream, subject, teacher, created \
-         FROM subjects WHERE school = ? AND year = ? AND term = ? AND grade = ? AND stream = ? AND subject = ?",
+         FROM subject_teachers WHERE school = ? AND year = ? AND term = ? AND grade = ? AND stream = ? AND subject = ?",
     )
     .bind::<Text, _>(school)
     .bind::<diesel::sql_types::Integer, _>(year)
     .bind::<diesel::sql_types::SmallInt, _>(term)
     .bind::<diesel::sql_types::SmallInt, _>(grade)
     .bind::<diesel::sql_types::SmallInt, _>(stream)
-    .bind::<diesel::sql_types::SmallInt, _>(subject)
-    .load::<SubjectRow>(conn)
+    .bind::<diesel::sql_types::Integer, _>(subject)
+    .load::<SubjectTeacherRow>(conn)
     .map_err(|e| {
-        tracing::error!("fetch_subject failed: {e}");
+        tracing::error!("fetch_subject_teacher failed: {e}");
         Error::Internal
     })?
     .into_iter()
     .next()
     .ok_or_else(|| {
-        tracing::error!("subject not found: {school}|{year}|{term}|{grade}|{stream}|{subject}");
+        tracing::error!("subject_teacher not found: {school}|{year}|{term}|{grade}|{stream}|{subject}");
         Error::Internal
     })
 }
@@ -739,7 +765,7 @@ fn fetch_lesson(
 
 fn fetch_exam(conn: &mut Conn, id: &str) -> Result<ExamRow> {
     sql_query(
-        "SELECT id, school, year, term, grade, stream, personalized, type, start, \"end\", teacher, created, updated \
+        "SELECT id, school, name, year, term, personalized, \"type\", start, \"end\", teacher, created, updated \
          FROM exams WHERE id = ?",
     )
     .bind::<Text, _>(id)
@@ -760,16 +786,16 @@ fn fetch_paper(
     conn: &mut Conn,
     school: &str,
     exam: &str,
-    subject: i16,
+    subject: i32,
     paper: Option<i16>,
 ) -> Result<PaperRow> {
     sql_query(
-        "SELECT school, exam, subject, paper, invigilator, start, \"end\", status, created, updated \
+        "SELECT school, exam, subject, paper, topic, invigilator, start, \"end\", status, created, updated \
          FROM papers WHERE school = ? AND exam = ? AND subject = ? AND paper IS ?",
     )
     .bind::<Text, _>(school)
     .bind::<Text, _>(exam)
-    .bind::<diesel::sql_types::SmallInt, _>(subject)
+    .bind::<diesel::sql_types::Integer, _>(subject)
     .bind::<diesel::sql_types::Nullable<diesel::sql_types::SmallInt>, _>(paper)
     .load::<PaperRow>(conn)
     .map_err(|e| {
@@ -789,7 +815,7 @@ fn fetch_grade(
     school: &str,
     exam: &str,
     student: i32,
-    subject: i16,
+    subject: i32,
     paper: Option<i16>,
 ) -> Result<GradeRow> {
     sql_query(
@@ -799,7 +825,7 @@ fn fetch_grade(
     .bind::<Text, _>(school)
     .bind::<Text, _>(exam)
     .bind::<diesel::sql_types::Integer, _>(student)
-    .bind::<diesel::sql_types::SmallInt, _>(subject)
+    .bind::<diesel::sql_types::Integer, _>(subject)
     .bind::<diesel::sql_types::Nullable<diesel::sql_types::SmallInt>, _>(paper)
     .load::<GradeRow>(conn)
     .map_err(|e| {
@@ -818,19 +844,17 @@ fn fetch_mastery(
     conn: &mut Conn,
     school: &str,
     student: i32,
-    grade: i16,
-    subject: i16,
-    topic: i16,
+    subject: i32,
+    topic: i32,
 ) -> Result<MasteryRow> {
     sql_query(
-        "SELECT school, student, grade, subject, topic, score, created, updated \
-         FROM mastery WHERE school = ? AND student = ? AND grade = ? AND subject = ? AND topic = ?",
+        "SELECT school, student, subject, topic, score, created, updated \
+         FROM mastery WHERE school = ? AND student = ? AND subject = ? AND topic = ?",
     )
     .bind::<Text, _>(school)
     .bind::<diesel::sql_types::Integer, _>(student)
-    .bind::<diesel::sql_types::SmallInt, _>(grade)
-    .bind::<diesel::sql_types::SmallInt, _>(subject)
-    .bind::<diesel::sql_types::SmallInt, _>(topic)
+    .bind::<diesel::sql_types::Integer, _>(subject)
+    .bind::<diesel::sql_types::Integer, _>(topic)
     .load::<MasteryRow>(conn)
     .map_err(|e| {
         tracing::error!("fetch_mastery failed: {e}");
@@ -839,9 +863,67 @@ fn fetch_mastery(
     .into_iter()
     .next()
     .ok_or_else(|| {
-        tracing::error!("mastery not found: {school}|{student}|{grade}|{subject}|{topic}");
+        tracing::error!("mastery not found: {school}|{student}|{subject}|{topic}");
         Error::Internal
     })
+}
+
+fn fetch_subject_catalog(conn: &mut Conn, id: i32) -> Result<SubjectCatalogRow> {
+    sql_query("SELECT id, name, curriculum, created, updated FROM subjects WHERE id = ?")
+        .bind::<diesel::sql_types::Integer, _>(id)
+        .load::<SubjectCatalogRow>(conn)
+        .map_err(|e| {
+            tracing::error!("fetch_subject_catalog failed: {e}");
+            Error::Internal
+        })?
+        .into_iter()
+        .next()
+        .ok_or_else(|| {
+            tracing::error!("subject not found: {id}");
+            Error::Internal
+        })
+}
+
+fn fetch_topic(conn: &mut Conn, id: i32) -> Result<TopicRow> {
+    sql_query("SELECT id, subject, grade, name, created, updated FROM topics WHERE id = ?")
+        .bind::<diesel::sql_types::Integer, _>(id)
+        .load::<TopicRow>(conn)
+        .map_err(|e| {
+            tracing::error!("fetch_topic failed: {e}");
+            Error::Internal
+        })?
+        .into_iter()
+        .next()
+        .ok_or_else(|| {
+            tracing::error!("topic not found: {id}");
+            Error::Internal
+        })
+}
+
+fn fetch_stream(conn: &mut Conn, school: &str, grade: i16, stream: i16) -> Result<StreamRow> {
+    sql_query(
+        "SELECT school, grade, stream, name, created, updated FROM streams WHERE school = ? AND grade = ? AND stream = ?",
+    )
+    .bind::<Text, _>(school)
+    .bind::<diesel::sql_types::SmallInt, _>(grade)
+    .bind::<diesel::sql_types::SmallInt, _>(stream)
+    .load::<StreamRow>(conn)
+    .map_err(|e| { tracing::error!("fetch_stream failed: {e}"); Error::Internal })?
+    .into_iter()
+    .next()
+    .ok_or_else(|| { tracing::error!("stream not found: {school}|{grade}|{stream}"); Error::Internal })
+}
+
+fn fetch_mpesa(conn: &mut Conn, school: &str) -> Result<MpesaRow> {
+    sql_query(
+        "SELECT school, consumer_key, consumer_secret, passkey, shortcode, env, created, updated FROM mpesa WHERE school = ?",
+    )
+    .bind::<Text, _>(school)
+    .load::<MpesaRow>(conn)
+    .map_err(|e| { tracing::error!("fetch_mpesa failed: {e}"); Error::Internal })?
+    .into_iter()
+    .next()
+    .ok_or_else(|| { tracing::error!("mpesa not found: {school}"); Error::Internal })
 }
 
 // ---------------------------------------------------------------------------
@@ -1193,9 +1275,6 @@ pub fn execute_action(conn: &mut Conn, action_id: i32, payload: &[u8]) -> Result
         UPDATE_USER => handle_update_user(conn, payload),
         DELETE_USER => handle_delete_user(conn, payload),
 
-        // Settings
-        UPDATE_SETTINGS => handle_update_settings(conn, payload),
-
         // Plans
         CREATE_PLAN => handle_create_plan(conn, payload),
         UPDATE_PLAN => handle_update_plan(conn, payload),
@@ -1213,6 +1292,30 @@ pub fn execute_action(conn: &mut Conn, action_id: i32, payload: &[u8]) -> Result
         CREATE_DISCOUNT => handle_create_discount(conn, payload),
         UPDATE_DISCOUNT => handle_update_discount(conn, payload),
         DELETE_DISCOUNT => handle_delete_discount(conn, payload),
+
+        // Subjects (global catalog)
+        CREATE_SUBJECT => handle_create_subject(conn, payload),
+        UPDATE_SUBJECT => handle_update_subject(conn, payload),
+        DELETE_SUBJECT => handle_delete_subject(conn, payload),
+
+        // Topics (global catalog)
+        CREATE_TOPIC => handle_create_topic(conn, payload),
+        UPDATE_TOPIC => handle_update_topic(conn, payload),
+        DELETE_TOPIC => handle_delete_topic(conn, payload),
+
+        // Streams
+        CREATE_STREAM => handle_create_stream(conn, payload),
+        UPDATE_STREAM => handle_update_stream(conn, payload),
+        DELETE_STREAM => handle_delete_stream(conn, payload),
+
+        // Mpesa
+        CREATE_MPESA => handle_create_mpesa(conn, payload),
+        UPDATE_MPESA => handle_update_mpesa(conn, payload),
+        DELETE_MPESA => handle_delete_mpesa(conn, payload),
+
+        // ExamGrades
+        ADD_EXAM_GRADE => handle_add_exam_grade(conn, payload),
+        REMOVE_EXAM_GRADE => handle_remove_exam_grade(conn, payload),
 
         _ => {
             tracing::error!("execute_action: unknown action {action_id}");
@@ -1273,20 +1376,10 @@ fn handle_create_school(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult>
     insert::insert_owner(conn, &owner_insert)?;
     append_log(log_user, TBL_OWNERS as u8, OP_INSERT, 0)?;
 
-    // 4. Insert default settings.
-    let settings_insert = SettingsInsert {
-        school: p.id.clone(),
-        data: "{}".to_owned(),
-        mpesa: None,
-    };
-    insert::insert_settings(conn, &settings_insert)?;
-    append_log(log_user, TBL_SETTINGS as u8, OP_INSERT, 0)?;
-
-    // 5. Fetch all created rows and build response.
+    // 4. Fetch all created rows and build response.
     let user_row = fetch_user(conn, &owner_user.id)?;
     let school_row = fetch_school(conn, &p.id)?;
     let owner_row = fetch_owner(conn, &p.id, &owner_user.id)?;
-    let settings_row = fetch_settings(conn, &p.id)?;
 
     let rows = vec![
         upsert_row(
@@ -1308,13 +1401,6 @@ fn handle_create_school(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult>
             owner_row.row_key(),
             InsertData {
                 row: Some(insert_data::Row::Owner((&owner_row).into())),
-            },
-        ),
-        upsert_row(
-            TBL_SETTINGS,
-            settings_row.row_key(),
-            InsertData {
-                row: Some(insert_data::Row::Settings((&settings_row).into())),
             },
         ),
     ];
@@ -2015,7 +2101,7 @@ fn handle_assign_subject(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult
     let p: AssignSubjectPayload = decode(payload)?;
     let log_user = Id::system();
 
-    let sub_insert = SubjectInsert {
+    let sub_insert = SubjectTeacherInsert {
         school: p.school.clone(),
         year: p.year,
         term: p.term,
@@ -2024,23 +2110,23 @@ fn handle_assign_subject(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult
         subject: p.subject,
         teacher: p.teacher.clone(),
     };
-    insert::insert_subject(conn, &sub_insert)?;
+    insert::insert_subject_teacher(conn, &sub_insert)?;
     append_log(log_user, TBL_SUBJECTS as u8, OP_INSERT, 0)?;
 
-    let row = fetch_subject(
+    let row = fetch_subject_teacher(
         conn,
         &p.school,
         p.year,
         p.term as i16,
         p.grade as i16,
         p.stream as i16,
-        p.subject as i16,
+        p.subject as i32,
     )?;
     Ok(ActionResult::with_rows(vec![upsert_row(
         TBL_SUBJECTS,
         row.row_key(),
         InsertData {
-            row: Some(insert_data::Row::Subject((&row).into())),
+            row: Some(insert_data::Row::SubjectTeacher((&row).into())),
         },
     )]))
 }
@@ -2053,7 +2139,7 @@ fn handle_unassign_subject(conn: &mut Conn, payload: &[u8]) -> Result<ActionResu
         p.school, p.year, p.term, p.grade, p.stream, p.subject
     );
 
-    delete::delete_subject(conn, &row_key)?;
+    delete::delete_subject_teacher(conn, &row_key)?;
     append_log(log_user, TBL_SUBJECTS as u8, OP_DELETE, 0)?;
     append_delete_log(TBL_SUBJECTS as u8, &row_key)?;
 
@@ -2299,10 +2385,9 @@ fn handle_create_exam(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
     let exam_insert = ExamInsert {
         id: p.id.clone(),
         school: p.school.clone(),
+        name: p.name.clone(),
         year: p.year,
         term: p.term,
-        grade: p.grade,
-        stream: p.stream,
         personalized: p.personalized,
         r#type: p.r#type,
         start: p.start,
@@ -2311,6 +2396,11 @@ fn handle_create_exam(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
     };
     insert::insert_exam(conn, &exam_insert)?;
     append_log(log_user, TBL_EXAMS as u8, OP_INSERT, 0)?;
+
+    // Also insert exam_grades entries
+    for eg in &p.grades {
+        insert::insert_exam_grade(conn, &p.id, eg.grade as i16, eg.stream as i16)?;
+    }
 
     let row = fetch_exam(conn, &p.id)?;
     Ok(ActionResult::with_rows(vec![upsert_row(
@@ -2366,6 +2456,7 @@ fn handle_create_paper(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> 
         exam: p.exam.clone(),
         subject: p.subject,
         paper: p.paper,
+        topic: p.topic,
         invigilator: p.invigilator.clone(),
         start: p.start,
         end: p.end,
@@ -2378,7 +2469,7 @@ fn handle_create_paper(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> 
         conn,
         &p.school,
         &p.exam,
-        p.subject as i16,
+        p.subject as i32,
         p.paper.map(|v| v as i16),
     )?;
     Ok(ActionResult::with_rows(vec![upsert_row(
@@ -2408,7 +2499,7 @@ fn handle_update_paper(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> 
         conn,
         &p.school,
         &p.exam,
-        p.subject as i16,
+        p.subject as i32,
         p.paper.map(|v| v as i16),
     )?;
     Ok(ActionResult::with_rows(vec![upsert_row(
@@ -2493,7 +2584,7 @@ fn handle_mark_grades(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
             &p.school,
             &p.exam,
             rec.student,
-            p.subject as i16,
+            p.subject as i32,
             paper_i16,
         )?;
         rows.push(upsert_row(
@@ -2528,7 +2619,7 @@ fn handle_update_grade(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> 
         &p.school,
         &p.exam,
         p.student,
-        p.subject as i16,
+        p.subject as i32,
         p.paper.map(|v| v as i16),
     )?;
     Ok(ActionResult::with_rows(vec![upsert_row(
@@ -2568,16 +2659,12 @@ fn handle_delete_grade(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> 
 fn handle_update_mastery(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
     let p: UpdateMasteryPayload = decode(payload)?;
     let log_user = Id::system();
-    let row_key = format!(
-        "{}|{}|{}|{}|{}",
-        p.school, p.student, p.grade, p.subject, p.topic
-    );
+    let row_key = format!("{}|{}|{}|{}", p.school, p.student, p.subject, p.topic);
 
     // Upsert: try insert, on conflict update
     let mastery_insert = MasteryInsert {
         school: p.school.clone(),
         student: p.student,
-        grade: p.grade,
         subject: p.subject,
         topic: p.topic,
         score: p.score,
@@ -2590,14 +2677,7 @@ fn handle_update_mastery(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult
         append_log(log_user, TBL_MASTERY as u8, OP_INSERT, 0)?;
     }
 
-    let row = fetch_mastery(
-        conn,
-        &p.school,
-        p.student,
-        p.grade as i16,
-        p.subject as i16,
-        p.topic as i16,
-    )?;
+    let row = fetch_mastery(conn, &p.school, p.student, p.subject as i32, p.topic as i32)?;
     Ok(ActionResult::with_rows(vec![upsert_row(
         TBL_MASTERY,
         row.row_key(),
@@ -3026,27 +3106,6 @@ fn handle_delete_user(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
 }
 
 // ---------------------------------------------------------------------------
-// Settings
-// ---------------------------------------------------------------------------
-
-fn handle_update_settings(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
-    let p: UpdateSettingsPayload = decode(payload)?;
-    let log_user = Id::system();
-
-    update::update_settings(conn, &p.school, &p)?;
-    append_log(log_user, TBL_SETTINGS as u8, OP_UPDATE, 0)?;
-
-    let row = fetch_settings(conn, &p.school)?;
-    Ok(ActionResult::with_rows(vec![upsert_row(
-        TBL_SETTINGS,
-        row.row_key(),
-        InsertData {
-            row: Some(insert_data::Row::Settings((&row).into())),
-        },
-    )]))
-}
-
-// ---------------------------------------------------------------------------
 // Plans
 // ---------------------------------------------------------------------------
 
@@ -3284,6 +3343,319 @@ fn handle_delete_discount(conn: &mut Conn, payload: &[u8]) -> Result<ActionResul
 
     Ok(ActionResult::with_rows(vec![delete_row(
         TBL_DISCOUNTS,
+        row_key,
+    )]))
+}
+
+// ---------------------------------------------------------------------------
+// Subjects (global catalog)
+// ---------------------------------------------------------------------------
+
+fn handle_create_subject(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
+    let p: CreateSubjectPayload = decode(payload)?;
+    let log_user = Id::system();
+    let now = chrono::Utc::now().timestamp();
+
+    diesel::sql_query(
+        "INSERT INTO subjects (name, curriculum, created, updated) VALUES (?, ?, ?, ?)",
+    )
+    .bind::<diesel::sql_types::Text, _>(&p.name)
+    .bind::<diesel::sql_types::SmallInt, _>(p.curriculum as i16)
+    .bind::<diesel::sql_types::BigInt, _>(now)
+    .bind::<diesel::sql_types::BigInt, _>(now)
+    .execute(conn)
+    .map_err(|e| {
+        tracing::error!("insert_subject failed: {e}");
+        Error::Internal
+    })?;
+
+    append_log(log_user, TBL_SUBJECT_CATALOG as u8, OP_INSERT, 0)?;
+
+    // Fetch back by name+curriculum to get the assigned id
+    let row = sql_query(
+        "SELECT id, name, curriculum, created, updated FROM subjects WHERE name = ? AND curriculum = ? ORDER BY id DESC LIMIT 1",
+    )
+    .bind::<diesel::sql_types::Text, _>(&p.name)
+    .bind::<diesel::sql_types::SmallInt, _>(p.curriculum as i16)
+    .load::<SubjectCatalogRow>(conn)
+    .map_err(|e| { tracing::error!("fetch after insert_subject failed: {e}"); Error::Internal })?
+    .into_iter()
+    .next()
+    .ok_or_else(|| { tracing::error!("subject not found after insert"); Error::Internal })?;
+
+    Ok(ActionResult::with_rows(vec![upsert_row(
+        TBL_SUBJECT_CATALOG,
+        row.row_key(),
+        InsertData {
+            row: Some(insert_data::Row::SubjectCatalog((&row).into())),
+        },
+    )]))
+}
+
+fn handle_update_subject(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
+    let p: UpdateSubjectPayload = decode(payload)?;
+    let log_user = Id::system();
+
+    update::update_subject_catalog(conn, p.id, &p)?;
+    append_log(log_user, TBL_SUBJECT_CATALOG as u8, OP_UPDATE, 0)?;
+
+    let row = fetch_subject_catalog(conn, p.id)?;
+    Ok(ActionResult::with_rows(vec![upsert_row(
+        TBL_SUBJECT_CATALOG,
+        row.row_key(),
+        InsertData {
+            row: Some(insert_data::Row::SubjectCatalog((&row).into())),
+        },
+    )]))
+}
+
+fn handle_delete_subject(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
+    let p: DeleteSubjectPayload = decode(payload)?;
+    let log_user = Id::system();
+    let row_key = p.id.to_string();
+
+    delete::delete_subject_catalog(conn, p.id)?;
+    append_log(log_user, TBL_SUBJECT_CATALOG as u8, OP_DELETE, 0)?;
+    append_delete_log(TBL_SUBJECT_CATALOG as u8, &row_key)?;
+
+    Ok(ActionResult::with_rows(vec![delete_row(
+        TBL_SUBJECT_CATALOG,
+        row_key,
+    )]))
+}
+
+// ---------------------------------------------------------------------------
+// Topics (global catalog)
+// ---------------------------------------------------------------------------
+
+fn handle_create_topic(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
+    let p: CreateTopicPayload = decode(payload)?;
+    let log_user = Id::system();
+    let now = chrono::Utc::now().timestamp();
+
+    diesel::sql_query(
+        "INSERT INTO topics (subject, grade, name, created, updated) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind::<diesel::sql_types::Integer, _>(p.subject)
+    .bind::<diesel::sql_types::SmallInt, _>(p.grade as i16)
+    .bind::<diesel::sql_types::Text, _>(&p.name)
+    .bind::<diesel::sql_types::BigInt, _>(now)
+    .bind::<diesel::sql_types::BigInt, _>(now)
+    .execute(conn)
+    .map_err(|e| {
+        tracing::error!("insert_topic failed: {e}");
+        Error::Internal
+    })?;
+
+    append_log(log_user, TBL_TOPICS as u8, OP_INSERT, 0)?;
+
+    let row = sql_query(
+        "SELECT id, subject, grade, name, created, updated FROM topics WHERE subject = ? AND grade = ? AND name = ? ORDER BY id DESC LIMIT 1",
+    )
+    .bind::<diesel::sql_types::Integer, _>(p.subject)
+    .bind::<diesel::sql_types::SmallInt, _>(p.grade as i16)
+    .bind::<diesel::sql_types::Text, _>(&p.name)
+    .load::<TopicRow>(conn)
+    .map_err(|e| { tracing::error!("fetch after insert_topic failed: {e}"); Error::Internal })?
+    .into_iter()
+    .next()
+    .ok_or_else(|| { tracing::error!("topic not found after insert"); Error::Internal })?;
+
+    Ok(ActionResult::with_rows(vec![upsert_row(
+        TBL_TOPICS,
+        row.row_key(),
+        InsertData {
+            row: Some(insert_data::Row::Topic((&row).into())),
+        },
+    )]))
+}
+
+fn handle_update_topic(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
+    let p: UpdateTopicPayload = decode(payload)?;
+    let log_user = Id::system();
+
+    update::update_topic(conn, p.id, &p)?;
+    append_log(log_user, TBL_TOPICS as u8, OP_UPDATE, 0)?;
+
+    let row = fetch_topic(conn, p.id)?;
+    Ok(ActionResult::with_rows(vec![upsert_row(
+        TBL_TOPICS,
+        row.row_key(),
+        InsertData {
+            row: Some(insert_data::Row::Topic((&row).into())),
+        },
+    )]))
+}
+
+fn handle_delete_topic(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
+    let p: DeleteTopicPayload = decode(payload)?;
+    let log_user = Id::system();
+    let row_key = p.id.to_string();
+
+    delete::delete_topic(conn, p.id)?;
+    append_log(log_user, TBL_TOPICS as u8, OP_DELETE, 0)?;
+    append_delete_log(TBL_TOPICS as u8, &row_key)?;
+
+    Ok(ActionResult::with_rows(vec![delete_row(
+        TBL_TOPICS, row_key,
+    )]))
+}
+
+// ---------------------------------------------------------------------------
+// Streams
+// ---------------------------------------------------------------------------
+
+fn handle_create_stream(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
+    let p: CreateStreamPayload = decode(payload)?;
+    let log_user = Id::system();
+
+    let stream_insert = StreamInsert {
+        school: p.school.clone(),
+        grade: p.grade,
+        stream: p.stream,
+        name: p.name.clone(),
+    };
+    insert::insert_stream(conn, &stream_insert)?;
+    append_log(log_user, TBL_STREAMS as u8, OP_INSERT, 0)?;
+
+    let row = fetch_stream(conn, &p.school, p.grade as i16, p.stream as i16)?;
+    Ok(ActionResult::with_rows(vec![upsert_row(
+        TBL_STREAMS,
+        row.row_key(),
+        InsertData {
+            row: Some(insert_data::Row::Stream((&row).into())),
+        },
+    )]))
+}
+
+fn handle_update_stream(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
+    let p: UpdateStreamPayload = decode(payload)?;
+    let log_user = Id::system();
+
+    update::update_stream(conn, &p)?;
+    append_log(log_user, TBL_STREAMS as u8, OP_UPDATE, 0)?;
+
+    let row = fetch_stream(conn, &p.school, p.grade as i16, p.stream as i16)?;
+    Ok(ActionResult::with_rows(vec![upsert_row(
+        TBL_STREAMS,
+        row.row_key(),
+        InsertData {
+            row: Some(insert_data::Row::Stream((&row).into())),
+        },
+    )]))
+}
+
+fn handle_delete_stream(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
+    let p: DeleteStreamPayload = decode(payload)?;
+    let log_user = Id::system();
+    let row_key = format!("{}|{}|{}", p.school, p.grade, p.stream);
+
+    delete::delete_stream(conn, &p.school, p.grade as i16, p.stream as i16)?;
+    append_log(log_user, TBL_STREAMS as u8, OP_DELETE, 0)?;
+    append_delete_log(TBL_STREAMS as u8, &row_key)?;
+
+    Ok(ActionResult::with_rows(vec![delete_row(
+        TBL_STREAMS,
+        row_key,
+    )]))
+}
+
+// ---------------------------------------------------------------------------
+// Mpesa
+// ---------------------------------------------------------------------------
+
+fn handle_create_mpesa(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
+    let p: CreateMpesaPayload = decode(payload)?;
+    let log_user = Id::system();
+
+    let mpesa_insert = MpesaInsert {
+        school: p.school.clone(),
+        consumer_key: p.consumer_key.clone(),
+        consumer_secret: p.consumer_secret.clone(),
+        passkey: p.passkey.clone(),
+        shortcode: p.shortcode.clone(),
+        env: p.env,
+    };
+    insert::insert_mpesa(conn, &mpesa_insert)?;
+    append_log(log_user, TBL_MPESA as u8, OP_INSERT, 0)?;
+
+    let row = fetch_mpesa(conn, &p.school)?;
+    Ok(ActionResult::with_rows(vec![upsert_row(
+        TBL_MPESA,
+        row.row_key(),
+        InsertData {
+            row: Some(insert_data::Row::Mpesa((&row).into())),
+        },
+    )]))
+}
+
+fn handle_update_mpesa(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
+    let p: UpdateMpesaPayload = decode(payload)?;
+    let log_user = Id::system();
+
+    update::update_mpesa(conn, &p)?;
+    append_log(log_user, TBL_MPESA as u8, OP_UPDATE, 0)?;
+
+    let row = fetch_mpesa(conn, &p.school)?;
+    Ok(ActionResult::with_rows(vec![upsert_row(
+        TBL_MPESA,
+        row.row_key(),
+        InsertData {
+            row: Some(insert_data::Row::Mpesa((&row).into())),
+        },
+    )]))
+}
+
+fn handle_delete_mpesa(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
+    let p: DeleteMpesaPayload = decode(payload)?;
+    let log_user = Id::system();
+    let row_key = p.school.clone();
+
+    delete::delete_mpesa(conn, &p.school)?;
+    append_log(log_user, TBL_MPESA as u8, OP_DELETE, 0)?;
+    append_delete_log(TBL_MPESA as u8, &row_key)?;
+
+    Ok(ActionResult::with_rows(vec![delete_row(
+        TBL_MPESA, row_key,
+    )]))
+}
+
+// ---------------------------------------------------------------------------
+// ExamGrades
+// ---------------------------------------------------------------------------
+
+fn handle_add_exam_grade(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
+    let p: AddExamGradePayload = decode(payload)?;
+    let log_user = Id::system();
+
+    insert::insert_exam_grade(conn, &p.exam, p.grade as i16, p.stream as i16)?;
+    append_log(log_user, TBL_EXAM_GRADES as u8, OP_INSERT, 0)?;
+
+    let row_key = format!("{}|{}|{}", p.exam, p.grade, p.stream);
+    Ok(ActionResult::with_rows(vec![upsert_row(
+        TBL_EXAM_GRADES,
+        row_key,
+        InsertData {
+            row: Some(insert_data::Row::ExamGrade(ExamGradeInsert {
+                exam: p.exam.clone(),
+                grade: p.grade as i32,
+                stream: p.stream as i32,
+            })),
+        },
+    )]))
+}
+
+fn handle_remove_exam_grade(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
+    let p: RemoveExamGradePayload = decode(payload)?;
+    let log_user = Id::system();
+    let row_key = format!("{}|{}|{}", p.exam, p.grade, p.stream);
+
+    delete::delete_exam_grade(conn, &p.exam, p.grade as i16, p.stream as i16)?;
+    append_log(log_user, TBL_EXAM_GRADES as u8, OP_DELETE, 0)?;
+    append_delete_log(TBL_EXAM_GRADES as u8, &row_key)?;
+
+    Ok(ActionResult::with_rows(vec![delete_row(
+        TBL_EXAM_GRADES,
         row_key,
     )]))
 }

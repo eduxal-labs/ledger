@@ -22,6 +22,7 @@ pub enum Resource {
     Roles = 16,
     Plans = 17,
     AI = 18,
+    Subjects = 19,
 }
 
 impl TryFrom<u8> for Resource {
@@ -47,6 +48,7 @@ impl TryFrom<u8> for Resource {
             16 => Ok(Resource::Roles),
             17 => Ok(Resource::Plans),
             18 => Ok(Resource::AI),
+            19 => Ok(Resource::Subjects),
             _ => Err(Error::InvalidResource),
         }
     }
@@ -96,6 +98,7 @@ impl From<Resource> for ProtoResource {
             Resource::Roles => ProtoResource::Roles,
             Resource::Plans => ProtoResource::Plans,
             Resource::AI => ProtoResource::Ai,
+            Resource::Subjects => ProtoResource::Subjects,
         }
     }
 }
@@ -121,6 +124,7 @@ impl From<ProtoResource> for Resource {
             ProtoResource::Roles => Resource::Roles,
             ProtoResource::Plans => Resource::Plans,
             ProtoResource::Ai => Resource::AI,
+            ProtoResource::Subjects => Resource::Subjects,
         }
     }
 }
@@ -131,14 +135,15 @@ mod tests {
 
     #[test]
     fn count() {
-        assert_eq!(Resource::COUNT, 18);
+        assert_eq!(Resource::COUNT, 19);
     }
 
     #[test]
     fn variants() {
-        assert_eq!(Resource::VARIANTS.len(), 18);
+        assert_eq!(Resource::VARIANTS.len(), 19);
         assert_eq!(Resource::VARIANTS[0], Resource::Users);
         assert_eq!(Resource::VARIANTS[17], Resource::AI);
+        assert_eq!(Resource::VARIANTS[18], Resource::Subjects);
     }
 
     #[test]
@@ -146,23 +151,26 @@ mod tests {
         assert_eq!(Resource::try_from(1u8).unwrap(), Resource::Users);
         assert_eq!(Resource::try_from(9u8).unwrap(), Resource::Attendance);
         assert_eq!(Resource::try_from(18u8).unwrap(), Resource::AI);
+        assert_eq!(Resource::try_from(19u8).unwrap(), Resource::Subjects);
         assert!(Resource::try_from(0u8).is_err());
-        assert!(Resource::try_from(19u8).is_err());
+        assert!(Resource::try_from(20u8).is_err());
     }
 
     #[test]
     fn try_from_i32() {
         assert_eq!(Resource::try_from(1i32).unwrap(), Resource::Users);
         assert_eq!(Resource::try_from(18i32).unwrap(), Resource::AI);
+        assert_eq!(Resource::try_from(19i32).unwrap(), Resource::Subjects);
         assert!(Resource::try_from(0i32).is_err());
         assert!(Resource::try_from(-1i32).is_err());
-        assert!(Resource::try_from(19i32).is_err());
+        assert!(Resource::try_from(20i32).is_err());
     }
 
     #[test]
     fn into_u8() {
         assert_eq!(u8::from(Resource::Users), 1);
         assert_eq!(u8::from(Resource::AI), 18);
+        assert_eq!(u8::from(Resource::Subjects), 19);
     }
 
     #[test]
@@ -170,6 +178,7 @@ mod tests {
         assert_eq!(usize::from(Resource::Users), 0);
         assert_eq!(usize::from(Resource::Schools), 1);
         assert_eq!(usize::from(Resource::AI), 17);
+        assert_eq!(usize::from(Resource::Subjects), 18);
     }
 
     #[test]

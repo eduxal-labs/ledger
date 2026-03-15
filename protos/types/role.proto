@@ -21,6 +21,7 @@ enum Resource {
   ROLES = 15;
   PLANS = 16;
   AI = 17;
+  SUBJECTS = 18;
 }
 
 enum Action {

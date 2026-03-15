@@ -97,10 +97,9 @@ diesel::table! {
     exams (id) {
         id -> Text,
         school -> Text,
+        name -> Text,
         year -> Integer,
         term -> SmallInt,
-        grade -> SmallInt,
-        stream -> Nullable<SmallInt>,
         personalized -> Bool,
         #[sql_name = "type"]
         type_ -> SmallInt,
@@ -134,7 +133,7 @@ diesel::table! {
         school -> Text,
         exam -> Text,
         student -> Integer,
-        subject -> SmallInt,
+        subject -> Integer,
         paper -> Nullable<SmallInt>,
         score -> Float,
         total -> Integer,
@@ -180,7 +179,7 @@ diesel::table! {
         grade -> SmallInt,
         stream -> SmallInt,
         date -> Integer,
-        subject -> SmallInt,
+        subject -> Integer,
         teacher -> Text,
         created -> BigInt,
         updated -> BigInt,
@@ -188,13 +187,25 @@ diesel::table! {
 }
 
 diesel::table! {
-    mastery (school, student, grade, subject, topic) {
+    mastery (school, student, subject, topic) {
         school -> Text,
         student -> Integer,
-        grade -> SmallInt,
-        subject -> SmallInt,
-        topic -> SmallInt,
+        subject -> Integer,
+        topic -> Integer,
         score -> Float,
+        created -> BigInt,
+        updated -> BigInt,
+    }
+}
+
+diesel::table! {
+    mpesa (school) {
+        school -> Text,
+        consumer_key -> Text,
+        consumer_secret -> Text,
+        passkey -> Text,
+        shortcode -> Text,
+        env -> SmallInt,
         created -> BigInt,
         updated -> BigInt,
     }
@@ -212,12 +223,15 @@ diesel::table! {
     papers (school, exam, subject, paper) {
         school -> Text,
         exam -> Text,
-        subject -> SmallInt,
+        subject -> Integer,
         paper -> Nullable<SmallInt>,
+        topic -> Nullable<Integer>,
         invigilator -> Text,
         start -> BigInt,
         end -> BigInt,
         status -> SmallInt,
+        grade -> SmallInt,
+        stream -> Nullable<SmallInt>,
         created -> BigInt,
         updated -> BigInt,
     }
@@ -291,16 +305,6 @@ diesel::table! {
 }
 
 diesel::table! {
-    settings (school) {
-        school -> Text,
-        data -> Text,
-        mpesa -> Nullable<Text>,
-        created -> BigInt,
-        updated -> BigInt,
-    }
-}
-
-diesel::table! {
     staff (school, user) {
         school -> Text,
         user -> Text,
@@ -308,6 +312,17 @@ diesel::table! {
         role -> Nullable<Text>,
         department -> Nullable<Text>,
         status -> SmallInt,
+        created -> BigInt,
+        updated -> BigInt,
+    }
+}
+
+diesel::table! {
+    streams (school, grade, stream) {
+        school -> Text,
+        grade -> SmallInt,
+        stream -> SmallInt,
+        name -> Text,
         created -> BigInt,
         updated -> BigInt,
     }
@@ -330,15 +345,25 @@ diesel::table! {
 }
 
 diesel::table! {
-    subjects (school, year, term, grade, stream, subject) {
+    subject_teachers (school, year, term, grade, stream, subject) {
         school -> Text,
         year -> Integer,
         term -> SmallInt,
         grade -> SmallInt,
         stream -> SmallInt,
-        subject -> SmallInt,
+        subject -> Integer,
         teacher -> Text,
         created -> BigInt,
+    }
+}
+
+diesel::table! {
+    subjects (id) {
+        id -> Nullable<Integer>,
+        name -> Text,
+        curriculum -> SmallInt,
+        created -> BigInt,
+        updated -> BigInt,
     }
 }
 
@@ -389,11 +414,22 @@ diesel::table! {
         term -> SmallInt,
         grade -> SmallInt,
         stream -> SmallInt,
-        subject -> SmallInt,
+        subject -> Integer,
         teacher -> Text,
         day -> SmallInt,
         start -> Integer,
         end -> Integer,
+        created -> BigInt,
+        updated -> BigInt,
+    }
+}
+
+diesel::table! {
+    topics (id) {
+        id -> Nullable<Integer>,
+        subject -> Integer,
+        grade -> SmallInt,
+        name -> Text,
         created -> BigInt,
         updated -> BigInt,
     }
@@ -425,16 +461,22 @@ diesel::joinable!(exams -> schools (school));
 diesel::joinable!(fees -> schools (school));
 diesel::joinable!(grades -> exams (exam));
 diesel::joinable!(grades -> schools (school));
+diesel::joinable!(grades -> subjects (subject));
 diesel::joinable!(guardians -> schools (school));
 diesel::joinable!(guardians -> users (user));
 diesel::joinable!(invoices -> fees (fee));
 diesel::joinable!(invoices -> schools (school));
 diesel::joinable!(lessons -> schools (school));
 diesel::joinable!(mastery -> schools (school));
+diesel::joinable!(mastery -> subjects (subject));
+diesel::joinable!(mastery -> topics (topic));
+diesel::joinable!(mpesa -> schools (school));
 diesel::joinable!(owners -> schools (school));
 diesel::joinable!(owners -> users (user));
 diesel::joinable!(papers -> exams (exam));
 diesel::joinable!(papers -> schools (school));
+diesel::joinable!(papers -> subjects (subject));
+diesel::joinable!(papers -> topics (topic));
 diesel::joinable!(payments -> invoices (invoice));
 diesel::joinable!(payments -> schools (school));
 diesel::joinable!(payments -> users (recorder));
@@ -442,12 +484,13 @@ diesel::joinable!(roles -> schools (school));
 diesel::joinable!(scopes -> roles (role));
 diesel::joinable!(scopes -> schools (school));
 diesel::joinable!(scopes -> users (user));
-diesel::joinable!(settings -> schools (school));
 diesel::joinable!(staff -> schools (school));
 diesel::joinable!(staff -> users (user));
+diesel::joinable!(streams -> schools (school));
 diesel::joinable!(students -> schools (school));
 diesel::joinable!(students -> users (user));
-diesel::joinable!(subjects -> schools (school));
+diesel::joinable!(subject_teachers -> schools (school));
+diesel::joinable!(subject_teachers -> subjects (subject));
 diesel::joinable!(subscriptions -> invoices (invoice));
 diesel::joinable!(subscriptions -> plans (plan));
 diesel::joinable!(subscriptions -> schools (school));
@@ -455,6 +498,7 @@ diesel::joinable!(teachers -> schools (school));
 diesel::joinable!(teachers -> users (user));
 diesel::joinable!(terms -> schools (school));
 diesel::joinable!(timetable -> schools (school));
+diesel::joinable!(topics -> subjects (subject));
 
 diesel::allow_tables_to_appear_in_same_query!(
     aiusage,
@@ -471,6 +515,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     invoices,
     lessons,
     mastery,
+    mpesa,
     owners,
     papers,
     payments,
@@ -478,13 +523,15 @@ diesel::allow_tables_to_appear_in_same_query!(
     roles,
     schools,
     scopes,
-    settings,
     staff,
+    streams,
     students,
+    subject_teachers,
     subjects,
     subscriptions,
     teachers,
     terms,
     timetable,
+    topics,
     users,
 );

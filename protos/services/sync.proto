@@ -421,20 +421,20 @@ message DeleteLessonPayload {
 message CreateExamPayload {
   string id = 1;
   string school = 2;
-  int32 year = 3;
-  int32 term = 4;
-  int32 grade = 5;
-  optional int32 stream = 6;
-  bool personalized = 7;
-  int32 type = 8;
-  int32 start = 9;
-  int32 end = 10;
-  string teacher = 11;
+  string name = 3;
+  int32 year = 4;
+  int32 term = 5;
+  bool personalized = 6;
+  int32 type = 7;
+  int32 start = 8;
+  int32 end = 9;
+  string teacher = 10;
+  // Field 11 removed (was: repeated ExamGradeEntry grades)
 }
 
 message UpdateExamPayload {
   string id = 1;
-  optional int32 stream = 2;
+  optional string name = 2;
   optional bool personalized = 3;
   optional int32 type = 4;
   optional int32 start = 5;
@@ -456,6 +456,9 @@ message CreatePaperPayload {
   string invigilator = 5;
   int64 start = 6;
   int64 end = 7;
+  optional int32 topic = 8;
+  int32 grade = 9;
+  optional int32 stream = 10;
 }
 
 message UpdatePaperPayload {
@@ -467,6 +470,9 @@ message UpdatePaperPayload {
   optional int64 start = 6;
   optional int64 end = 7;
   optional int32 status = 8;
+  optional int32 topic = 9;
+  optional int32 grade = 10;
+  optional int32 stream = 11;
 }
 
 message DeletePaperPayload {
@@ -513,10 +519,9 @@ message DeleteGradePayload {
 message UpdateMasteryPayload {
   string school = 1;
   int32 student = 2;
-  int32 grade = 3;
-  int32 subject = 4;
-  int32 topic = 5;
-  float score = 6;
+  int32 subject = 3;
+  int32 topic = 4;
+  float score = 5;
 }
 
 // --- Fees (3 actions) ---
@@ -680,13 +685,90 @@ message DeleteUserPayload {
   string id = 1;
 }
 
-// --- Settings (1 action) ---
+// --- Subjects (global catalog, 3 actions) ---
 
-message UpdateSettingsPayload {
-  string school = 1;
-  optional string data = 2;
-  optional string mpesa = 3;
+message CreateSubjectPayload {
+  string name = 1;
+  int32 curriculum = 2;
 }
+
+message UpdateSubjectPayload {
+  int32 id = 1;
+  optional string name = 2;
+  optional int32 curriculum = 3;
+}
+
+message DeleteSubjectPayload {
+  int32 id = 1;
+}
+
+// --- Topics (global catalog, 3 actions) ---
+
+message CreateTopicPayload {
+  int32 subject = 1;
+  int32 grade = 2;
+  string name = 3;
+}
+
+message UpdateTopicPayload {
+  int32 id = 1;
+  optional int32 subject = 2;
+  optional int32 grade = 3;
+  optional string name = 4;
+}
+
+message DeleteTopicPayload {
+  int32 id = 1;
+}
+
+// --- Streams (per-school, 3 actions) ---
+
+message CreateStreamPayload {
+  string school = 1;
+  int32 grade = 2;
+  int32 stream = 3;
+  string name = 4;
+}
+
+message UpdateStreamPayload {
+  string school = 1;
+  int32 grade = 2;
+  int32 stream = 3;
+  optional string name = 4;
+}
+
+message DeleteStreamPayload {
+  string school = 1;
+  int32 grade = 2;
+  int32 stream = 3;
+}
+
+// --- M-Pesa (per-school, 3 actions) ---
+
+message CreateMpesaPayload {
+  string school = 1;
+  string consumer_key = 2;
+  string consumer_secret = 3;
+  string passkey = 4;
+  string shortcode = 5;
+  int32 env = 6;
+}
+
+message UpdateMpesaPayload {
+  string school = 1;
+  optional string consumer_key = 2;
+  optional string consumer_secret = 3;
+  optional string passkey = 4;
+  optional string shortcode = 5;
+  optional int32 env = 6;
+}
+
+message DeleteMpesaPayload {
+  string school = 1;
+}
+
+// --- ExamGrades (removed — grade/stream moved to papers) ---
+// Actions 89 (addExamGrade) and 90 (removeExamGrade) are RESERVED for wire compat.
 
 // --- Plans (3 actions) ---
 
@@ -803,7 +885,7 @@ message InsertData {
     TermInsert term = 9;
     ClassTeacherInsert class_teacher = 10;
     EnrollmentInsert enrollment = 11;
-    SubjectInsert subject = 12;
+    SubjectTeacherInsert subject_teacher = 12;
     AttendanceInsert attendance = 13;
     TimetableInsert timetable = 14;
     LessonInsert lesson = 15;
@@ -816,13 +898,18 @@ message InsertData {
     AnnouncementInsert announcement = 22;
     MasteryInsert mastery = 23;
     AiUsageInsert ai_usage = 24;
-    SettingsInsert settings = 25;
     RoleInsert role = 26;
     ScopeInsert scope = 27;
     PlanInsert plan = 28;
     SubscriptionInsert subscription = 29;
     DiscountInsert discount = 30;
+    SubjectInsert subject_catalog = 31;
+    TopicInsert topic = 32;
+    StreamInsert stream = 33;
+    MpesaInsert mpesa = 34;
+    // ExamGradeInsert exam_grade = 35;  // REMOVED
   }
+  reserved 35;
 }
 
 // ===========================================================================
@@ -929,7 +1016,7 @@ message EnrollmentInsert {
   int32 student = 6;
 }
 
-message SubjectInsert {
+message SubjectTeacherInsert {
   string school = 1;
   int32 year = 2;
   int32 term = 3;
@@ -977,15 +1064,14 @@ message LessonInsert {
 message ExamInsert {
   string id = 1;
   string school = 2;
-  int32 year = 3;
-  int32 term = 4;
-  int32 grade = 5;
-  optional int32 stream = 6;
-  bool personalized = 7;
-  int32 type = 8;
-  int32 start = 9;
-  int32 end = 10;
-  string teacher = 11;
+  string name = 3;
+  int32 year = 4;
+  int32 term = 5;
+  bool personalized = 6;
+  int32 type = 7;
+  int32 start = 8;
+  int32 end = 9;
+  string teacher = 10;
 }
 
 message PaperInsert {
@@ -993,10 +1079,13 @@ message PaperInsert {
   string exam = 2;
   int32 subject = 3;
   optional int32 paper = 4;
-  string invigilator = 5;
-  int64 start = 6;
-  int64 end = 7;
-  int32 status = 8;
+  optional int32 topic = 5;
+  string invigilator = 6;
+  int64 start = 7;
+  int64 end = 8;
+  int32 status = 9;
+  int32 grade = 10;
+  optional int32 stream = 11;
 }
 
 message GradeInsert {
@@ -1061,10 +1150,9 @@ message AnnouncementInsert {
 message MasteryInsert {
   string school = 1;
   int32 student = 2;
-  int32 grade = 3;
-  int32 subject = 4;
-  int32 topic = 5;
-  float score = 6;
+  int32 subject = 3;
+  int32 topic = 4;
+  float score = 5;
 }
 
 message AiUsageInsert {
@@ -1076,11 +1164,36 @@ message AiUsageInsert {
   int32 used = 6;
 }
 
-message SettingsInsert {
-  string school = 1;
-  string data = 2;
-  optional string mpesa = 3;
+message SubjectInsert {
+  int32 id = 1;
+  string name = 2;
+  int32 curriculum = 3;
 }
+
+message TopicInsert {
+  int32 id = 1;
+  int32 subject = 2;
+  int32 grade = 3;
+  string name = 4;
+}
+
+message StreamInsert {
+  string school = 1;
+  int32 grade = 2;
+  int32 stream = 3;
+  string name = 4;
+}
+
+message MpesaInsert {
+  string school = 1;
+  string consumer_key = 2;
+  string consumer_secret = 3;
+  string passkey = 4;
+  string shortcode = 5;
+  int32 env = 6;
+}
+
+// ExamGradeInsert removed — grade/stream moved to PaperInsert
 
 message RoleInsert {
   string id = 1;

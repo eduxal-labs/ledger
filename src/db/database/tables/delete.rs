@@ -159,7 +159,7 @@ pub fn delete_enrollment(conn: &mut Conn, row_key: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn delete_subject(conn: &mut Conn, row_key: &str) -> Result<()> {
+pub fn delete_subject_teacher(conn: &mut Conn, row_key: &str) -> Result<()> {
     let pk = pk_parts(row_key);
     if pk.len() < 6 {
         return Err(Error::Internal);
@@ -168,16 +168,16 @@ pub fn delete_subject(conn: &mut Conn, row_key: &str) -> Result<()> {
     let term: i16 = pk[2].parse().map_err(|_| Error::Internal)?;
     let grade: i16 = pk[3].parse().map_err(|_| Error::Internal)?;
     let stream: i16 = pk[4].parse().map_err(|_| Error::Internal)?;
-    let subject: i16 = pk[5].parse().map_err(|_| Error::Internal)?;
+    let subject: i32 = pk[5].parse().map_err(|_| Error::Internal)?;
     sql_query(
-        "DELETE FROM subjects WHERE school = ? AND year = ? AND term = ? AND grade = ? AND stream = ? AND subject = ?",
+        "DELETE FROM subject_teachers WHERE school = ? AND year = ? AND term = ? AND grade = ? AND stream = ? AND subject = ?",
     )
     .bind::<Text, _>(pk[0])
     .bind::<Integer, _>(year)
     .bind::<SmallInt, _>(term)
     .bind::<SmallInt, _>(grade)
     .bind::<SmallInt, _>(stream)
-    .bind::<SmallInt, _>(subject)
+    .bind::<Integer, _>(subject)
     .execute(conn)?;
     Ok(())
 }
@@ -275,7 +275,7 @@ pub fn delete_paper(conn: &mut Conn, row_key: &str) -> Result<()> {
     if pk.len() < 4 {
         return Err(Error::Internal);
     }
-    let subject: i16 = pk[2].parse().map_err(|_| Error::Internal)?;
+    let subject: i32 = pk[2].parse().map_err(|_| Error::Internal)?;
     let paper: Option<i16> = if pk[3].is_empty() {
         None
     } else {
@@ -284,7 +284,7 @@ pub fn delete_paper(conn: &mut Conn, row_key: &str) -> Result<()> {
     sql_query("DELETE FROM papers WHERE school = ? AND exam = ? AND subject = ? AND paper IS ?")
         .bind::<Text, _>(pk[0])
         .bind::<Text, _>(pk[1])
-        .bind::<SmallInt, _>(subject)
+        .bind::<Integer, _>(subject)
         .bind::<Nullable<SmallInt>, _>(paper)
         .execute(conn)?;
     Ok(())
@@ -296,7 +296,7 @@ pub fn delete_grade(conn: &mut Conn, row_key: &str) -> Result<()> {
         return Err(Error::Internal);
     }
     let student: i32 = pk[2].parse().map_err(|_| Error::Internal)?;
-    let subject: i16 = pk[3].parse().map_err(|_| Error::Internal)?;
+    let subject: i32 = pk[3].parse().map_err(|_| Error::Internal)?;
     let paper: Option<i16> = if pk[4].is_empty() {
         None
     } else {
@@ -308,7 +308,7 @@ pub fn delete_grade(conn: &mut Conn, row_key: &str) -> Result<()> {
     .bind::<Text, _>(pk[0])
     .bind::<Text, _>(pk[1])
     .bind::<Integer, _>(student)
-    .bind::<SmallInt, _>(subject)
+    .bind::<Integer, _>(subject)
     .bind::<Nullable<SmallInt>, _>(paper)
     .execute(conn)?;
     Ok(())
@@ -344,22 +344,18 @@ pub fn delete_announcement(conn: &mut Conn, row_key: &str) -> Result<()> {
 
 pub fn delete_mastery(conn: &mut Conn, row_key: &str) -> Result<()> {
     let pk = pk_parts(row_key);
-    if pk.len() < 5 {
+    if pk.len() < 4 {
         return Err(Error::Internal);
     }
     let student: i32 = pk[1].parse().map_err(|_| Error::Internal)?;
-    let grade: i16 = pk[2].parse().map_err(|_| Error::Internal)?;
-    let subject: i16 = pk[3].parse().map_err(|_| Error::Internal)?;
-    let topic: i16 = pk[4].parse().map_err(|_| Error::Internal)?;
-    sql_query(
-        "DELETE FROM mastery WHERE school = ? AND student = ? AND grade = ? AND subject = ? AND topic = ?",
-    )
-    .bind::<Text, _>(pk[0])
-    .bind::<Integer, _>(student)
-    .bind::<SmallInt, _>(grade)
-    .bind::<SmallInt, _>(subject)
-    .bind::<SmallInt, _>(topic)
-    .execute(conn)?;
+    let subject: i32 = pk[2].parse().map_err(|_| Error::Internal)?;
+    let topic: i32 = pk[3].parse().map_err(|_| Error::Internal)?;
+    sql_query("DELETE FROM mastery WHERE school = ? AND student = ? AND subject = ? AND topic = ?")
+        .bind::<Text, _>(pk[0])
+        .bind::<Integer, _>(student)
+        .bind::<Integer, _>(subject)
+        .bind::<Integer, _>(topic)
+        .execute(conn)?;
     Ok(())
 }
 
@@ -376,13 +372,6 @@ pub fn delete_aiusage(conn: &mut Conn, row_key: &str) -> Result<()> {
         .bind::<Integer, _>(student)
         .bind::<Integer, _>(year)
         .bind::<SmallInt, _>(term)
-        .execute(conn)?;
-    Ok(())
-}
-
-pub fn delete_settings(conn: &mut Conn, row_key: &str) -> Result<()> {
-    sql_query("DELETE FROM settings WHERE school = ?")
-        .bind::<Text, _>(row_key)
         .execute(conn)?;
     Ok(())
 }
@@ -459,5 +448,44 @@ pub fn delete_discount(conn: &mut Conn, row_key: &str) -> Result<()> {
     .bind::<SmallInt, _>(term)
     .bind::<SmallInt, _>(grade)
     .execute(conn)?;
+    Ok(())
+}
+
+pub fn delete_subject_catalog(conn: &mut Conn, id: i32) -> Result<()> {
+    sql_query("DELETE FROM subjects WHERE id = ?")
+        .bind::<Integer, _>(id)
+        .execute(conn)?;
+    Ok(())
+}
+
+pub fn delete_topic(conn: &mut Conn, id: i32) -> Result<()> {
+    sql_query("DELETE FROM topics WHERE id = ?")
+        .bind::<Integer, _>(id)
+        .execute(conn)?;
+    Ok(())
+}
+
+pub fn delete_stream(conn: &mut Conn, school: &str, grade: i16, stream: i16) -> Result<()> {
+    sql_query("DELETE FROM streams WHERE school = ? AND grade = ? AND stream = ?")
+        .bind::<Text, _>(school)
+        .bind::<SmallInt, _>(grade)
+        .bind::<SmallInt, _>(stream)
+        .execute(conn)?;
+    Ok(())
+}
+
+pub fn delete_mpesa(conn: &mut Conn, school: &str) -> Result<()> {
+    sql_query("DELETE FROM mpesa WHERE school = ?")
+        .bind::<Text, _>(school)
+        .execute(conn)?;
+    Ok(())
+}
+
+pub fn delete_exam_grade(conn: &mut Conn, exam: &str, grade: i16, stream: i16) -> Result<()> {
+    sql_query("DELETE FROM exam_grades WHERE exam = ? AND grade = ? AND stream = ?")
+        .bind::<Text, _>(exam)
+        .bind::<SmallInt, _>(grade)
+        .bind::<SmallInt, _>(stream)
+        .execute(conn)?;
     Ok(())
 }

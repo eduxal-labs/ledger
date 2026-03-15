@@ -28,6 +28,19 @@ CREATE TABLE schools (
     updated bigint not null default (unixepoch('now'))
 );
 
+-- Per-school stream definitions. Links a named stream to a grade.
+CREATE TABLE streams (
+    school  TEXT     NOT NULL,
+    grade   SMALLINT NOT NULL,
+    stream  SMALLINT NOT NULL,
+    name    TEXT     NOT NULL,
+    created BIGINT   NOT NULL DEFAULT (unixepoch('now')),
+    updated BIGINT   NOT NULL DEFAULT (unixepoch('now')),
+    PRIMARY KEY (school, grade, stream),
+    FOREIGN KEY (school) REFERENCES schools(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_streams_school ON streams(school, grade);
+
 CREATE TABLE owners (
     school text not null,
     user text not null,
@@ -111,6 +124,18 @@ CREATE TABLE staff (
     foreign key (school, department) references departments(school, name) ON DELETE NO ACTION
 );
 
+-- Per-school M-Pesa Daraja API integration configuration.
+CREATE TABLE mpesa (
+    school          TEXT     PRIMARY KEY NOT NULL,
+    consumer_key    TEXT     NOT NULL,
+    consumer_secret TEXT     NOT NULL,
+    passkey         TEXT     NOT NULL,
+    shortcode       TEXT     NOT NULL,
+    env             SMALLINT NOT NULL DEFAULT 0,  -- 0=sandbox, 1=production
+    created         BIGINT   NOT NULL DEFAULT (unixepoch('now')),
+    updated         BIGINT   NOT NULL DEFAULT (unixepoch('now')),
+    FOREIGN KEY (school) REFERENCES schools(id) ON DELETE CASCADE
+);
 
 CREATE TABLE terms (
     school text not null,
@@ -159,26 +184,49 @@ CREATE TABLE enrollments (
 -- A student can only be in one class (grade+stream) per term.
 CREATE UNIQUE INDEX uq_enrollments_student_term ON enrollments(school, year, term, student);
 
--- since subjects will obviously be known, they will be represented by an integer.
--- this table will represent the subjects taught in a class and by which teacher.
+-- Global subject catalog. Populated by System/Super users only.
 CREATE TABLE subjects (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    name      TEXT    NOT NULL,
+    curriculum SMALLINT NOT NULL,  -- CurriculumType: 0=CBC, 1=8-4-4
+    created   BIGINT  NOT NULL DEFAULT (unixepoch('now')),
+    updated   BIGINT  NOT NULL DEFAULT (unixepoch('now'))
+);
+CREATE UNIQUE INDEX uq_subjects_name_curriculum ON subjects(name, curriculum);
+
+-- Global topic catalog. Grade-specific subdivisions of a subject. System/Super-only.
+CREATE TABLE topics (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject   INTEGER NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+    grade     SMALLINT NOT NULL,
+    name      TEXT    NOT NULL,
+    created   BIGINT  NOT NULL DEFAULT (unixepoch('now')),
+    updated   BIGINT  NOT NULL DEFAULT (unixepoch('now'))
+);
+CREATE UNIQUE INDEX uq_topics_subject_grade_name ON topics(subject, grade, name);
+CREATE INDEX idx_topics_subject ON topics(subject);
+
+-- This table represents the subjects taught in a class and by which teacher.
+-- (formerly "subjects" — renamed to subject_teachers to avoid ambiguity with the global catalog)
+CREATE TABLE subject_teachers (
     school text not null,
     year integer not null,
     term smallint not null,
     grade smallint not null,
     stream smallint not null,
-    subject smallint not null,
+    subject integer not null,
     teacher text not null,
     created bigint not null default (unixepoch('now')),
     primary key (school, year, term, grade, stream, subject),
     foreign key (school) references schools(id) ON DELETE CASCADE,
     foreign key (school, year, term) references terms(school, year, term) ON DELETE CASCADE,
-    foreign key (school, teacher) references teachers(school, user) ON DELETE CASCADE
+    foreign key (school, teacher) references teachers(school, user) ON DELETE CASCADE,
+    foreign key (subject) references subjects(id) ON DELETE CASCADE
 );
 -- Needed so timetable can FK on the (subject, teacher) pair to enforce teacher consistency.
 -- Since (school, year, term, grade, stream, subject) is already the PK, this 7-column index
 -- is trivially unique but gives SQLite a target for the composite FK reference.
-CREATE UNIQUE INDEX subjects_class_teacher_idx ON subjects(school, year, term, grade, stream, subject, teacher);
+CREATE UNIQUE INDEX subject_teachers_class_teacher_idx ON subject_teachers(school, year, term, grade, stream, subject, teacher);
 
 CREATE TABLE attendance (
     school text not null,
@@ -203,7 +251,7 @@ CREATE TABLE timetable (
     term smallint not null,
     grade smallint not null,
     stream smallint not null,
-    subject smallint not null,
+    subject integer not null,
     teacher text not null,
     day smallint not null, -- Sunday = 0, .. Saturday = 6.
     start integer not null, -- seconds since midnight
@@ -216,7 +264,7 @@ CREATE TABLE timetable (
     foreign key (school, year, term) references terms(school, year, term) ON DELETE CASCADE,
     -- FK on (subject, teacher) together enforces that the timetable teacher matches the assigned
     -- subject teacher. ON UPDATE CASCADE keeps timetable in sync if the teacher is reassigned.
-    foreign key (school, year, term, grade, stream, subject, teacher) references subjects(school, year, term, grade, stream, subject, teacher) ON DELETE CASCADE ON UPDATE CASCADE
+    foreign key (school, year, term, grade, stream, subject, teacher) references subject_teachers(school, year, term, grade, stream, subject, teacher) ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE UNIQUE INDEX uq_timetable_teacher_slot ON timetable(school, year, term, teacher, day, start);
 CREATE UNIQUE INDEX uq_timetable_class_slot ON timetable(school, year, term, grade, stream, day, start);
@@ -228,7 +276,7 @@ CREATE TABLE lessons (
     grade smallint not null,
     stream smallint not null,
     date integer not null,
-    subject smallint not null,
+    subject integer not null,
     teacher text not null,
     created bigint not null default (unixepoch('now')),
     updated bigint not null default (unixepoch('now')),
@@ -236,16 +284,15 @@ CREATE TABLE lessons (
     foreign key (school) references schools(id) ON DELETE CASCADE,
     foreign key (school, year, term) references terms(school, year, term) ON DELETE CASCADE,
     foreign key (school, teacher) references teachers(school, user) ON DELETE CASCADE,
-    foreign key (school, year, term, grade, stream, subject) references subjects(school, year, term, grade, stream, subject) ON DELETE RESTRICT
+    foreign key (school, year, term, grade, stream, subject) references subject_teachers(school, year, term, grade, stream, subject) ON DELETE RESTRICT
 );
 
 CREATE TABLE exams (
     id text not null primary key,
     school text not null,
+    name text not null,
     year integer not null,
     term smallint not null,
-    grade smallint not null,
-    stream smallint, -- null means the exam spans all streams of the grade
     personalized boolean not null default false,
     type smallint not null, -- either Exam = 0, Assignment = 1, Assessment = 2.
     start integer not null,
@@ -262,18 +309,23 @@ CREATE TABLE exams (
 CREATE TABLE papers (
     school text not null,
     exam text not null,
-    subject smallint not null,
-    paper smallint, -- this for indicating paper number like paper 1, 2 and 3 for subjects that need it.
+    subject integer not null,
+    paper smallint,
+    topic integer,
     invigilator text not null,
     start bigint not null,
-    end bigint not null,
-    status smallint not null default 0, -- Pending = 0, Progress = 1, Done = 2, Marked = 3.
+    "end" bigint not null,
+    status smallint not null default 0,
+    grade smallint not null,
+    stream smallint,
     created bigint not null default (unixepoch('now')),
     updated bigint not null default (unixepoch('now')),
-    CHECK (start < end),
+    CHECK (start < "end"),
     primary key (school, exam, subject, paper),
     foreign key (school) references schools(id) ON DELETE CASCADE,
     foreign key (exam) references exams(id) ON DELETE CASCADE,
+    foreign key (subject) references subjects(id) ON DELETE CASCADE,
+    foreign key (topic) references topics(id) ON DELETE SET NULL,
     foreign key (school, invigilator) references teachers(school, user) ON DELETE CASCADE
 );
 -- Enforces at most one null-paper row per (school, exam, subject).
@@ -285,7 +337,7 @@ CREATE TABLE grades (
     school text not null,
     exam text not null,
     student integer not null,
-    subject smallint not null,
+    subject integer not null,
     paper smallint, -- null means subject-level total; non-null matches a specific papers.paper row.
     score real not null,
     total integer not null,
@@ -296,6 +348,7 @@ CREATE TABLE grades (
     foreign key (school) references schools(id) ON DELETE CASCADE,
     foreign key (exam) references exams(id) ON DELETE CASCADE,
     foreign key (school, student) references students(school, adm) ON DELETE CASCADE,
+    foreign key (subject) references subjects(id) ON DELETE CASCADE,
     -- Only enforced when paper IS NOT NULL (SQLite skips FK checks when any FK column is NULL).
     -- A null paper grade is a subject-level aggregate not tied to a specific papers row.
     foreign key (school, exam, subject, paper) references papers(school, exam, subject, paper) ON DELETE CASCADE
@@ -375,19 +428,21 @@ CREATE TABLE announcements (
     foreign key (author) references users(id) ON DELETE SET NULL
 );
 
--- How good a student is on a particular topic of a particular subject of a particular grade
+-- How good a student is on a particular topic of a particular subject.
+-- grade is encoded in topics.grade, so it is not stored here.
 CREATE TABLE mastery (
     school text not null,
     student integer not null,
-    grade smallint not null,
-    subject smallint not null,
-    topic smallint not null,
+    subject integer not null,
+    topic integer not null,
     score real not null,
     created bigint not null default (unixepoch('now')),
     updated bigint not null default (unixepoch('now')),
-    primary key (school, student, grade, subject, topic),
+    primary key (school, student, subject, topic),
     foreign key (school) references schools(id) ON DELETE CASCADE,
-    foreign key (school, student) references students(school, adm) ON DELETE CASCADE
+    foreign key (school, student) references students(school, adm) ON DELETE CASCADE,
+    foreign key (subject) references subjects(id) ON DELETE CASCADE,
+    foreign key (topic) references topics(id) ON DELETE CASCADE
 );
 
 -- How many tokens has each student used in a term against his allocated amount.
@@ -404,15 +459,6 @@ CREATE TABLE aiusage (
     foreign key (school) references schools(id) ON DELETE CASCADE,
     foreign key (school, student) references students(school, adm) ON DELETE CASCADE,
     foreign key (school, year, term) references terms(school, year, term) ON DELETE CASCADE
-);
-
-CREATE TABLE settings (
-    school text not null primary key,
-    data text not null, -- This would be a json value that holds everything on settings about the school
-    mpesa text, -- json value for holding mpesa configuration details from the above commented table.
-    created bigint not null default (unixepoch('now')),
-    updated bigint not null default (unixepoch('now')),
-    foreign key (school) references schools(id) ON DELETE CASCADE
 );
 
 CREATE TABLE roles (
@@ -517,45 +563,43 @@ BEGIN
     );
 END;
 
--- Ensures a grade can only be recorded for a student who is enrolled in the class the
--- exam belongs to. When the exam spans all streams (stream IS NULL), any stream enrollment
--- for that grade/term counts. The school pin on the JOIN prevents a cross-school exam id
--- from satisfying the check.
+-- Ensures a grade can only be recorded for a student who is enrolled in a class that
+-- the exam covers. Joins through papers to check grade+stream.
 CREATE TRIGGER grades_enrollment_check
     BEFORE INSERT ON grades
 BEGIN
-    SELECT RAISE(ABORT, 'student is not enrolled in the class this exam belongs to')
+    SELECT RAISE(ABORT, 'student is not enrolled in any class this exam covers')
     WHERE NOT EXISTS (
         SELECT 1 FROM enrollments
         INNER JOIN exams ON exams.id = NEW.exam AND exams.school = NEW.school
+        INNER JOIN papers ON papers.exam = exams.id AND papers.school = exams.school
+                         AND papers.subject = NEW.subject
+                         AND (papers.paper = NEW.paper OR (papers.paper IS NULL AND NEW.paper IS NULL))
         WHERE enrollments.school  = NEW.school
           AND enrollments.student = NEW.student
           AND enrollments.year    = exams.year
           AND enrollments.term    = exams.term
-          AND enrollments.grade   = exams.grade
-          AND (exams.stream IS NULL OR enrollments.stream = exams.stream)
+          AND enrollments.grade   = papers.grade
+          AND (papers.stream IS NULL OR enrollments.stream = papers.stream)
     );
 END;
 
--- Prevents mixing all-stream and stream-specific exams of the same type for the same
--- grade/term. Without this, a Grade 8 all-stream exam and a Grade 8 Stream A exam of
--- the same type could coexist, making it ambiguous which exam a student should sit.
-CREATE TRIGGER exams_stream_consistency_check
-    BEFORE INSERT ON exams
+CREATE TRIGGER grades_enrollment_check_update
+    BEFORE UPDATE ON grades
 BEGIN
-    SELECT RAISE(ABORT, 'an all-stream exam of this type already exists for this grade/term; cannot add a stream-specific exam')
-    WHERE NEW.stream IS NOT NULL
-    AND EXISTS (
-        SELECT 1 FROM exams
-        WHERE school = NEW.school AND year = NEW.year AND term = NEW.term
-          AND grade = NEW.grade AND type = NEW.type AND stream IS NULL
-    );
-    SELECT RAISE(ABORT, 'stream-specific exams of this type already exist for this grade/term; cannot add an all-stream exam')
-    WHERE NEW.stream IS NULL
-    AND EXISTS (
-        SELECT 1 FROM exams
-        WHERE school = NEW.school AND year = NEW.year AND term = NEW.term
-          AND grade = NEW.grade AND type = NEW.type AND stream IS NOT NULL
+    SELECT RAISE(ABORT, 'student is not enrolled in any class this exam covers')
+    WHERE NOT EXISTS (
+        SELECT 1 FROM enrollments
+        INNER JOIN exams ON exams.id = NEW.exam AND exams.school = NEW.school
+        INNER JOIN papers ON papers.exam = exams.id AND papers.school = exams.school
+                         AND papers.subject = NEW.subject
+                         AND (papers.paper = NEW.paper OR (papers.paper IS NULL AND NEW.paper IS NULL))
+        WHERE enrollments.school  = NEW.school
+          AND enrollments.student = NEW.student
+          AND enrollments.year    = exams.year
+          AND enrollments.term    = exams.term
+          AND enrollments.grade   = papers.grade
+          AND (papers.stream IS NULL OR enrollments.stream = papers.stream)
     );
 END;
 
@@ -578,23 +622,6 @@ BEGIN
         WHERE school = NEW.school AND exam = NEW.exam AND student = NEW.student
           AND subject = NEW.subject AND paper IS NOT NULL
           AND rowid IS NOT OLD.rowid
-    );
-END;
-
--- Prevents UPDATE from moving a grade to an exam the student is not enrolled in.
-CREATE TRIGGER grades_enrollment_check_update
-    BEFORE UPDATE OF exam, student, school ON grades
-BEGIN
-    SELECT RAISE(ABORT, 'student is not enrolled in the class this exam belongs to')
-    WHERE NOT EXISTS (
-        SELECT 1 FROM enrollments
-        INNER JOIN exams ON exams.id = NEW.exam AND exams.school = NEW.school
-        WHERE enrollments.school  = NEW.school
-          AND enrollments.student = NEW.student
-          AND enrollments.year    = exams.year
-          AND enrollments.term    = exams.term
-          AND enrollments.grade   = exams.grade
-          AND (exams.stream IS NULL OR enrollments.stream = exams.stream)
     );
 END;
 
@@ -788,8 +815,8 @@ CREATE UNIQUE INDEX uq_class_teachers_active ON class_teachers(school, year, ter
 -- enrollments: find all classes a student has been enrolled in (student is 6th in PK)
 CREATE INDEX idx_enrollments_school_student ON enrollments(school, student);
 
--- subjects: find all subjects taught by a teacher (teacher is not in PK)
-CREATE INDEX idx_subjects_school_teacher ON subjects(school, teacher);
+-- subject_teachers: find all subjects taught by a teacher (teacher is not in PK)
+CREATE INDEX idx_subject_teachers_school_teacher ON subject_teachers(school, teacher);
 
 -- attendance: pull a student's attendance record for a term (student is 6th in PK)
 CREATE INDEX idx_attendance_school_term_student ON attendance(school, year, term, student);
@@ -801,13 +828,9 @@ CREATE INDEX idx_timetable_school_teacher ON timetable(school, teacher);
 CREATE INDEX idx_lessons_school_teacher ON lessons(school, teacher);
 CREATE INDEX idx_lessons_school_term_date ON lessons(school, year, term, date);
 
--- exams: list all exams for a class in a term (PK is a surrogate id); find exams by teacher
-CREATE INDEX idx_exams_school_term_class ON exams(school, year, term, grade, stream);
+-- exams: list all exams for a school in a term; find exams by teacher
+CREATE INDEX idx_exams_school_term ON exams(school, year, term);
 CREATE INDEX idx_exams_school_teacher ON exams(school, teacher);
--- Prevents two all-stream exams of the same type for the same grade/term
-CREATE UNIQUE INDEX uq_exams_allstream_type ON exams(school, year, term, grade, type) WHERE stream IS NULL;
--- Prevents two stream-specific exams of the same type for the same class
-CREATE UNIQUE INDEX uq_exams_stream_type ON exams(school, year, term, grade, stream, type) WHERE stream IS NOT NULL;
 
 -- papers: list all papers for an exam filtered by status (school+exam covered by PK prefix)
 CREATE INDEX idx_papers_school_exam_status ON papers(school, exam, status);

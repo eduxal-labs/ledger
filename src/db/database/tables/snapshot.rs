@@ -1,9 +1,9 @@
 use crate::proto::services::sync::{InsertData, insert_data};
 use crate::types::error::{Error, Result};
 use crate::types::id::Id;
+use diesel::RunQueryDsl;
 use diesel::SqliteConnection as Conn;
 use diesel::sql_types::BigInt;
-use diesel::RunQueryDsl;
 use tracing::error;
 
 use super::rows::*;
@@ -33,7 +33,11 @@ const TBL_PAYMENTS: i32 = 21;
 const TBL_ANNOUNCEMENTS: i32 = 22;
 const TBL_MASTERY: i32 = 23;
 const TBL_AIUSAGE: i32 = 24;
-const TBL_SETTINGS: i32 = 25;
+const TBL_SUBJECT_CATALOG: i32 = 31;
+const TBL_TOPICS: i32 = 32;
+const TBL_STREAMS: i32 = 33;
+const TBL_MPESA: i32 = 34;
+const TBL_EXAM_GRADES: i32 = 35;
 const TBL_ROLES: i32 = 26;
 const TBL_SCOPES: i32 = 27;
 const TBL_PLANS: i32 = 28;
@@ -77,7 +81,7 @@ fn snapshot_table_inner(
         TBL_TERMS => query_terms(conn, since),
         TBL_CLASS_TEACHERS => query_class_teachers(conn, since),
         TBL_ENROLLMENTS => query_enrollments(conn, since),
-        TBL_SUBJECTS => query_subjects(conn, since),
+        TBL_SUBJECTS => query_subject_teachers(conn, since),
         TBL_ATTENDANCE => query_attendance(conn, since),
         TBL_TIMETABLE => query_timetable(conn, since),
         TBL_LESSONS => query_lessons(conn, since),
@@ -90,7 +94,11 @@ fn snapshot_table_inner(
         TBL_ANNOUNCEMENTS => query_announcements(conn, since),
         TBL_MASTERY => query_mastery(conn, since),
         TBL_AIUSAGE => query_aiusage(conn, since),
-        TBL_SETTINGS => query_settings(conn, since),
+        TBL_SUBJECT_CATALOG => query_subject_catalog(conn, since),
+        TBL_TOPICS => query_topics(conn, since),
+        TBL_STREAMS => query_streams(conn, since),
+        TBL_MPESA => query_mpesa(conn, since),
+        TBL_EXAM_GRADES => query_exam_grades(conn, since),
         TBL_ROLES => query_roles(conn, since),
         TBL_SCOPES => query_scopes(conn, since),
         TBL_PLANS => query_plans(conn, since),
@@ -195,24 +203,29 @@ fn query_owners(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>>
 const SQL_STUDENTS: &str = "SELECT school, adm, user, name, dob, gender, documents, admitted, status, created, updated FROM students";
 
 fn query_students(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
-    load_rows::<StudentRow, _>(conn, SQL_STUDENTS, true, since, "students", |r| SnapshotRow {
-        row_key: r.row_key(),
-        school_id: parse_school_id(r.school_id()),
-        insert_data: InsertData {
-            row: Some(insert_data::Row::Student(r.into())),
-        },
+    load_rows::<StudentRow, _>(conn, SQL_STUDENTS, true, since, "students", |r| {
+        SnapshotRow {
+            row_key: r.row_key(),
+            school_id: parse_school_id(r.school_id()),
+            insert_data: InsertData {
+                row: Some(insert_data::Row::Student(r.into())),
+            },
+        }
     })
 }
 
-const SQL_GUARDIANS: &str = "SELECT school, user, student, relationship, role, created, updated FROM guardians";
+const SQL_GUARDIANS: &str =
+    "SELECT school, user, student, relationship, role, created, updated FROM guardians";
 
 fn query_guardians(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
-    load_rows::<GuardianRow, _>(conn, SQL_GUARDIANS, true, since, "guardians", |r| SnapshotRow {
-        row_key: r.row_key(),
-        school_id: parse_school_id(r.school_id()),
-        insert_data: InsertData {
-            row: Some(insert_data::Row::Guardian(r.into())),
-        },
+    load_rows::<GuardianRow, _>(conn, SQL_GUARDIANS, true, since, "guardians", |r| {
+        SnapshotRow {
+            row_key: r.row_key(),
+            school_id: parse_school_id(r.school_id()),
+            insert_data: InsertData {
+                row: Some(insert_data::Row::Guardian(r.into())),
+            },
+        }
     })
 }
 
@@ -230,19 +243,23 @@ fn query_departments(conn: &mut Conn, since: Option<i64>) -> Result<Vec<Snapshot
     })
 }
 
-const SQL_TEACHERS: &str = "SELECT school, user, hired, role, department, status, created, updated FROM teachers";
+const SQL_TEACHERS: &str =
+    "SELECT school, user, hired, role, department, status, created, updated FROM teachers";
 
 fn query_teachers(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
-    load_rows::<TeacherRow, _>(conn, SQL_TEACHERS, true, since, "teachers", |r| SnapshotRow {
-        row_key: r.row_key(),
-        school_id: parse_school_id(r.school_id()),
-        insert_data: InsertData {
-            row: Some(insert_data::Row::Teacher(r.into())),
-        },
+    load_rows::<TeacherRow, _>(conn, SQL_TEACHERS, true, since, "teachers", |r| {
+        SnapshotRow {
+            row_key: r.row_key(),
+            school_id: parse_school_id(r.school_id()),
+            insert_data: InsertData {
+                row: Some(insert_data::Row::Teacher(r.into())),
+            },
+        }
     })
 }
 
-const SQL_STAFF: &str = "SELECT school, user, idnumber, role, department, status, created, updated FROM staff";
+const SQL_STAFF: &str =
+    "SELECT school, user, idnumber, role, department, status, created, updated FROM staff";
 
 fn query_staff(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
     load_rows::<StaffRow, _>(conn, SQL_STAFF, true, since, "staff", |r| SnapshotRow {
@@ -285,7 +302,8 @@ fn query_class_teachers(conn: &mut Conn, since: Option<i64>) -> Result<Vec<Snaps
     )
 }
 
-const SQL_ENROLLMENTS: &str = "SELECT school, year, term, grade, stream, student, created FROM enrollments";
+const SQL_ENROLLMENTS: &str =
+    "SELECT school, year, term, grade, stream, student, created FROM enrollments";
 
 fn query_enrollments(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
     load_rows::<EnrollmentRow, _>(conn, SQL_ENROLLMENTS, false, since, "enrollments", |r| {
@@ -299,16 +317,24 @@ fn query_enrollments(conn: &mut Conn, since: Option<i64>) -> Result<Vec<Snapshot
     })
 }
 
-const SQL_SUBJECTS: &str = "SELECT school, year, term, grade, stream, subject, teacher, created FROM subjects";
+const SQL_SUBJECT_TEACHERS: &str =
+    "SELECT school, year, term, grade, stream, subject, teacher, created FROM subject_teachers";
 
-fn query_subjects(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
-    load_rows::<SubjectRow, _>(conn, SQL_SUBJECTS, false, since, "subjects", |r| SnapshotRow {
-        row_key: r.row_key(),
-        school_id: parse_school_id(r.school_id()),
-        insert_data: InsertData {
-            row: Some(insert_data::Row::Subject(r.into())),
+fn query_subject_teachers(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
+    load_rows::<SubjectTeacherRow, _>(
+        conn,
+        SQL_SUBJECT_TEACHERS,
+        false,
+        since,
+        "subject_teachers",
+        |r| SnapshotRow {
+            row_key: r.row_key(),
+            school_id: parse_school_id(r.school_id()),
+            insert_data: InsertData {
+                row: Some(insert_data::Row::SubjectTeacher(r.into())),
+            },
         },
-    })
+    )
 }
 
 const SQL_ATTENDANCE: &str = "SELECT school, year, term, grade, stream, student, date, status, created, updated FROM attendance";
@@ -351,7 +377,7 @@ fn query_lessons(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>
     })
 }
 
-const SQL_EXAMS: &str = "SELECT id, school, year, term, grade, stream, personalized, \"type\", start, \"end\", teacher, created, updated FROM exams";
+const SQL_EXAMS: &str = "SELECT id, school, name, year, term, personalized, \"type\", start, \"end\", teacher, created, updated FROM exams";
 
 fn query_exams(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
     load_rows::<ExamRow, _>(conn, SQL_EXAMS, true, since, "exams", |r| SnapshotRow {
@@ -363,7 +389,7 @@ fn query_exams(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> 
     })
 }
 
-const SQL_PAPERS: &str = "SELECT school, exam, subject, paper, invigilator, start, \"end\", status, created, updated FROM papers";
+const SQL_PAPERS: &str = "SELECT school, exam, subject, paper, topic, invigilator, start, \"end\", status, created, updated FROM papers";
 
 fn query_papers(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
     load_rows::<PaperRow, _>(conn, SQL_PAPERS, true, since, "papers", |r| SnapshotRow {
@@ -375,7 +401,8 @@ fn query_papers(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>>
     })
 }
 
-const SQL_GRADES: &str = "SELECT school, exam, student, subject, paper, score, total, created, updated FROM grades";
+const SQL_GRADES: &str =
+    "SELECT school, exam, student, subject, paper, score, total, created, updated FROM grades";
 
 fn query_grades(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
     load_rows::<GradeRow, _>(conn, SQL_GRADES, true, since, "grades", |r| SnapshotRow {
@@ -402,47 +429,47 @@ fn query_fees(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
 const SQL_INVOICES: &str = "SELECT id, school, year, term, fee, description, student, amount, status, due, created, updated FROM invoices";
 
 fn query_invoices(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
-    load_rows::<InvoiceRow, _>(conn, SQL_INVOICES, true, since, "invoices", |r| SnapshotRow {
-        row_key: r.row_key(),
-        school_id: parse_school_id(r.school_id()),
-        insert_data: InsertData {
-            row: Some(insert_data::Row::Invoice(r.into())),
-        },
+    load_rows::<InvoiceRow, _>(conn, SQL_INVOICES, true, since, "invoices", |r| {
+        SnapshotRow {
+            row_key: r.row_key(),
+            school_id: parse_school_id(r.school_id()),
+            insert_data: InsertData {
+                row: Some(insert_data::Row::Invoice(r.into())),
+            },
+        }
     })
 }
 
 const SQL_PAYMENTS: &str = "SELECT id, invoice, school, student, amount, method, reference, recorder, date, created, updated FROM payments";
 
 fn query_payments(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
-    load_rows::<PaymentRow, _>(conn, SQL_PAYMENTS, true, since, "payments", |r| SnapshotRow {
-        row_key: r.row_key(),
-        school_id: parse_school_id(r.school_id()),
-        insert_data: InsertData {
-            row: Some(insert_data::Row::Payment(r.into())),
-        },
+    load_rows::<PaymentRow, _>(conn, SQL_PAYMENTS, true, since, "payments", |r| {
+        SnapshotRow {
+            row_key: r.row_key(),
+            school_id: parse_school_id(r.school_id()),
+            insert_data: InsertData {
+                row: Some(insert_data::Row::Payment(r.into())),
+            },
+        }
     })
 }
 
 const SQL_ANNOUNCEMENTS: &str = "SELECT id, school, title, content, grade, stream, audience, author, created, updated FROM announcements";
 
 fn query_announcements(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
-    load_rows::<AnnouncementRow, _>(
-        conn,
-        SQL_ANNOUNCEMENTS,
-        true,
-        since,
-        "announcements",
-        |r| SnapshotRow {
+    load_rows::<AnnouncementRow, _>(conn, SQL_ANNOUNCEMENTS, true, since, "announcements", |r| {
+        SnapshotRow {
             row_key: r.row_key(),
             school_id: parse_school_id(r.school_id()),
             insert_data: InsertData {
                 row: Some(insert_data::Row::Announcement(r.into())),
             },
-        },
-    )
+        }
+    })
 }
 
-const SQL_MASTERY: &str = "SELECT school, student, grade, subject, topic, score, created, updated FROM mastery";
+const SQL_MASTERY: &str =
+    "SELECT school, student, subject, topic, score, created, updated FROM mastery";
 
 fn query_mastery(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
     load_rows::<MasteryRow, _>(conn, SQL_MASTERY, true, since, "mastery", |r| SnapshotRow {
@@ -454,7 +481,8 @@ fn query_mastery(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>
     })
 }
 
-const SQL_AIUSAGE: &str = "SELECT school, student, year, term, allocated, used, created, updated FROM aiusage";
+const SQL_AIUSAGE: &str =
+    "SELECT school, student, year, term, allocated, used, created, updated FROM aiusage";
 
 fn query_aiusage(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
     load_rows::<AiUsageRow, _>(conn, SQL_AIUSAGE, true, since, "aiusage", |r| SnapshotRow {
@@ -466,19 +494,8 @@ fn query_aiusage(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>
     })
 }
 
-const SQL_SETTINGS: &str = "SELECT school, data, mpesa, created, updated FROM settings";
-
-fn query_settings(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
-    load_rows::<SettingsRow, _>(conn, SQL_SETTINGS, true, since, "settings", |r| SnapshotRow {
-        row_key: r.row_key(),
-        school_id: parse_school_id(r.school_id()),
-        insert_data: InsertData {
-            row: Some(insert_data::Row::Settings(r.into())),
-        },
-    })
-}
-
-const SQL_ROLES: &str = "SELECT id, school, name, description, permissions, created, updated FROM roles";
+const SQL_ROLES: &str =
+    "SELECT id, school, name, description, permissions, created, updated FROM roles";
 
 fn query_roles(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
     load_rows::<RoleRow, _>(conn, SQL_ROLES, true, since, "roles", |r| SnapshotRow {
@@ -502,7 +519,8 @@ fn query_scopes(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>>
     })
 }
 
-const SQL_PLANS: &str = "SELECT id, name, description, amount, levels, status, features, created, updated FROM plans";
+const SQL_PLANS: &str =
+    "SELECT id, name, description, amount, levels, status, features, created, updated FROM plans";
 
 fn query_plans(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
     load_rows::<PlanRow, _>(conn, SQL_PLANS, true, since, "plans", |r| SnapshotRow {
@@ -517,30 +535,93 @@ fn query_plans(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> 
 const SQL_SUBSCRIPTIONS: &str = "SELECT school, plan, year, term, student, invoice, discount, status, created, updated FROM subscriptions";
 
 fn query_subscriptions(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
-    load_rows::<SubscriptionRow, _>(
-        conn,
-        SQL_SUBSCRIPTIONS,
-        true,
-        since,
-        "subscriptions",
-        |r| SnapshotRow {
+    load_rows::<SubscriptionRow, _>(conn, SQL_SUBSCRIPTIONS, true, since, "subscriptions", |r| {
+        SnapshotRow {
             row_key: r.row_key(),
             school_id: parse_school_id(r.school_id()),
             insert_data: InsertData {
                 row: Some(insert_data::Row::Subscription(r.into())),
             },
-        },
-    )
+        }
+    })
 }
 
-const SQL_DISCOUNTS: &str = "SELECT school, plan, year, term, grade, amount, unit, created, updated FROM discounts";
+const SQL_DISCOUNTS: &str =
+    "SELECT school, plan, year, term, grade, amount, unit, created, updated FROM discounts";
 
 fn query_discounts(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
-    load_rows::<DiscountRow, _>(conn, SQL_DISCOUNTS, true, since, "discounts", |r| SnapshotRow {
+    load_rows::<DiscountRow, _>(conn, SQL_DISCOUNTS, true, since, "discounts", |r| {
+        SnapshotRow {
+            row_key: r.row_key(),
+            school_id: parse_school_id(r.school_id()),
+            insert_data: InsertData {
+                row: Some(insert_data::Row::Discount(r.into())),
+            },
+        }
+    })
+}
+
+const SQL_SUBJECT_CATALOG: &str = "SELECT id, name, curriculum, created, updated FROM subjects";
+
+fn query_subject_catalog(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
+    load_rows::<SubjectCatalogRow, _>(conn, SQL_SUBJECT_CATALOG, true, since, "subjects", |r| {
+        SnapshotRow {
+            row_key: r.row_key(),
+            school_id: None,
+            insert_data: InsertData {
+                row: Some(insert_data::Row::SubjectCatalog(r.into())),
+            },
+        }
+    })
+}
+
+const SQL_TOPICS: &str = "SELECT id, subject, grade, name, created, updated FROM topics";
+
+fn query_topics(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
+    load_rows::<TopicRow, _>(conn, SQL_TOPICS, true, since, "topics", |r| SnapshotRow {
+        row_key: r.row_key(),
+        school_id: None,
+        insert_data: InsertData {
+            row: Some(insert_data::Row::Topic(r.into())),
+        },
+    })
+}
+
+const SQL_STREAMS: &str = "SELECT school, grade, stream, name, created, updated FROM streams";
+
+fn query_streams(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
+    load_rows::<StreamRow, _>(conn, SQL_STREAMS, true, since, "streams", |r| SnapshotRow {
         row_key: r.row_key(),
         school_id: parse_school_id(r.school_id()),
         insert_data: InsertData {
-            row: Some(insert_data::Row::Discount(r.into())),
+            row: Some(insert_data::Row::Stream(r.into())),
         },
+    })
+}
+
+const SQL_MPESA: &str = "SELECT school, consumer_key, consumer_secret, passkey, shortcode, env, created, updated FROM mpesa";
+
+fn query_mpesa(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
+    load_rows::<MpesaRow, _>(conn, SQL_MPESA, true, since, "mpesa", |r| SnapshotRow {
+        row_key: r.row_key(),
+        school_id: parse_school_id(r.school_id()),
+        insert_data: InsertData {
+            row: Some(insert_data::Row::Mpesa(r.into())),
+        },
+    })
+}
+
+const SQL_EXAM_GRADES: &str = "SELECT exam, grade, stream FROM exam_grades";
+
+fn query_exam_grades(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
+    // exam_grades has no updated/created columns — never use since filter
+    load_rows::<ExamGradeRow, _>(conn, SQL_EXAM_GRADES, false, None, "exam_grades", |r| {
+        SnapshotRow {
+            row_key: r.row_key(),
+            school_id: None,
+            insert_data: InsertData {
+                row: Some(insert_data::Row::ExamGrade(r.into())),
+            },
+        }
     })
 }

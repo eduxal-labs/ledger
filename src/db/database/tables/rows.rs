@@ -512,7 +512,7 @@ impl From<&EnrollmentRow> for EnrollmentInsert {
 // ---------------------------------------------------------------------------
 
 #[derive(QueryableByName)]
-pub struct SubjectRow {
+pub struct SubjectTeacherRow {
     #[diesel(sql_type = Text)]
     pub school: String,
     #[diesel(sql_type = Integer)]
@@ -523,15 +523,15 @@ pub struct SubjectRow {
     pub grade: i16,
     #[diesel(sql_type = SmallInt)]
     pub stream: i16,
-    #[diesel(sql_type = SmallInt)]
-    pub subject: i16,
+    #[diesel(sql_type = Integer)]
+    pub subject: i32,
     #[diesel(sql_type = Text)]
     pub teacher: String,
     #[diesel(sql_type = BigInt)]
     pub created: i64,
 }
 
-impl SubjectRow {
+impl SubjectTeacherRow {
     pub fn row_key(&self) -> String {
         format!(
             "{}|{}|{}|{}|{}|{}",
@@ -543,15 +543,15 @@ impl SubjectRow {
     }
 }
 
-impl From<&SubjectRow> for SubjectInsert {
-    fn from(row: &SubjectRow) -> Self {
-        SubjectInsert {
+impl From<&SubjectTeacherRow> for SubjectTeacherInsert {
+    fn from(row: &SubjectTeacherRow) -> Self {
+        SubjectTeacherInsert {
             school: row.school.clone(),
             year: row.year,
             term: row.term as i32,
             grade: row.grade as i32,
             stream: row.stream as i32,
-            subject: row.subject as i32,
+            subject: row.subject,
             teacher: row.teacher.clone(),
         }
     }
@@ -628,8 +628,8 @@ pub struct TimetableRow {
     pub grade: i16,
     #[diesel(sql_type = SmallInt)]
     pub stream: i16,
-    #[diesel(sql_type = SmallInt)]
-    pub subject: i16,
+    #[diesel(sql_type = Integer)]
+    pub subject: i32,
     #[diesel(sql_type = Text)]
     pub teacher: String,
     #[diesel(sql_type = SmallInt)]
@@ -671,7 +671,7 @@ impl From<&TimetableRow> for TimetableInsert {
             term: row.term as i32,
             grade: row.grade as i32,
             stream: row.stream as i32,
-            subject: row.subject as i32,
+            subject: row.subject,
             teacher: row.teacher.clone(),
             day: row.day as i32,
             start: row.start,
@@ -698,8 +698,8 @@ pub struct LessonRow {
     pub stream: i16,
     #[diesel(sql_type = Integer)]
     pub date: i32,
-    #[diesel(sql_type = SmallInt)]
-    pub subject: i16,
+    #[diesel(sql_type = Integer)]
+    pub subject: i32,
     #[diesel(sql_type = Text)]
     pub teacher: String,
     #[diesel(sql_type = BigInt)]
@@ -736,7 +736,7 @@ impl From<&LessonRow> for LessonInsert {
             grade: row.grade as i32,
             stream: row.stream as i32,
             date: row.date,
-            subject: row.subject as i32,
+            subject: row.subject,
             teacher: row.teacher.clone(),
         }
     }
@@ -752,14 +752,12 @@ pub struct ExamRow {
     pub id: String,
     #[diesel(sql_type = Text)]
     pub school: String,
+    #[diesel(sql_type = Text)]
+    pub name: String,
     #[diesel(sql_type = Integer)]
     pub year: i32,
     #[diesel(sql_type = SmallInt)]
     pub term: i16,
-    #[diesel(sql_type = SmallInt)]
-    pub grade: i16,
-    #[diesel(sql_type = Nullable<SmallInt>)]
-    pub stream: Option<i16>,
     #[diesel(sql_type = Bool)]
     pub personalized: bool,
     #[diesel(sql_type = SmallInt, column_name = "type")]
@@ -790,10 +788,9 @@ impl From<&ExamRow> for ExamInsert {
         ExamInsert {
             id: row.id.clone(),
             school: row.school.clone(),
+            name: row.name.clone(),
             year: row.year,
             term: row.term as i32,
-            grade: row.grade as i32,
-            stream: row.stream.map(|v| v as i32),
             personalized: row.personalized,
             r#type: row.type_ as i32,
             start: row.start,
@@ -813,10 +810,12 @@ pub struct PaperRow {
     pub school: String,
     #[diesel(sql_type = Text)]
     pub exam: String,
-    #[diesel(sql_type = SmallInt)]
-    pub subject: i16,
+    #[diesel(sql_type = Integer)]
+    pub subject: i32,
     #[diesel(sql_type = Nullable<SmallInt>)]
     pub paper: Option<i16>,
+    #[diesel(sql_type = Nullable<Integer>)]
+    pub topic: Option<i32>,
     #[diesel(sql_type = Text)]
     pub invigilator: String,
     #[diesel(sql_type = BigInt)]
@@ -851,8 +850,9 @@ impl From<&PaperRow> for PaperInsert {
         PaperInsert {
             school: row.school.clone(),
             exam: row.exam.clone(),
-            subject: row.subject as i32,
+            subject: row.subject,
             paper: row.paper.map(|v| v as i32),
+            topic: row.topic,
             invigilator: row.invigilator.clone(),
             start: row.start,
             end: row.end,
@@ -873,8 +873,8 @@ pub struct GradeRow {
     pub exam: String,
     #[diesel(sql_type = Integer)]
     pub student: i32,
-    #[diesel(sql_type = SmallInt)]
-    pub subject: i16,
+    #[diesel(sql_type = Integer)]
+    pub subject: i32,
     #[diesel(sql_type = Nullable<SmallInt>)]
     pub paper: Option<i16>,
     #[diesel(sql_type = Float)]
@@ -909,7 +909,7 @@ impl From<&GradeRow> for GradeInsert {
             school: row.school.clone(),
             exam: row.exam.clone(),
             student: row.student,
-            subject: row.subject as i32,
+            subject: row.subject,
             paper: row.paper.map(|v| v as i32),
             score: row.score,
             total: row.total,
@@ -1150,12 +1150,10 @@ pub struct MasteryRow {
     pub school: String,
     #[diesel(sql_type = Integer)]
     pub student: i32,
-    #[diesel(sql_type = SmallInt)]
-    pub grade: i16,
-    #[diesel(sql_type = SmallInt)]
-    pub subject: i16,
-    #[diesel(sql_type = SmallInt)]
-    pub topic: i16,
+    #[diesel(sql_type = Integer)]
+    pub subject: i32,
+    #[diesel(sql_type = Integer)]
+    pub topic: i32,
     #[diesel(sql_type = Float)]
     pub score: f32,
     #[diesel(sql_type = BigInt)]
@@ -1167,8 +1165,8 @@ pub struct MasteryRow {
 impl MasteryRow {
     pub fn row_key(&self) -> String {
         format!(
-            "{}|{}|{}|{}|{}",
-            self.school, self.student, self.grade, self.subject, self.topic
+            "{}|{}|{}|{}",
+            self.school, self.student, self.subject, self.topic
         )
     }
     pub fn school_id(&self) -> Option<&str> {
@@ -1181,9 +1179,8 @@ impl From<&MasteryRow> for MasteryInsert {
         MasteryInsert {
             school: row.school.clone(),
             student: row.student,
-            grade: row.grade as i32,
-            subject: row.subject as i32,
-            topic: row.topic as i32,
+            subject: row.subject,
+            topic: row.topic,
             score: row.score,
         }
     }
@@ -1234,43 +1231,6 @@ impl From<&AiUsageRow> for AiUsageInsert {
             term: row.term as i32,
             allocated: row.allocated,
             used: row.used,
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// 25. Settings
-// ---------------------------------------------------------------------------
-
-#[derive(QueryableByName)]
-pub struct SettingsRow {
-    #[diesel(sql_type = Text)]
-    pub school: String,
-    #[diesel(sql_type = Text)]
-    pub data: String,
-    #[diesel(sql_type = Nullable<Text>)]
-    pub mpesa: Option<String>,
-    #[diesel(sql_type = BigInt)]
-    pub created: i64,
-    #[diesel(sql_type = BigInt)]
-    pub updated: i64,
-}
-
-impl SettingsRow {
-    pub fn row_key(&self) -> String {
-        self.school.clone()
-    }
-    pub fn school_id(&self) -> Option<&str> {
-        Some(&self.school)
-    }
-}
-
-impl From<&SettingsRow> for SettingsInsert {
-    fn from(row: &SettingsRow) -> Self {
-        SettingsInsert {
-            school: row.school.clone(),
-            data: row.data.clone(),
-            mpesa: row.mpesa.clone(),
         }
     }
 }
@@ -1510,6 +1470,202 @@ impl From<&DiscountRow> for DiscountInsert {
             grade: row.grade as i32,
             amount: row.amount,
             unit: row.unit as i32,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 31. SubjectCatalog (global subjects table)
+// ---------------------------------------------------------------------------
+
+#[derive(QueryableByName)]
+pub struct SubjectCatalogRow {
+    #[diesel(sql_type = Integer)]
+    pub id: i32,
+    #[diesel(sql_type = Text)]
+    pub name: String,
+    #[diesel(sql_type = SmallInt)]
+    pub curriculum: i16,
+    #[diesel(sql_type = BigInt)]
+    pub created: i64,
+    #[diesel(sql_type = BigInt)]
+    pub updated: i64,
+}
+
+impl SubjectCatalogRow {
+    pub fn row_key(&self) -> String {
+        self.id.to_string()
+    }
+    pub fn school_id(&self) -> Option<&str> {
+        None
+    }
+}
+
+impl From<&SubjectCatalogRow> for SubjectInsert {
+    fn from(row: &SubjectCatalogRow) -> Self {
+        SubjectInsert {
+            id: row.id,
+            name: row.name.clone(),
+            curriculum: row.curriculum as i32,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 32. Topics (global topic catalog)
+// ---------------------------------------------------------------------------
+
+#[derive(QueryableByName)]
+pub struct TopicRow {
+    #[diesel(sql_type = Integer)]
+    pub id: i32,
+    #[diesel(sql_type = Integer)]
+    pub subject: i32,
+    #[diesel(sql_type = SmallInt)]
+    pub grade: i16,
+    #[diesel(sql_type = Text)]
+    pub name: String,
+    #[diesel(sql_type = BigInt)]
+    pub created: i64,
+    #[diesel(sql_type = BigInt)]
+    pub updated: i64,
+}
+
+impl TopicRow {
+    pub fn row_key(&self) -> String {
+        self.id.to_string()
+    }
+    pub fn school_id(&self) -> Option<&str> {
+        None
+    }
+}
+
+impl From<&TopicRow> for TopicInsert {
+    fn from(row: &TopicRow) -> Self {
+        TopicInsert {
+            id: row.id,
+            subject: row.subject,
+            grade: row.grade as i32,
+            name: row.name.clone(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 33. Streams (per-school stream definitions)
+// ---------------------------------------------------------------------------
+
+#[derive(QueryableByName)]
+pub struct StreamRow {
+    #[diesel(sql_type = Text)]
+    pub school: String,
+    #[diesel(sql_type = SmallInt)]
+    pub grade: i16,
+    #[diesel(sql_type = SmallInt)]
+    pub stream: i16,
+    #[diesel(sql_type = Text)]
+    pub name: String,
+    #[diesel(sql_type = BigInt)]
+    pub created: i64,
+    #[diesel(sql_type = BigInt)]
+    pub updated: i64,
+}
+
+impl StreamRow {
+    pub fn row_key(&self) -> String {
+        format!("{}|{}|{}", self.school, self.grade, self.stream)
+    }
+    pub fn school_id(&self) -> Option<&str> {
+        Some(&self.school)
+    }
+}
+
+impl From<&StreamRow> for StreamInsert {
+    fn from(row: &StreamRow) -> Self {
+        StreamInsert {
+            school: row.school.clone(),
+            grade: row.grade as i32,
+            stream: row.stream as i32,
+            name: row.name.clone(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 34. Mpesa (per-school M-Pesa config)
+// ---------------------------------------------------------------------------
+
+#[derive(QueryableByName)]
+pub struct MpesaRow {
+    #[diesel(sql_type = Text)]
+    pub school: String,
+    #[diesel(sql_type = Text)]
+    pub consumer_key: String,
+    #[diesel(sql_type = Text)]
+    pub consumer_secret: String,
+    #[diesel(sql_type = Text)]
+    pub passkey: String,
+    #[diesel(sql_type = Text)]
+    pub shortcode: String,
+    #[diesel(sql_type = SmallInt)]
+    pub env: i16,
+    #[diesel(sql_type = BigInt)]
+    pub created: i64,
+    #[diesel(sql_type = BigInt)]
+    pub updated: i64,
+}
+
+impl MpesaRow {
+    pub fn row_key(&self) -> String {
+        self.school.clone()
+    }
+    pub fn school_id(&self) -> Option<&str> {
+        Some(&self.school)
+    }
+}
+
+impl From<&MpesaRow> for MpesaInsert {
+    fn from(row: &MpesaRow) -> Self {
+        MpesaInsert {
+            school: row.school.clone(),
+            consumer_key: row.consumer_key.clone(),
+            consumer_secret: row.consumer_secret.clone(),
+            passkey: row.passkey.clone(),
+            shortcode: row.shortcode.clone(),
+            env: row.env as i32,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 35. ExamGrade (exam_grades junction table)
+// ---------------------------------------------------------------------------
+
+#[derive(QueryableByName)]
+pub struct ExamGradeRow {
+    #[diesel(sql_type = Text)]
+    pub exam: String,
+    #[diesel(sql_type = SmallInt)]
+    pub grade: i16,
+    #[diesel(sql_type = SmallInt)]
+    pub stream: i16,
+}
+
+impl ExamGradeRow {
+    pub fn row_key(&self) -> String {
+        format!("{}|{}|{}", self.exam, self.grade, self.stream)
+    }
+    pub fn school_id(&self) -> Option<&str> {
+        None
+    }
+}
+
+impl From<&ExamGradeRow> for ExamGradeInsert {
+    fn from(row: &ExamGradeRow) -> Self {
+        ExamGradeInsert {
+            exam: row.exam.clone(),
+            grade: row.grade as i32,
+            stream: row.stream as i32,
         }
     }
 }
