@@ -314,7 +314,7 @@ pub fn insert_paper(conn: &mut Conn, row: &PaperInsert) -> Result<()> {
     .bind::<BigInt, _>(row.end)
     .bind::<SmallInt, _>(row.status as i16)
     .bind::<SmallInt, _>(row.grade as i16)
-    .bind::<SmallInt, _>(row.stream as i16)
+    .bind::<Nullable<SmallInt>, _>(row.stream.map(|v| v as i16))
     .bind::<BigInt, _>(now)
     .bind::<BigInt, _>(now)
     .execute(conn)?;
