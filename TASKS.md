@@ -289,7 +289,7 @@ Verify:
 
 ---
 
-### Task L07: Update actions.rs — remove exam_grade handlers, update paper handlers [ ]
+### Task L07: Update actions.rs — remove exam_grade handlers, update paper handlers [x]
 
 **Files to modify:** `src/db/database/tables/actions.rs`
 **Depends on:** Tasks L03, L04, L05

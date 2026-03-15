@@ -106,8 +106,7 @@ pub mod sync_action {
     pub const CREATE_MPESA: i32 = 86;
     pub const UPDATE_MPESA: i32 = 87;
     pub const DELETE_MPESA: i32 = 88;
-    pub const ADD_EXAM_GRADE: i32 = 89;
-    pub const REMOVE_EXAM_GRADE: i32 = 90;
+    // 89, 90: reserved (removed exam_grade actions)
 }
 
 /// Result of executing a single action. Contains the rows to return to the
@@ -292,10 +291,7 @@ pub fn action_permission(action_id: i32) -> Result<(Resource, Action)> {
         UPDATE_MPESA => Ok((Resource::Schools, Action::Update)),
         DELETE_MPESA => Ok((Resource::Schools, Action::Delete)),
 
-        // ExamGrades
-        ADD_EXAM_GRADE => Ok((Resource::Exams, Action::Assign)),
-        REMOVE_EXAM_GRADE => Ok((Resource::Exams, Action::Unassign)),
-
+        // 89, 90: reserved (removed exam_grade actions)
         _ => {
             tracing::error!("action_permission: unknown action {action_id}");
             Err(Error::Internal)
@@ -348,7 +344,7 @@ const TBL_SUBJECT_CATALOG: i32 = 31;
 const TBL_TOPICS: i32 = 32;
 const TBL_STREAMS: i32 = 33;
 const TBL_MPESA: i32 = 34;
-const TBL_EXAM_GRADES: i32 = 35;
+// TBL_EXAM_GRADES (35) removed — grade/stream moved to papers
 
 // Changelog operation constants
 const OP_INSERT: u8 = 0;
@@ -1313,10 +1309,7 @@ pub fn execute_action(conn: &mut Conn, action_id: i32, payload: &[u8]) -> Result
         UPDATE_MPESA => handle_update_mpesa(conn, payload),
         DELETE_MPESA => handle_delete_mpesa(conn, payload),
 
-        // ExamGrades
-        ADD_EXAM_GRADE => handle_add_exam_grade(conn, payload),
-        REMOVE_EXAM_GRADE => handle_remove_exam_grade(conn, payload),
-
+        // 89, 90: reserved (removed exam_grade actions)
         _ => {
             tracing::error!("execute_action: unknown action {action_id}");
             Err(Error::Internal)
@@ -2397,11 +2390,6 @@ fn handle_create_exam(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
     insert::insert_exam(conn, &exam_insert)?;
     append_log(log_user, TBL_EXAMS as u8, OP_INSERT, 0)?;
 
-    // Also insert exam_grades entries
-    for eg in &p.grades {
-        insert::insert_exam_grade(conn, &p.id, eg.grade as i16, eg.stream as i16)?;
-    }
-
     let row = fetch_exam(conn, &p.id)?;
     Ok(ActionResult::with_rows(vec![upsert_row(
         TBL_EXAMS,
@@ -2461,6 +2449,8 @@ fn handle_create_paper(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> 
         start: p.start,
         end: p.end,
         status: 0, // default status
+        grade: p.grade,
+        stream: p.stream,
     };
     insert::insert_paper(conn, &paper_insert)?;
     append_log(log_user, TBL_PAPERS as u8, OP_INSERT, 0)?;
@@ -3617,45 +3607,5 @@ fn handle_delete_mpesa(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> 
 
     Ok(ActionResult::with_rows(vec![delete_row(
         TBL_MPESA, row_key,
-    )]))
-}
-
-// ---------------------------------------------------------------------------
-// ExamGrades
-// ---------------------------------------------------------------------------
-
-fn handle_add_exam_grade(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
-    let p: AddExamGradePayload = decode(payload)?;
-    let log_user = Id::system();
-
-    insert::insert_exam_grade(conn, &p.exam, p.grade as i16, p.stream as i16)?;
-    append_log(log_user, TBL_EXAM_GRADES as u8, OP_INSERT, 0)?;
-
-    let row_key = format!("{}|{}|{}", p.exam, p.grade, p.stream);
-    Ok(ActionResult::with_rows(vec![upsert_row(
-        TBL_EXAM_GRADES,
-        row_key,
-        InsertData {
-            row: Some(insert_data::Row::ExamGrade(ExamGradeInsert {
-                exam: p.exam.clone(),
-                grade: p.grade as i32,
-                stream: p.stream as i32,
-            })),
-        },
-    )]))
-}
-
-fn handle_remove_exam_grade(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
-    let p: RemoveExamGradePayload = decode(payload)?;
-    let log_user = Id::system();
-    let row_key = format!("{}|{}|{}", p.exam, p.grade, p.stream);
-
-    delete::delete_exam_grade(conn, &p.exam, p.grade as i16, p.stream as i16)?;
-    append_log(log_user, TBL_EXAM_GRADES as u8, OP_DELETE, 0)?;
-    append_delete_log(TBL_EXAM_GRADES as u8, &row_key)?;
-
-    Ok(ActionResult::with_rows(vec![delete_row(
-        TBL_EXAM_GRADES,
-        row_key,
     )]))
 }
