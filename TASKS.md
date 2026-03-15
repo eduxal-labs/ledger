@@ -202,7 +202,7 @@ Verify:
 
 ---
 
-### Task L03: Update rows.rs — remove ExamGradeRow, add grade/stream to PaperRow [ ]
+### Task L03: Update rows.rs — remove ExamGradeRow, add grade/stream to PaperRow [x]
 
 **Files to modify:** `src/db/database/tables/rows.rs`
 **Depends on:** Task L02
@@ -230,7 +230,7 @@ Verify:
 
 ---
 
-### Task L04: Update insert.rs — remove insert_exam_grade, update insert_paper [ ]
+### Task L04: Update insert.rs — remove insert_exam_grade, update insert_paper [x]
 
 **Files to modify:** `src/db/database/tables/insert.rs`
 **Depends on:** Task L02
@@ -252,7 +252,7 @@ Verify:
 
 ---
 
-### Task L05: Update delete.rs — remove delete_exam_grade [ ]
+### Task L05: Update delete.rs — remove delete_exam_grade [x]
 
 **Files to modify:** `src/db/database/tables/delete.rs`
 **Depends on:** Task L02
@@ -269,7 +269,7 @@ Verify:
 
 ---
 
-### Task L06: Update snapshot.rs — remove exam_grades snapshot, update papers [ ]
+### Task L06: Update snapshot.rs — remove exam_grades snapshot, update papers [x]
 
 **Files to modify:** `src/db/database/tables/snapshot.rs`
 **Depends on:** Task L02
@@ -326,7 +326,7 @@ Verify:
 
 ---
 
-### Task L08: Update services/sync.rs — remove ExamGrades from LogTable [ ]
+### Task L08: Update services/sync.rs — remove ExamGrades from LogTable [x]
 
 **Files to modify:** `src/services/sync.rs`
 **Depends on:** Task L02

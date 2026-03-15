@@ -824,6 +824,10 @@ pub struct PaperRow {
     pub end: i64,
     #[diesel(sql_type = SmallInt)]
     pub status: i16,
+    #[diesel(sql_type = SmallInt)]
+    pub grade: i16,
+    #[diesel(sql_type = Nullable<SmallInt>)]
+    pub stream: Option<i16>,
     #[diesel(sql_type = BigInt)]
     pub created: i64,
     #[diesel(sql_type = BigInt)]
@@ -857,6 +861,8 @@ impl From<&PaperRow> for PaperInsert {
             start: row.start,
             end: row.end,
             status: row.status as i32,
+            grade: row.grade as i32,
+            stream: row.stream.map(|v| v as i32),
         }
     }
 }
@@ -1633,39 +1639,6 @@ impl From<&MpesaRow> for MpesaInsert {
             passkey: row.passkey.clone(),
             shortcode: row.shortcode.clone(),
             env: row.env as i32,
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// 35. ExamGrade (exam_grades junction table)
-// ---------------------------------------------------------------------------
-
-#[derive(QueryableByName)]
-pub struct ExamGradeRow {
-    #[diesel(sql_type = Text)]
-    pub exam: String,
-    #[diesel(sql_type = SmallInt)]
-    pub grade: i16,
-    #[diesel(sql_type = SmallInt)]
-    pub stream: i16,
-}
-
-impl ExamGradeRow {
-    pub fn row_key(&self) -> String {
-        format!("{}|{}|{}", self.exam, self.grade, self.stream)
-    }
-    pub fn school_id(&self) -> Option<&str> {
-        None
-    }
-}
-
-impl From<&ExamGradeRow> for ExamGradeInsert {
-    fn from(row: &ExamGradeRow) -> Self {
-        ExamGradeInsert {
-            exam: row.exam.clone(),
-            grade: row.grade as i32,
-            stream: row.stream as i32,
         }
     }
 }

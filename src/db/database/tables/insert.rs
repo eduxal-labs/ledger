@@ -301,8 +301,8 @@ pub fn insert_exam(conn: &mut Conn, row: &ExamInsert) -> Result<()> {
 pub fn insert_paper(conn: &mut Conn, row: &PaperInsert) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     sql_query(
-        "INSERT INTO papers (school, exam, subject, paper, topic, invigilator, start, \"end\", status, created, updated) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO papers (school, exam, subject, paper, topic, invigilator, start, \"end\", status, grade, stream, created, updated) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind::<Text, _>(&row.school)
     .bind::<Text, _>(&row.exam)
@@ -313,6 +313,8 @@ pub fn insert_paper(conn: &mut Conn, row: &PaperInsert) -> Result<()> {
     .bind::<BigInt, _>(row.start)
     .bind::<BigInt, _>(row.end)
     .bind::<SmallInt, _>(row.status as i16)
+    .bind::<SmallInt, _>(row.grade as i16)
+    .bind::<SmallInt, _>(row.stream as i16)
     .bind::<BigInt, _>(now)
     .bind::<BigInt, _>(now)
     .execute(conn)?;
@@ -590,15 +592,6 @@ pub fn insert_mpesa(conn: &mut Conn, row: &MpesaInsert) -> Result<()> {
     .bind::<BigInt, _>(now)
     .bind::<BigInt, _>(now)
     .execute(conn)?;
-    Ok(())
-}
-
-pub fn insert_exam_grade(conn: &mut Conn, exam: &str, grade: i16, stream: i16) -> Result<()> {
-    sql_query("INSERT INTO exam_grades (exam, grade, stream) VALUES (?, ?, ?)")
-        .bind::<Text, _>(exam)
-        .bind::<SmallInt, _>(grade)
-        .bind::<SmallInt, _>(stream)
-        .execute(conn)?;
     Ok(())
 }
 

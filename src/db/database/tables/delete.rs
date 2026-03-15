@@ -480,12 +480,3 @@ pub fn delete_mpesa(conn: &mut Conn, school: &str) -> Result<()> {
         .execute(conn)?;
     Ok(())
 }
-
-pub fn delete_exam_grade(conn: &mut Conn, exam: &str, grade: i16, stream: i16) -> Result<()> {
-    sql_query("DELETE FROM exam_grades WHERE exam = ? AND grade = ? AND stream = ?")
-        .bind::<Text, _>(exam)
-        .bind::<SmallInt, _>(grade)
-        .bind::<SmallInt, _>(stream)
-        .execute(conn)?;
-    Ok(())
-}

@@ -37,7 +37,6 @@ const TBL_SUBJECT_CATALOG: i32 = 31;
 const TBL_TOPICS: i32 = 32;
 const TBL_STREAMS: i32 = 33;
 const TBL_MPESA: i32 = 34;
-const TBL_EXAM_GRADES: i32 = 35;
 const TBL_ROLES: i32 = 26;
 const TBL_SCOPES: i32 = 27;
 const TBL_PLANS: i32 = 28;
@@ -98,7 +97,6 @@ fn snapshot_table_inner(
         TBL_TOPICS => query_topics(conn, since),
         TBL_STREAMS => query_streams(conn, since),
         TBL_MPESA => query_mpesa(conn, since),
-        TBL_EXAM_GRADES => query_exam_grades(conn, since),
         TBL_ROLES => query_roles(conn, since),
         TBL_SCOPES => query_scopes(conn, since),
         TBL_PLANS => query_plans(conn, since),
@@ -389,7 +387,7 @@ fn query_exams(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> 
     })
 }
 
-const SQL_PAPERS: &str = "SELECT school, exam, subject, paper, topic, invigilator, start, \"end\", status, created, updated FROM papers";
+const SQL_PAPERS: &str = "SELECT school, exam, subject, paper, topic, invigilator, start, \"end\", status, grade, stream, created, updated FROM papers";
 
 fn query_papers(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
     load_rows::<PaperRow, _>(conn, SQL_PAPERS, true, since, "papers", |r| SnapshotRow {
@@ -608,20 +606,5 @@ fn query_mpesa(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> 
         insert_data: InsertData {
             row: Some(insert_data::Row::Mpesa(r.into())),
         },
-    })
-}
-
-const SQL_EXAM_GRADES: &str = "SELECT exam, grade, stream FROM exam_grades";
-
-fn query_exam_grades(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
-    // exam_grades has no updated/created columns — never use since filter
-    load_rows::<ExamGradeRow, _>(conn, SQL_EXAM_GRADES, false, None, "exam_grades", |r| {
-        SnapshotRow {
-            row_key: r.row_key(),
-            school_id: None,
-            insert_data: InsertData {
-                row: Some(insert_data::Row::ExamGrade(r.into())),
-            },
-        }
     })
 }
