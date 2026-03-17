@@ -784,15 +784,19 @@ fn fetch_paper(
     exam: &str,
     subject: i32,
     paper: Option<i16>,
+    grade: i16,
+    stream: Option<i16>,
 ) -> Result<PaperRow> {
     sql_query(
         "SELECT school, exam, subject, paper, topic, invigilator, start, \"end\", status, grade, stream, created, updated \
-         FROM papers WHERE school = ? AND exam = ? AND subject = ? AND paper IS ?",
+         FROM papers WHERE school = ? AND exam = ? AND subject = ? AND paper IS ? AND grade = ? AND stream IS ?",
     )
     .bind::<Text, _>(school)
     .bind::<Text, _>(exam)
     .bind::<diesel::sql_types::Integer, _>(subject)
     .bind::<diesel::sql_types::Nullable<diesel::sql_types::SmallInt>, _>(paper)
+    .bind::<diesel::sql_types::SmallInt, _>(grade)
+    .bind::<diesel::sql_types::Nullable<diesel::sql_types::SmallInt>, _>(stream)
     .load::<PaperRow>(conn)
     .map_err(|e| {
         tracing::error!("fetch_paper failed: {e}");
@@ -801,7 +805,7 @@ fn fetch_paper(
     .into_iter()
     .next()
     .ok_or_else(|| {
-        tracing::error!("paper not found: {school}|{exam}|{subject}|{paper:?}");
+        tracing::error!("paper not found: {school}|{exam}|{subject}|{paper:?}|{grade}|{stream:?}");
         Error::Internal
     })
 }
@@ -2461,6 +2465,8 @@ fn handle_create_paper(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> 
         &p.exam,
         p.subject as i32,
         p.paper.map(|v| v as i16),
+        p.grade as i16,
+        p.stream.map(|v| v as i16),
     )?;
     Ok(ActionResult::with_rows(vec![upsert_row(
         TBL_PAPERS,
@@ -2475,11 +2481,13 @@ fn handle_update_paper(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> 
     let p: UpdatePaperPayload = decode(payload)?;
     let log_user = Id::system();
     let row_key = format!(
-        "{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}|{}",
         p.school,
         p.exam,
         p.subject,
-        p.paper.map(|v| v.to_string()).unwrap_or_default()
+        p.paper.map(|v| v.to_string()).unwrap_or_default(),
+        p.grade,
+        p.stream.map(|v| v.to_string()).unwrap_or_default()
     );
 
     update::update_paper(conn, &row_key, &p)?;
@@ -2491,6 +2499,8 @@ fn handle_update_paper(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> 
         &p.exam,
         p.subject as i32,
         p.paper.map(|v| v as i16),
+        p.grade as i16,
+        p.stream.map(|v| v as i16),
     )?;
     Ok(ActionResult::with_rows(vec![upsert_row(
         TBL_PAPERS,
@@ -2505,11 +2515,13 @@ fn handle_delete_paper(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> 
     let p: DeletePaperPayload = decode(payload)?;
     let log_user = Id::system();
     let row_key = format!(
-        "{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}|{}",
         p.school,
         p.exam,
         p.subject,
-        p.paper.map(|v| v.to_string()).unwrap_or_default()
+        p.paper.map(|v| v.to_string()).unwrap_or_default(),
+        p.grade,
+        p.stream.map(|v| v.to_string()).unwrap_or_default()
     );
 
     delete::delete_paper(conn, &row_key)?;

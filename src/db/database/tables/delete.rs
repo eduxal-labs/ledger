@@ -272,7 +272,7 @@ pub fn delete_exam(conn: &mut Conn, row_key: &str) -> Result<()> {
 
 pub fn delete_paper(conn: &mut Conn, row_key: &str) -> Result<()> {
     let pk = pk_parts(row_key);
-    if pk.len() < 4 {
+    if pk.len() < 6 {
         return Err(Error::Internal);
     }
     let subject: i32 = pk[2].parse().map_err(|_| Error::Internal)?;
@@ -281,11 +281,19 @@ pub fn delete_paper(conn: &mut Conn, row_key: &str) -> Result<()> {
     } else {
         Some(pk[3].parse().map_err(|_| Error::Internal)?)
     };
-    sql_query("DELETE FROM papers WHERE school = ? AND exam = ? AND subject = ? AND paper IS ?")
+    let grade: i16 = pk[4].parse().map_err(|_| Error::Internal)?;
+    let stream: Option<i16> = if pk[5].is_empty() {
+        None
+    } else {
+        Some(pk[5].parse().map_err(|_| Error::Internal)?)
+    };
+    sql_query("DELETE FROM papers WHERE school = ? AND exam = ? AND subject = ? AND paper IS ? AND grade = ? AND stream IS ?")
         .bind::<Text, _>(pk[0])
         .bind::<Text, _>(pk[1])
         .bind::<Integer, _>(subject)
         .bind::<Nullable<SmallInt>, _>(paper)
+        .bind::<SmallInt, _>(grade)
+        .bind::<Nullable<SmallInt>, _>(stream)
         .execute(conn)?;
     Ok(())
 }

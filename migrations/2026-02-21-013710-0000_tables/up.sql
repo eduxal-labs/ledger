@@ -321,7 +321,7 @@ CREATE TABLE papers (
     created bigint not null default (unixepoch('now')),
     updated bigint not null default (unixepoch('now')),
     CHECK (start < "end"),
-    primary key (school, exam, subject, paper),
+    primary key (school, exam, subject, paper, grade, stream),
     foreign key (school) references schools(id) ON DELETE CASCADE,
     foreign key (exam) references exams(id) ON DELETE CASCADE,
     foreign key (subject) references subjects(id) ON DELETE CASCADE,
@@ -330,7 +330,7 @@ CREATE TABLE papers (
 );
 -- Enforces at most one null-paper row per (school, exam, subject).
 -- Numbered papers for the same subject can coexist (e.g. English: composition + essay).
-CREATE UNIQUE INDEX papers_subject_null_idx ON papers(school, exam, subject) WHERE paper IS NULL;
+CREATE UNIQUE INDEX papers_subject_null_idx ON papers(school, exam, subject, grade, stream) WHERE paper IS NULL;
 
 -- grades of exams
 CREATE TABLE grades (
@@ -348,10 +348,10 @@ CREATE TABLE grades (
     foreign key (school) references schools(id) ON DELETE CASCADE,
     foreign key (exam) references exams(id) ON DELETE CASCADE,
     foreign key (school, student) references students(school, adm) ON DELETE CASCADE,
-    foreign key (subject) references subjects(id) ON DELETE CASCADE,
-    -- Only enforced when paper IS NOT NULL (SQLite skips FK checks when any FK column is NULL).
-    -- A null paper grade is a subject-level aggregate not tied to a specific papers row.
-    foreign key (school, exam, subject, paper) references papers(school, exam, subject, paper) ON DELETE CASCADE
+    foreign key (subject) references subjects(id) ON DELETE CASCADE
+    -- Papers FK removed: papers PK is now (school, exam, subject, paper, grade, stream),
+    -- so (school, exam, subject, paper) alone is not a unique parent key.
+    -- Referential integrity is enforced by the grades_enrollment_check trigger instead.
 );
 
 CREATE TABLE fees (

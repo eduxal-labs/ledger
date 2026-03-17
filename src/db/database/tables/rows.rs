@@ -837,11 +837,13 @@ pub struct PaperRow {
 impl PaperRow {
     pub fn row_key(&self) -> String {
         format!(
-            "{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}|{}",
             self.school,
             self.exam,
             self.subject,
-            self.paper.map(|v| v.to_string()).unwrap_or_default()
+            self.paper.map(|v| v.to_string()).unwrap_or_default(),
+            self.grade,
+            self.stream.map(|v| v.to_string()).unwrap_or_default()
         )
     }
     pub fn school_id(&self) -> Option<&str> {

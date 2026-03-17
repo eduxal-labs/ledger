@@ -220,7 +220,7 @@ diesel::table! {
 }
 
 diesel::table! {
-    papers (school, exam, subject, paper) {
+    papers (school, exam, subject, paper, grade, stream) {
         school -> Text,
         exam -> Text,
         subject -> Integer,

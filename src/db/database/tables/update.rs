@@ -437,8 +437,8 @@ pub fn update_exam(conn: &mut Conn, row_key: &str, row: &UpdateExamPayload) -> R
 }
 
 // ---------------------------------------------------------------------------
-// papers (PK: school|exam|subject|paper)
-// paper is nullable in PK
+// papers (PK: school|exam|subject|paper|grade|stream)
+// paper and stream are nullable in PK
 // ---------------------------------------------------------------------------
 
 pub fn update_paper(conn: &mut Conn, row_key: &str, row: &UpdatePaperPayload) -> Result<()> {
@@ -458,6 +458,18 @@ pub fn update_paper(conn: &mut Conn, row_key: &str, row: &UpdatePaperPayload) ->
                 .map_err(|_| crate::types::error::Error::Internal)?,
         )
     };
+    let grade: i16 = parts[4]
+        .parse::<i16>()
+        .map_err(|_| crate::types::error::Error::Internal)?;
+    let stream: Option<i16> = if parts[5].is_empty() {
+        None
+    } else {
+        Some(
+            parts[5]
+                .parse::<i16>()
+                .map_err(|_| crate::types::error::Error::Internal)?,
+        )
+    };
     sql_query(
         "UPDATE papers SET \
          topic = COALESCE(?, topic), \
@@ -466,7 +478,7 @@ pub fn update_paper(conn: &mut Conn, row_key: &str, row: &UpdatePaperPayload) ->
          \"end\" = COALESCE(?, \"end\"), \
          status = COALESCE(?, status), \
          updated = ? \
-         WHERE school = ? AND exam = ? AND subject = ? AND paper IS ?",
+         WHERE school = ? AND exam = ? AND subject = ? AND paper IS ? AND grade = ? AND stream IS ?",
     )
     .bind::<Nullable<Integer>, _>(row.topic)
     .bind::<Nullable<Text>, _>(row.invigilator.as_deref())
@@ -478,6 +490,8 @@ pub fn update_paper(conn: &mut Conn, row_key: &str, row: &UpdatePaperPayload) ->
     .bind::<Text, _>(exam)
     .bind::<Integer, _>(subject)
     .bind::<Nullable<SmallInt>, _>(paper)
+    .bind::<SmallInt, _>(grade)
+    .bind::<Nullable<SmallInt>, _>(stream)
     .execute(conn)?;
     Ok(())
 }

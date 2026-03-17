@@ -471,7 +471,7 @@ message UpdatePaperPayload {
   optional int64 end = 7;
   optional int32 status = 8;
   optional int32 topic = 9;
-  optional int32 grade = 10;
+  int32 grade = 10;
   optional int32 stream = 11;
 }
 
@@ -480,6 +480,8 @@ message DeletePaperPayload {
   string exam = 2;
   int32 subject = 3;
   optional int32 paper = 4;
+  int32 grade = 5;
+  optional int32 stream = 6;
 }
 
 // --- Grades (4 actions) ---
