@@ -786,7 +786,7 @@ fn fetch_paper(
     paper: Option<i16>,
 ) -> Result<PaperRow> {
     sql_query(
-        "SELECT school, exam, subject, paper, topic, invigilator, start, \"end\", status, created, updated \
+        "SELECT school, exam, subject, paper, topic, invigilator, start, \"end\", status, grade, stream, created, updated \
          FROM papers WHERE school = ? AND exam = ? AND subject = ? AND paper IS ?",
     )
     .bind::<Text, _>(school)
