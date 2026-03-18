@@ -13,6 +13,12 @@ const SERVICE: &str = "s3";
 /// time to live of 3 days.
 pub const TTL: u64 = 3 * 24 * 60 * 60;
 
+/// 1 hour — used for presigned PUT URLs (upload window for the originator).
+pub const PUT_TTL: u64 = 60 * 60;
+
+/// 1 month (30 days) — used for presigned GET URLs (download window for all clients).
+pub const GET_TTL: u64 = 30 * 24 * 60 * 60;
+
 const ACCOUNT_ID: &'static str = env!("R2_ACCOUNT_ID");
 const BUCKET: &'static str = env!("R2_BUCKET");
 const ACCESS_KEY_ID: &'static str = env!("R2_ACCESS_KEY_ID");

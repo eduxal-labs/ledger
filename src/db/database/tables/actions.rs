@@ -136,6 +136,10 @@ impl ActionResult {
             file_urls: Vec::new(),
         }
     }
+
+    pub fn with_rows_and_urls(rows: Vec<ActionRow>, file_urls: Vec<FileUrl>) -> Self {
+        Self { rows, file_urls }
+    }
 }
 
 /// Maps a SyncAction integer to the `(Resource, Action)` pair required for
@@ -1745,6 +1749,9 @@ fn handle_create_student(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult
 }
 
 fn handle_update_student(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
+    use crate::config::storage::sign;
+    use chrono::Utc;
+
     let p: UpdateStudentPayload = decode(payload)?;
     let log_user = Id::system();
     let row_key = format!("{}|{}", p.school, p.adm);
@@ -1753,13 +1760,36 @@ fn handle_update_student(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult
     append_log(log_user, TBL_STUDENTS as u8, OP_UPDATE, 0)?;
 
     let row = fetch_student(conn, &p.school, p.adm)?;
-    Ok(ActionResult::with_rows(vec![upsert_row(
-        TBL_STUDENTS,
-        row.row_key(),
-        InsertData {
-            row: Some(insert_data::Row::Student((&row).into())),
-        },
-    )]))
+
+    // Build the S3 path for this student's profile image.
+    // Convention: schools/{school_id}/students/{adm}/image  (no extension)
+    let path = format!("schools/{}/students/{}/image", p.school, p.adm);
+
+    // PUT URL — valid 1 hour — for the originator to upload their local image.
+    let put_url = sign::url(&path, sign::PUT_TTL, true);
+    // GET URL — valid 1 month — for any client to download the image.
+    let get_url = sign::url(&path, sign::GET_TTL, false);
+
+    // expiry is milliseconds since epoch when the GET URL expires.
+    let expiry_ms = (Utc::now().timestamp() + sign::GET_TTL as i64) * 1000;
+
+    let file_url = FileUrl {
+        path,
+        put_url: Some(put_url),
+        get_url: Some(get_url),
+        expiry: expiry_ms,
+    };
+
+    Ok(ActionResult::with_rows_and_urls(
+        vec![upsert_row(
+            TBL_STUDENTS,
+            row.row_key(),
+            InsertData {
+                row: Some(insert_data::Row::Student((&row).into())),
+            },
+        )],
+        vec![file_url],
+    ))
 }
 
 fn handle_delete_student(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
