@@ -15,6 +15,12 @@ use diesel::sql_query;
 use diesel::sql_types::Text;
 use prost::Message;
 
+#[derive(diesel::QueryableByName)]
+struct FkCheckRow {
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    cnt: i64,
+}
+
 /// SyncAction integer values — must match the client's SyncAction enum.
 pub mod sync_action {
     pub const CREATE_SCHOOL: i32 = 0;
@@ -2097,6 +2103,54 @@ fn handle_unassign_class_teacher(conn: &mut Conn, payload: &[u8]) -> Result<Acti
 fn handle_assign_subject(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
     let p: AssignSubjectPayload = decode(payload)?;
     let log_user = Id::system();
+
+    tracing::info!(
+        school = %p.school,
+        year = p.year,
+        term = p.term,
+        grade = p.grade,
+        stream = p.stream,
+        subject = p.subject,
+        teacher = %p.teacher,
+        "[ASSIGN_SUBJECT] payload values"
+    );
+
+    // Pre-check each FK to pinpoint which one fails
+    let school_exists: i64 = diesel::sql_query("SELECT COUNT(*) AS cnt FROM schools WHERE id = ?")
+        .bind::<diesel::sql_types::Text, _>(&p.school)
+        .load::<FkCheckRow>(conn)
+        .map(|r| r.first().map(|row| row.cnt).unwrap_or(0))
+        .unwrap_or(0);
+    let term_exists: i64 = diesel::sql_query(
+        "SELECT COUNT(*) AS cnt FROM terms WHERE school = ? AND year = ? AND term = ?",
+    )
+    .bind::<diesel::sql_types::Text, _>(&p.school)
+    .bind::<diesel::sql_types::Integer, _>(p.year)
+    .bind::<diesel::sql_types::SmallInt, _>(p.term as i16)
+    .load::<FkCheckRow>(conn)
+    .map(|r| r.first().map(|row| row.cnt).unwrap_or(0))
+    .unwrap_or(0);
+    let teacher_exists: i64 =
+        diesel::sql_query("SELECT COUNT(*) AS cnt FROM teachers WHERE school = ? AND user = ?")
+            .bind::<diesel::sql_types::Text, _>(&p.school)
+            .bind::<diesel::sql_types::Text, _>(&p.teacher)
+            .load::<FkCheckRow>(conn)
+            .map(|r| r.first().map(|row| row.cnt).unwrap_or(0))
+            .unwrap_or(0);
+    let subject_exists: i64 =
+        diesel::sql_query("SELECT COUNT(*) AS cnt FROM subjects WHERE id = ?")
+            .bind::<diesel::sql_types::Integer, _>(p.subject)
+            .load::<FkCheckRow>(conn)
+            .map(|r| r.first().map(|row| row.cnt).unwrap_or(0))
+            .unwrap_or(0);
+
+    tracing::info!(
+        school_exists,
+        term_exists,
+        teacher_exists,
+        subject_exists,
+        "[ASSIGN_SUBJECT] FK pre-check results"
+    );
 
     let sub_insert = SubjectTeacherInsert {
         school: p.school.clone(),

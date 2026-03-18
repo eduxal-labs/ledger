@@ -59,6 +59,10 @@ pub enum LogTable {
     Plans = 28,
     Subscriptions = 29,
     Discounts = 30,
+    SubjectCatalog = 31,
+    Topics = 32,
+    Streams = 33,
+    Mpesa = 34,
 }
 
 impl LogTable {
@@ -94,6 +98,10 @@ impl LogTable {
             28 => Some(Self::Plans),
             29 => Some(Self::Subscriptions),
             30 => Some(Self::Discounts),
+            31 => Some(Self::SubjectCatalog),
+            32 => Some(Self::Topics),
+            33 => Some(Self::Streams),
+            34 => Some(Self::Mpesa),
             _ => None,
         }
     }
@@ -120,6 +128,8 @@ impl LogTable {
             Self::Plans | Self::Subscriptions | Self::Discounts => Some(Resource::Plans),
             Self::AiUsage => Some(Resource::AI),
             Self::Terms => Some(Resource::Schools),
+            Self::SubjectCatalog | Self::Topics => Some(Resource::Subjects),
+            Self::Streams | Self::Mpesa => Some(Resource::Schools),
         }
     }
 
@@ -129,7 +139,7 @@ impl LogTable {
     pub fn school_from_key(self, row_key: &str) -> Option<Id> {
         match self {
             // System-level tables — no school scope
-            Self::Users | Self::Plans => None,
+            Self::Users | Self::Plans | Self::SubjectCatalog | Self::Topics => None,
             // id-PK school-scoped tables — school is in the row data, not the key
             Self::Exams | Self::Fees | Self::Invoices | Self::Announcements | Self::Payments => {
                 None
@@ -501,8 +511,11 @@ impl SyncFilter {
                 if readable.contains(&resource) {
                     return true;
                 }
-                // Users and Plans are always potentially visible
-                if table == LogTable::Users || resource == Resource::Plans {
+                // Users, Plans, and global subject catalogs are always potentially visible
+                if table == LogTable::Users
+                    || resource == Resource::Plans
+                    || resource == Resource::Subjects
+                {
                     return true;
                 }
                 // School-scoped data visible if user has memberships
@@ -514,7 +527,10 @@ impl SyncFilter {
                     Some(r) => r,
                     None => return false,
                 };
-                if table == LogTable::Users || resource == Resource::Plans {
+                if table == LogTable::Users
+                    || resource == Resource::Plans
+                    || resource == Resource::Subjects
+                {
                     return true;
                 }
                 !schools.is_empty()
@@ -562,8 +578,8 @@ impl SyncFilter {
                     return false;
                 }
 
-                // Plans are always visible
-                if resource == Resource::Plans {
+                // Plans and global subject catalogs are always visible
+                if resource == Resource::Plans || resource == Resource::Subjects {
                     return true;
                 }
 
@@ -588,8 +604,8 @@ impl SyncFilter {
                     return false;
                 }
 
-                // Plans always visible
-                if resource == Resource::Plans {
+                // Plans and global subject catalogs are always visible
+                if resource == Resource::Plans || resource == Resource::Subjects {
                     return true;
                 }
 
@@ -613,16 +629,20 @@ impl SyncFilter {
 /// allowing the client to insert rows without FK violations.
 const SNAPSHOT_TABLE_ORDER: &[i32] = &[
     1, 2, 28, 26, // users, schools, plans, roles
+    31,
+    32, // subject_catalog, topics (global catalogs — before school data that references them)
     3, 7, 8, // owners, teachers, staff
     4, 5, 6, // students, guardians, departments
     27, 25, // scopes, settings
     9,  // terms
-    11, 10, 12, // enrollments, class_teachers, subjects
+    33, // streams
+    11, 10, 12, // enrollments, class_teachers, subjects (subject_teachers)
     13, 14, 15, // attendance, timetable, lessons
     16, 17, 18, // exams, papers, grades
     19, 20, 21, // fees, invoices, payments
     22, 23, 24, // announcements, mastery, aiusage
     29, 30, // subscriptions, discounts
+    34, // mpesa
 ];
 
 /// Returns the current byte length of the binary changelog (the cursor

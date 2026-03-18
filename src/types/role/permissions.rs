@@ -375,7 +375,7 @@ mod tests {
         }
 
         let bytes: Vec<u8> = (&permissions).into();
-        assert_eq!(bytes.len(), 18 * 3); // 18 resources × 3 bytes
+        assert_eq!(bytes.len(), 19 * 3); // 19 resources × 3 bytes
 
         let decoded = Permissions::try_from(bytes.as_slice()).unwrap();
         assert_eq!(decoded, permissions);
@@ -395,7 +395,7 @@ mod tests {
         let bytes = vec![0u8, 2, 0]; // resource 0 doesn't exist (starts at 1)
         assert!(Permissions::try_from(bytes.as_slice()).is_err());
 
-        let bytes = vec![19u8, 2, 0]; // resource 19 doesn't exist
+        let bytes = vec![20u8, 2, 0]; // resource 20 doesn't exist
         assert!(Permissions::try_from(bytes.as_slice()).is_err());
     }
 
@@ -595,7 +595,7 @@ mod tests {
         }
 
         let proto: Vec<ProtoPermission> = (&permissions).into();
-        assert_eq!(proto.len(), 18);
+        assert_eq!(proto.len(), 19);
 
         let decoded = Permissions::try_from(proto.as_slice()).unwrap();
         assert_eq!(decoded, permissions);
