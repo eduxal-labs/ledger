@@ -8,7 +8,6 @@ use crate::db::database::tables::actions;
 use crate::db::database::traits::{Database, Load};
 use crate::proto::services::sync::{
     ActionRequest, ActionResponse, FileUrl, InsertData, Sync, SyncDelta, SyncServer, WatchRequest,
-    insert_data,
 };
 use crate::types::error::{Error, Result};
 use crate::types::id::Id;
@@ -1059,7 +1058,7 @@ fn file_urls_for_delta(
     table: LogTable,
     op: i32,
     row_key: &str,
-    data: Option<&InsertData>,
+    _data: Option<&InsertData>,
 ) -> Vec<FileUrl> {
     if op == OP_DELETE {
         return vec![];
@@ -1087,24 +1086,25 @@ fn file_urls_for_delta(
             }]
         }
         LogTable::Students => {
-            if let Some(data) = data {
-                if let Some(insert_data::Row::Student(s)) = &data.row {
-                    if s.documents.is_some() {
-                        let parts: Vec<&str> = row_key.split('|').collect();
-                        if parts.len() >= 2 {
-                            let path = format!("students/{}/{}/documents", parts[0], parts[1]);
-                            let get_url = sign::url(&path, sign::TTL, false);
-                            return vec![FileUrl {
-                                path,
-                                put_url: None,
-                                get_url: Some(get_url),
-                                expiry: Utc::now().timestamp() + sign::TTL as i64,
-                            }];
-                        }
-                    }
-                }
+            // Always return a GET URL for student profile images.
+            // Row key format: "{school_id}|{adm}"
+            let parts: Vec<&str> = row_key.split('|').collect();
+            if parts.len() >= 2 {
+                // 30 days in seconds — GET URL is valid for one month
+                let get_ttl: u64 = sign::GET_TTL;
+                let path = format!("schools/{}/students/{}/image", parts[0], parts[1]);
+                let get_url = sign::url(&path, get_ttl, false);
+                // expiry in milliseconds since epoch
+                let expiry_ms = (Utc::now().timestamp() + get_ttl as i64) * 1000;
+                vec![FileUrl {
+                    path,
+                    put_url: None,
+                    get_url: Some(get_url),
+                    expiry: expiry_ms,
+                }]
+            } else {
+                vec![]
             }
-            vec![]
         }
         _ => vec![],
     }
