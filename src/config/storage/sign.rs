@@ -16,8 +16,11 @@ pub const TTL: u64 = 3 * 24 * 60 * 60;
 /// 1 hour — used for presigned PUT URLs (upload window for the originator).
 pub const PUT_TTL: u64 = 60 * 60;
 
-/// 1 month (30 days) — used for presigned GET URLs (download window for all clients).
-pub const GET_TTL: u64 = 30 * 24 * 60 * 60;
+/// 7 days — used for presigned GET URLs (download window for all clients).
+///
+/// AWS SigV4 / R2 presigned URLs have a hard maximum of 604800 seconds (7 days).
+/// Requests with X-Amz-Expires > 604800 are rejected with HTTP 400.
+pub const GET_TTL: u64 = 7 * 24 * 60 * 60; // 604800 — the S3/R2 maximum
 
 const ACCOUNT_ID: &'static str = env!("R2_ACCOUNT_ID");
 const BUCKET: &'static str = env!("R2_BUCKET");
