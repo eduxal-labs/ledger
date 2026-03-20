@@ -8,9 +8,13 @@ use crate::proto::services::sync::{GradeInsert, UpdateGradePayload};
 use crate::types::error::{Error, Result};
 use crate::types::id::Id;
 use crate::types::token::Token;
+use diesel::RunQueryDsl;
+use diesel::sql_query;
+use diesel::sql_types::{BigInt, Integer, SmallInt, Text};
 use std::sync::Arc;
 
 const TBL_GRADES: u8 = 18;
+const TBL_AIUSAGE: u8 = 24;
 const OP_INSERT: u8 = 0;
 const OP_UPDATE: u8 = 1;
 
@@ -116,6 +120,9 @@ impl<C: Send + Sync + 'static> AiMarking for AiMarkingService<C> {
                     let school2 = school.clone();
                     let exam2 = exam.clone();
                     let result = tokio::task::spawn_blocking(move || {
+                        // Look up exam year/term for AI usage tracking
+                        let exam_info = fetch_exam_year_term(&school2, &exam2);
+
                         for score in &scores {
                             if let Err(e) = write_ai_grade(
                                 &school2,
@@ -131,6 +138,17 @@ impl<C: Send + Sync + 'static> AiMarking for AiMarkingService<C> {
                                     score.adm,
                                     e
                                 );
+                            }
+
+                            // Track AI usage per student
+                            if let Ok((year, term)) = &exam_info {
+                                if let Err(e) = write_ai_usage(&school2, score.adm, *year, *term) {
+                                    tracing::error!(
+                                        "Failed to write AI usage for student {}: {}",
+                                        score.adm,
+                                        e
+                                    );
+                                }
                             }
                         }
                         scores.len()
@@ -229,6 +247,77 @@ fn write_ai_grade(
                 Error::Internal
             })?;
     }
+
+    Ok(())
+}
+
+/// Look up the year and term for an exam.
+fn fetch_exam_year_term(school: &str, exam: &str) -> Result<(i32, i16)> {
+    #[derive(diesel::QueryableByName)]
+    struct ExamInfo {
+        #[diesel(sql_type = Integer)]
+        year: i32,
+        #[diesel(sql_type = SmallInt)]
+        term: i16,
+    }
+
+    let info = CONN
+        .with(|cell| {
+            sql_query("SELECT year, term FROM exams WHERE id = ? AND school = ?")
+                .bind::<Text, _>(exam)
+                .bind::<Text, _>(school)
+                .load::<ExamInfo>(&mut *cell.borrow_mut())
+        })
+        .map_err(|e| {
+            tracing::error!("fetch_exam_year_term failed: {e}");
+            Error::Internal
+        })?
+        .into_iter()
+        .next()
+        .ok_or_else(|| {
+            tracing::error!("exam not found: school={school} exam={exam}");
+            Error::Internal
+        })?;
+
+    Ok((info.year, info.term))
+}
+
+/// Upsert AI usage: increment `used` count for a student in a given term.
+/// If the row doesn't exist, create it with used=1, allocated=0.
+/// If it exists, increment used by 1.
+fn write_ai_usage(school: &str, student: i32, year: i32, term: i16) -> Result<()> {
+    let log_user = Id::system();
+    let now = chrono::Utc::now().timestamp();
+
+    // Try INSERT ON CONFLICT to atomically upsert
+    CONN.with(|cell| {
+        sql_query(
+            "INSERT INTO aiusage (school, student, year, term, allocated, used, created, updated) \
+             VALUES (?, ?, ?, ?, 0, 1, ?, ?) \
+             ON CONFLICT (school, student, year, term) \
+             DO UPDATE SET used = used + 1, updated = ?",
+        )
+        .bind::<Text, _>(school)
+        .bind::<Integer, _>(student)
+        .bind::<Integer, _>(year)
+        .bind::<SmallInt, _>(term)
+        .bind::<BigInt, _>(now)
+        .bind::<BigInt, _>(now)
+        .bind::<BigInt, _>(now)
+        .execute(&mut *cell.borrow_mut())
+    })
+    .map_err(|e| {
+        tracing::error!("write_ai_usage upsert failed: {e}");
+        Error::Internal
+    })?;
+
+    // Append changelog entry
+    let record = Record::new(log_user, TBL_AIUSAGE, OP_UPDATE, 0);
+    LOG.with(|cell| cell.borrow_mut().append(&record))
+        .map_err(|e| {
+            tracing::error!("changelog append for aiusage failed: {e}");
+            Error::Internal
+        })?;
 
     Ok(())
 }
