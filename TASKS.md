@@ -569,6 +569,6 @@ Follow the exact pattern used for `authenticator` and `sync` — the `new()` met
 **Verification:** Run `cargo build` and verify it compiles. Optionally `cargo run` to confirm the server starts on port 50051 with three services registered.
 
 **Update after completion:**
-- [ ] Verify server compiles and starts
-- [ ] Mark this task `[x]`
-- [ ] git commit: `feat: register AiMarking gRPC service in server builder`
+- [x] Verify server compiles and starts
+- [x] Mark this task `[x]`
+- [x] git commit: `feat: register AiMarking gRPC service in server builder`
