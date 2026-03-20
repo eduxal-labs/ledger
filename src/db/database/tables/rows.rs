@@ -1644,3 +1644,111 @@ impl From<&MpesaRow> for MpesaInsert {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// 36. SchemePages
+// ---------------------------------------------------------------------------
+
+#[derive(QueryableByName)]
+pub struct SchemePageRow {
+    #[diesel(sql_type = Text)]
+    pub school: String,
+    #[diesel(sql_type = Text)]
+    pub exam: String,
+    #[diesel(sql_type = Integer)]
+    pub subject: i32,
+    #[diesel(sql_type = Nullable<SmallInt>)]
+    pub paper: Option<i16>,
+    #[diesel(sql_type = SmallInt)]
+    pub page: i16,
+    #[diesel(sql_type = Text)]
+    pub key: String,
+    #[diesel(sql_type = BigInt)]
+    pub created: i64,
+}
+
+impl SchemePageRow {
+    pub fn row_key(&self) -> String {
+        format!(
+            "{}|{}|{}|{}|{}",
+            self.school,
+            self.exam,
+            self.subject,
+            self.paper.map(|v| v.to_string()).unwrap_or_default(),
+            self.page
+        )
+    }
+    pub fn school_id(&self) -> Option<&str> {
+        Some(&self.school)
+    }
+}
+
+impl From<&SchemePageRow> for SchemePageInsert {
+    fn from(row: &SchemePageRow) -> Self {
+        SchemePageInsert {
+            school: row.school.clone(),
+            exam: row.exam.clone(),
+            subject: row.subject,
+            paper: row.paper.map(|v| v as i32),
+            page: row.page as i32,
+            key: row.key.clone(),
+            created: row.created,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 37. AnswerPages
+// ---------------------------------------------------------------------------
+
+#[derive(QueryableByName)]
+pub struct AnswerPageRow {
+    #[diesel(sql_type = Text)]
+    pub school: String,
+    #[diesel(sql_type = Text)]
+    pub exam: String,
+    #[diesel(sql_type = Integer)]
+    pub student: i32,
+    #[diesel(sql_type = Integer)]
+    pub subject: i32,
+    #[diesel(sql_type = Nullable<SmallInt>)]
+    pub paper: Option<i16>,
+    #[diesel(sql_type = SmallInt)]
+    pub page: i16,
+    #[diesel(sql_type = Text)]
+    pub key: String,
+    #[diesel(sql_type = BigInt)]
+    pub created: i64,
+}
+
+impl AnswerPageRow {
+    pub fn row_key(&self) -> String {
+        format!(
+            "{}|{}|{}|{}|{}|{}",
+            self.school,
+            self.exam,
+            self.student,
+            self.subject,
+            self.paper.map(|v| v.to_string()).unwrap_or_default(),
+            self.page
+        )
+    }
+    pub fn school_id(&self) -> Option<&str> {
+        Some(&self.school)
+    }
+}
+
+impl From<&AnswerPageRow> for AnswerPageInsert {
+    fn from(row: &AnswerPageRow) -> Self {
+        AnswerPageInsert {
+            school: row.school.clone(),
+            exam: row.exam.clone(),
+            student: row.student,
+            subject: row.subject,
+            paper: row.paper.map(|v| v as i32),
+            page: row.page as i32,
+            key: row.key.clone(),
+            created: row.created,
+        }
+    }
+}

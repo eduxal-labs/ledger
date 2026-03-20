@@ -62,6 +62,8 @@ pub enum LogTable {
     Topics = 32,
     Streams = 33,
     Mpesa = 34,
+    SchemePages = 36,
+    AnswerPages = 37,
 }
 
 impl LogTable {
@@ -101,6 +103,8 @@ impl LogTable {
             32 => Some(Self::Topics),
             33 => Some(Self::Streams),
             34 => Some(Self::Mpesa),
+            36 => Some(Self::SchemePages),
+            37 => Some(Self::AnswerPages),
             _ => None,
         }
     }
@@ -118,8 +122,8 @@ impl LogTable {
             Self::ClassTeachers | Self::Subjects | Self::Timetable => Some(Resource::Classes),
             Self::Attendance => Some(Resource::Attendance),
             Self::Lessons => Some(Resource::Lessons),
-            Self::Exams | Self::Papers => Some(Resource::Exams),
-            Self::Grades | Self::Mastery => Some(Resource::Grades),
+            Self::Exams | Self::Papers | Self::SchemePages => Some(Resource::Exams),
+            Self::Grades | Self::Mastery | Self::AnswerPages => Some(Resource::Grades),
             Self::Fees | Self::Invoices => Some(Resource::Fees),
             Self::Payments => Some(Resource::Payments),
             Self::Announcements => Some(Resource::Announcements),
@@ -637,7 +641,8 @@ const SNAPSHOT_TABLE_ORDER: &[i32] = &[
     33, // streams
     11, 10, 12, // enrollments, class_teachers, subjects (subject_teachers)
     13, 14, 15, // attendance, timetable, lessons
-    16, 17, 18, // exams, papers, grades
+    16, 17, 36, // exams, papers, scheme_pages
+    18, 37, // grades, answer_pages
     19, 20, 21, // fees, invoices, payments
     22, 23, 24, // announcements, mastery, aiusage
     29, 30, // subscriptions, discounts
@@ -1098,6 +1103,75 @@ fn file_urls_for_delta(
                 let expiry_ms = (Utc::now().timestamp() + get_ttl as i64) * 1000;
                 vec![FileUrl {
                     path,
+                    put_url: None,
+                    get_url: Some(get_url),
+                    expiry: expiry_ms,
+                }]
+            } else {
+                vec![]
+            }
+        }
+        LogTable::SchemePages => {
+            // Row key format: "{school}|{exam}|{subject}|{paper_str}|{page}"
+            // paper_str is "" when paper IS NULL (single-paper subject).
+            let parts: Vec<&str> = row_key.split('|').collect();
+            if parts.len() >= 5 {
+                let school = parts[0];
+                let exam = parts[1];
+                let subject: i32 = parts[2].parse().unwrap_or(0);
+                let paper: i32 = if parts[3].is_empty() {
+                    0
+                } else {
+                    parts[3].parse().unwrap_or(0)
+                };
+                let page: i32 = parts[4].parse().unwrap_or(0);
+                let s3_key = format!(
+                    "schools/{}/exams/{}/papers/{}_{}/scheme/{}",
+                    school, exam, subject, paper, page
+                );
+                let get_url = sign::url(&s3_key, sign::GET_TTL, false);
+                let local_path = format!(
+                    "submissions/{}/{}/{}_{}/scheme/{}.jpg",
+                    school, exam, subject, paper, page
+                );
+                let expiry_ms = (Utc::now().timestamp() + sign::GET_TTL as i64) * 1000;
+                vec![FileUrl {
+                    path: local_path,
+                    put_url: None,
+                    get_url: Some(get_url),
+                    expiry: expiry_ms,
+                }]
+            } else {
+                vec![]
+            }
+        }
+        LogTable::AnswerPages => {
+            // Row key format: "{school}|{exam}|{student}|{subject}|{paper_str}|{page}"
+            // paper_str is "" when paper IS NULL.
+            let parts: Vec<&str> = row_key.split('|').collect();
+            if parts.len() >= 6 {
+                let school = parts[0];
+                let exam = parts[1];
+                let student: i32 = parts[2].parse().unwrap_or(0);
+                let subject: i32 = parts[3].parse().unwrap_or(0);
+                let paper: i32 = if parts[4].is_empty() {
+                    0
+                } else {
+                    parts[4].parse().unwrap_or(0)
+                };
+                let page: i32 = parts[5].parse().unwrap_or(0);
+                let s3_key = format!(
+                    "schools/{}/exams/{}/papers/{}_{}/students/{}/{}",
+                    school, exam, subject, paper, student, page
+                );
+                let get_url = sign::url(&s3_key, sign::GET_TTL, false);
+                let local_path = format!(
+                    "submissions/{}/{}/{}_{}/{}/{}.jpg",
+                    school, exam, subject, paper, student, page
+                );
+                let expiry_ms = (Utc::now().timestamp() + sign::GET_TTL as i64) * 1000;
+                vec![FileUrl {
+                    path: local_path,
                     put_url: None,
                     get_url: Some(get_url),
                     expiry: expiry_ms,

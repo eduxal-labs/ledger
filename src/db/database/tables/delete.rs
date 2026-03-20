@@ -6,6 +6,12 @@ use diesel::SqliteConnection as Conn;
 use diesel::sql_query;
 use diesel::sql_types::{Integer, Nullable, SmallInt, Text};
 
+#[derive(diesel::QueryableByName)]
+struct DeletedPage {
+    #[diesel(sql_type = SmallInt)]
+    page: i16,
+}
+
 fn pk_parts(row_key: &str) -> Vec<&str> {
     row_key.split('|').collect()
 }
@@ -487,4 +493,73 @@ pub fn delete_mpesa(conn: &mut Conn, school: &str) -> Result<()> {
         .bind::<Text, _>(school)
         .execute(conn)?;
     Ok(())
+}
+
+/// Delete all scheme pages for the given (school, exam, subject, paper) combination.
+/// Returns the 0-indexed page numbers that were deleted, so the caller can
+/// construct row_keys for the changelog.
+pub fn delete_scheme_pages(
+    conn: &mut Conn,
+    school: &str,
+    exam: &str,
+    subject: i32,
+    paper: Option<i16>,
+) -> Result<Vec<i16>> {
+    let existing: Vec<DeletedPage> = sql_query(
+        "SELECT page FROM scheme_pages \
+         WHERE school = ? AND exam = ? AND subject = ? AND paper IS ?",
+    )
+    .bind::<Text, _>(school)
+    .bind::<Text, _>(exam)
+    .bind::<Integer, _>(subject)
+    .bind::<Nullable<SmallInt>, _>(paper)
+    .load(conn)?;
+
+    sql_query(
+        "DELETE FROM scheme_pages \
+         WHERE school = ? AND exam = ? AND subject = ? AND paper IS ?",
+    )
+    .bind::<Text, _>(school)
+    .bind::<Text, _>(exam)
+    .bind::<Integer, _>(subject)
+    .bind::<Nullable<SmallInt>, _>(paper)
+    .execute(conn)?;
+
+    Ok(existing.into_iter().map(|r| r.page).collect())
+}
+
+/// Delete all answer pages for the given (school, exam, student, subject, paper) combination.
+/// Returns the 0-indexed page numbers that were deleted, so the caller can
+/// construct row_keys for the changelog.
+pub fn delete_answer_pages(
+    conn: &mut Conn,
+    school: &str,
+    exam: &str,
+    student: i32,
+    subject: i32,
+    paper: Option<i16>,
+) -> Result<Vec<i16>> {
+    let existing: Vec<DeletedPage> = sql_query(
+        "SELECT page FROM answer_pages \
+         WHERE school = ? AND exam = ? AND student = ? AND subject = ? AND paper IS ?",
+    )
+    .bind::<Text, _>(school)
+    .bind::<Text, _>(exam)
+    .bind::<Integer, _>(student)
+    .bind::<Integer, _>(subject)
+    .bind::<Nullable<SmallInt>, _>(paper)
+    .load(conn)?;
+
+    sql_query(
+        "DELETE FROM answer_pages \
+         WHERE school = ? AND exam = ? AND student = ? AND subject = ? AND paper IS ?",
+    )
+    .bind::<Text, _>(school)
+    .bind::<Text, _>(exam)
+    .bind::<Integer, _>(student)
+    .bind::<Integer, _>(subject)
+    .bind::<Nullable<SmallInt>, _>(paper)
+    .execute(conn)?;
+
+    Ok(existing.into_iter().map(|r| r.page).collect())
 }

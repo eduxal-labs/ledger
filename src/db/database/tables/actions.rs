@@ -113,6 +113,10 @@ pub mod sync_action {
     pub const UPDATE_MPESA: i32 = 87;
     pub const DELETE_MPESA: i32 = 88;
     // 89, 90: reserved (removed exam_grade actions)
+    pub const UPLOAD_SCHEME: i32 = 91;
+    pub const DELETE_SCHEME: i32 = 92;
+    pub const UPLOAD_ANSWER_SHEET: i32 = 93;
+    pub const DELETE_ANSWER_SHEET: i32 = 94;
 }
 
 /// Result of executing a single action. Contains the rows to return to the
@@ -301,6 +305,12 @@ pub fn action_permission(action_id: i32) -> Result<(Resource, Action)> {
         UPDATE_MPESA => Ok((Resource::Schools, Action::Update)),
         DELETE_MPESA => Ok((Resource::Schools, Action::Delete)),
 
+        // File sync: scheme & answer pages
+        UPLOAD_SCHEME => Ok((Resource::Exams, Action::Update)),
+        DELETE_SCHEME => Ok((Resource::Exams, Action::Delete)),
+        UPLOAD_ANSWER_SHEET => Ok((Resource::Grades, Action::Mark)),
+        DELETE_ANSWER_SHEET => Ok((Resource::Grades, Action::Delete)),
+
         // 89, 90: reserved (removed exam_grade actions)
         _ => {
             tracing::error!("action_permission: unknown action {action_id}");
@@ -355,6 +365,8 @@ const TBL_TOPICS: i32 = 32;
 const TBL_STREAMS: i32 = 33;
 const TBL_MPESA: i32 = 34;
 // TBL_EXAM_GRADES (35) removed — grade/stream moved to papers
+const TBL_SCHEME_PAGES: i32 = 36;
+const TBL_ANSWER_PAGES: i32 = 37;
 
 // Changelog operation constants
 const OP_INSERT: u8 = 0;
@@ -1322,6 +1334,12 @@ pub fn execute_action(conn: &mut Conn, action_id: i32, payload: &[u8]) -> Result
         CREATE_MPESA => handle_create_mpesa(conn, payload),
         UPDATE_MPESA => handle_update_mpesa(conn, payload),
         DELETE_MPESA => handle_delete_mpesa(conn, payload),
+
+        // File sync: scheme & answer pages
+        UPLOAD_SCHEME => handle_upload_scheme(conn, payload),
+        DELETE_SCHEME => handle_delete_scheme(conn, payload),
+        UPLOAD_ANSWER_SHEET => handle_upload_answer_sheet(conn, payload),
+        DELETE_ANSWER_SHEET => handle_delete_answer_sheet(conn, payload),
 
         // 89, 90: reserved (removed exam_grade actions)
         _ => {
@@ -3704,4 +3722,251 @@ fn handle_delete_mpesa(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> 
     Ok(ActionResult::with_rows(vec![delete_row(
         TBL_MPESA, row_key,
     )]))
+}
+
+// ---------------------------------------------------------------------------
+// File sync: Scheme pages
+// ---------------------------------------------------------------------------
+
+/// Replace/set all scheme pages for a (school, exam, subject, paper) combination.
+///
+/// 1. Delete any existing scheme pages for that paper (and log each delete).
+/// 2. Insert `count` new page rows with presigned S3 keys.
+/// 3. Return the new rows plus presigned PUT URLs so the originator can upload.
+fn handle_upload_scheme(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
+    use crate::config::storage::sign;
+
+    let p: UploadSchemePayload = decode(payload)?;
+    let log_user = Id::system();
+    let paper_i16 = p.paper.map(|v| v as i16);
+    // Use 0 as the display sentinel when paper IS NULL (single-paper subject).
+    let paper_display = p.paper.unwrap_or(0);
+
+    // 1. Delete existing pages and log each one.
+    let existing_pages =
+        delete::delete_scheme_pages(conn, &p.school, &p.exam, p.subject, paper_i16)?;
+    for page in &existing_pages {
+        let row_key = format!(
+            "{}|{}|{}|{}|{}",
+            p.school,
+            p.exam,
+            p.subject,
+            p.paper.map(|v| v.to_string()).unwrap_or_default(),
+            page
+        );
+        append_log(log_user, TBL_SCHEME_PAGES as u8, OP_DELETE, 0)?;
+        append_delete_log(TBL_SCHEME_PAGES as u8, &row_key)?;
+    }
+
+    let now = chrono::Utc::now().timestamp();
+    let mut rows = Vec::new();
+    let mut file_urls = Vec::new();
+
+    // 2. Insert new pages and generate presigned PUT URLs.
+    for page_idx in 0..p.count {
+        let page = page_idx as i16;
+        // S3 key — matches sign::scheme_image path convention.
+        let s3_key = format!(
+            "schools/{}/exams/{}/papers/{}_{}/scheme/{}",
+            p.school, p.exam, p.subject, paper_display, page_idx
+        );
+
+        insert::insert_scheme_page(
+            conn, &p.school, &p.exam, p.subject, paper_i16, page, &s3_key, now,
+        )?;
+        append_log(log_user, TBL_SCHEME_PAGES as u8, OP_INSERT, 0)?;
+
+        let row_key = format!(
+            "{}|{}|{}|{}|{}",
+            p.school,
+            p.exam,
+            p.subject,
+            p.paper.map(|v| v.to_string()).unwrap_or_default(),
+            page
+        );
+
+        rows.push(upsert_row(
+            TBL_SCHEME_PAGES,
+            row_key,
+            InsertData {
+                row: Some(insert_data::Row::SchemePage(SchemePageInsert {
+                    school: p.school.clone(),
+                    exam: p.exam.clone(),
+                    subject: p.subject,
+                    paper: p.paper,
+                    page: page_idx,
+                    key: s3_key.clone(),
+                    created: now,
+                })),
+            },
+        ));
+
+        // Presigned PUT URL — valid for PUT_TTL (1 hour).
+        let put_url = sign::url(&s3_key, sign::PUT_TTL, true);
+        // Local client path (relative to appDir).
+        let local_path = format!(
+            "submissions/{}/{}/{}_{}/scheme/{}.jpg",
+            p.school, p.exam, p.subject, paper_display, page_idx
+        );
+        file_urls.push(FileUrl {
+            path: local_path,
+            put_url: Some(put_url),
+            get_url: None,
+            expiry: now + sign::PUT_TTL as i64,
+        });
+    }
+
+    Ok(ActionResult::with_rows_and_urls(rows, file_urls))
+}
+
+/// Remove all scheme pages for a (school, exam, subject, paper) combination.
+fn handle_delete_scheme(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
+    let p: DeleteSchemePayload = decode(payload)?;
+    let log_user = Id::system();
+    let paper_i16 = p.paper.map(|v| v as i16);
+
+    let existing_pages =
+        delete::delete_scheme_pages(conn, &p.school, &p.exam, p.subject, paper_i16)?;
+    let mut rows = Vec::new();
+
+    for page in existing_pages {
+        let row_key = format!(
+            "{}|{}|{}|{}|{}",
+            p.school,
+            p.exam,
+            p.subject,
+            p.paper.map(|v| v.to_string()).unwrap_or_default(),
+            page
+        );
+        append_log(log_user, TBL_SCHEME_PAGES as u8, OP_DELETE, 0)?;
+        append_delete_log(TBL_SCHEME_PAGES as u8, &row_key)?;
+        rows.push(delete_row(TBL_SCHEME_PAGES, row_key));
+    }
+
+    Ok(ActionResult::with_rows(rows))
+}
+
+// ---------------------------------------------------------------------------
+// File sync: Answer sheet pages
+// ---------------------------------------------------------------------------
+
+/// Replace/set all answer sheet pages for a (school, exam, student, subject, paper) combination.
+///
+/// 1. Delete any existing answer pages for that entry (and log each delete).
+/// 2. Insert `count` new page rows with presigned S3 keys.
+/// 3. Return the new rows plus presigned PUT URLs so the originator can upload.
+fn handle_upload_answer_sheet(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
+    use crate::config::storage::sign;
+
+    let p: UploadAnswerSheetPayload = decode(payload)?;
+    let log_user = Id::system();
+    let paper_i16 = p.paper.map(|v| v as i16);
+    let paper_display = p.paper.unwrap_or(0);
+
+    // 1. Delete existing pages and log each one.
+    let existing_pages =
+        delete::delete_answer_pages(conn, &p.school, &p.exam, p.student, p.subject, paper_i16)?;
+    for page in &existing_pages {
+        let row_key = format!(
+            "{}|{}|{}|{}|{}|{}",
+            p.school,
+            p.exam,
+            p.student,
+            p.subject,
+            p.paper.map(|v| v.to_string()).unwrap_or_default(),
+            page
+        );
+        append_log(log_user, TBL_ANSWER_PAGES as u8, OP_DELETE, 0)?;
+        append_delete_log(TBL_ANSWER_PAGES as u8, &row_key)?;
+    }
+
+    let now = chrono::Utc::now().timestamp();
+    let mut rows = Vec::new();
+    let mut file_urls = Vec::new();
+
+    // 2. Insert new pages and generate presigned PUT URLs.
+    for page_idx in 0..p.count {
+        let page = page_idx as i16;
+        // S3 key — matches sign::answer_sheet path convention.
+        let s3_key = format!(
+            "schools/{}/exams/{}/papers/{}_{}/students/{}/{}",
+            p.school, p.exam, p.subject, paper_display, p.student, page_idx
+        );
+
+        insert::insert_answer_page(
+            conn, &p.school, &p.exam, p.student, p.subject, paper_i16, page, &s3_key, now,
+        )?;
+        append_log(log_user, TBL_ANSWER_PAGES as u8, OP_INSERT, 0)?;
+
+        let row_key = format!(
+            "{}|{}|{}|{}|{}|{}",
+            p.school,
+            p.exam,
+            p.student,
+            p.subject,
+            p.paper.map(|v| v.to_string()).unwrap_or_default(),
+            page
+        );
+
+        rows.push(upsert_row(
+            TBL_ANSWER_PAGES,
+            row_key,
+            InsertData {
+                row: Some(insert_data::Row::AnswerPage(AnswerPageInsert {
+                    school: p.school.clone(),
+                    exam: p.exam.clone(),
+                    student: p.student,
+                    subject: p.subject,
+                    paper: p.paper,
+                    page: page_idx,
+                    key: s3_key.clone(),
+                    created: now,
+                })),
+            },
+        ));
+
+        // Presigned PUT URL — valid for PUT_TTL (1 hour).
+        let put_url = sign::url(&s3_key, sign::PUT_TTL, true);
+        // Local client path (relative to appDir).
+        let local_path = format!(
+            "submissions/{}/{}/{}_{}/{}/{}.jpg",
+            p.school, p.exam, p.subject, paper_display, p.student, page_idx
+        );
+        file_urls.push(FileUrl {
+            path: local_path,
+            put_url: Some(put_url),
+            get_url: None,
+            expiry: now + sign::PUT_TTL as i64,
+        });
+    }
+
+    Ok(ActionResult::with_rows_and_urls(rows, file_urls))
+}
+
+/// Remove all answer sheet pages for a (school, exam, student, subject, paper) combination.
+fn handle_delete_answer_sheet(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
+    let p: DeleteAnswerSheetPayload = decode(payload)?;
+    let log_user = Id::system();
+    let paper_i16 = p.paper.map(|v| v as i16);
+
+    let existing_pages =
+        delete::delete_answer_pages(conn, &p.school, &p.exam, p.student, p.subject, paper_i16)?;
+    let mut rows = Vec::new();
+
+    for page in existing_pages {
+        let row_key = format!(
+            "{}|{}|{}|{}|{}|{}",
+            p.school,
+            p.exam,
+            p.student,
+            p.subject,
+            p.paper.map(|v| v.to_string()).unwrap_or_default(),
+            page
+        );
+        append_log(log_user, TBL_ANSWER_PAGES as u8, OP_DELETE, 0)?;
+        append_delete_log(TBL_ANSWER_PAGES as u8, &row_key)?;
+        rows.push(delete_row(TBL_ANSWER_PAGES, row_key));
+    }
+
+    Ok(ActionResult::with_rows(rows))
 }

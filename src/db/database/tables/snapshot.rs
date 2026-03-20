@@ -37,6 +37,8 @@ const TBL_SUBJECT_CATALOG: i32 = 31;
 const TBL_TOPICS: i32 = 32;
 const TBL_STREAMS: i32 = 33;
 const TBL_MPESA: i32 = 34;
+const TBL_SCHEME_PAGES: i32 = 36;
+const TBL_ANSWER_PAGES: i32 = 37;
 const TBL_ROLES: i32 = 26;
 const TBL_SCOPES: i32 = 27;
 const TBL_PLANS: i32 = 28;
@@ -102,6 +104,8 @@ fn snapshot_table_inner(
         TBL_PLANS => query_plans(conn, since),
         TBL_SUBSCRIPTIONS => query_subscriptions(conn, since),
         TBL_DISCOUNTS => query_discounts(conn, since),
+        TBL_SCHEME_PAGES => query_scheme_pages(conn, since),
+        TBL_ANSWER_PAGES => query_answer_pages(conn, since),
         _ => Ok(vec![]),
     }
 }
@@ -607,4 +611,44 @@ fn query_mpesa(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> 
             row: Some(insert_data::Row::Mpesa(r.into())),
         },
     })
+}
+
+const SQL_SCHEME_PAGES: &str =
+    "SELECT school, exam, subject, paper, page, key, created FROM scheme_pages";
+
+fn query_scheme_pages(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
+    load_rows::<SchemePageRow, _>(
+        conn,
+        SQL_SCHEME_PAGES,
+        false, // no `updated` column
+        since,
+        "scheme_pages",
+        |r| SnapshotRow {
+            row_key: r.row_key(),
+            school_id: parse_school_id(r.school_id()),
+            insert_data: InsertData {
+                row: Some(insert_data::Row::SchemePage(r.into())),
+            },
+        },
+    )
+}
+
+const SQL_ANSWER_PAGES: &str =
+    "SELECT school, exam, student, subject, paper, page, key, created FROM answer_pages";
+
+fn query_answer_pages(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
+    load_rows::<AnswerPageRow, _>(
+        conn,
+        SQL_ANSWER_PAGES,
+        false, // no `updated` column
+        since,
+        "answer_pages",
+        |r| SnapshotRow {
+            row_key: r.row_key(),
+            school_id: parse_school_id(r.school_id()),
+            insert_data: InsertData {
+                row: Some(insert_data::Row::AnswerPage(r.into())),
+            },
+        },
+    )
 }

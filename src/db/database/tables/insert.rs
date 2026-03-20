@@ -595,6 +595,58 @@ pub fn insert_mpesa(conn: &mut Conn, row: &MpesaInsert) -> Result<()> {
     Ok(())
 }
 
+pub fn insert_scheme_page(
+    conn: &mut Conn,
+    school: &str,
+    exam: &str,
+    subject: i32,
+    paper: Option<i16>,
+    page: i16,
+    key: &str,
+    created: i64,
+) -> Result<()> {
+    sql_query(
+        "INSERT INTO scheme_pages (school, exam, subject, paper, page, key, created) \
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind::<Text, _>(school)
+    .bind::<Text, _>(exam)
+    .bind::<Integer, _>(subject)
+    .bind::<Nullable<SmallInt>, _>(paper)
+    .bind::<SmallInt, _>(page)
+    .bind::<Text, _>(key)
+    .bind::<BigInt, _>(created)
+    .execute(conn)?;
+    Ok(())
+}
+
+pub fn insert_answer_page(
+    conn: &mut Conn,
+    school: &str,
+    exam: &str,
+    student: i32,
+    subject: i32,
+    paper: Option<i16>,
+    page: i16,
+    key: &str,
+    created: i64,
+) -> Result<()> {
+    sql_query(
+        "INSERT INTO answer_pages (school, exam, student, subject, paper, page, key, created) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind::<Text, _>(school)
+    .bind::<Text, _>(exam)
+    .bind::<Integer, _>(student)
+    .bind::<Integer, _>(subject)
+    .bind::<Nullable<SmallInt>, _>(paper)
+    .bind::<SmallInt, _>(page)
+    .bind::<Text, _>(key)
+    .bind::<BigInt, _>(created)
+    .execute(conn)?;
+    Ok(())
+}
+
 pub fn insert_discount(conn: &mut Conn, row: &DiscountInsert) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     sql_query(
