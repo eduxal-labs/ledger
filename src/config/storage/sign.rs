@@ -148,6 +148,43 @@ pub fn logo(id: &Id, ttl: Option<u64>, write: bool) -> String {
     url(key.as_str(), ttl, write)
 }
 
+/// Presigned URL for a marking scheme image page.
+/// Path: schools/{school}/exams/{exam}/papers/{subject}_{paper}/scheme/{index}
+pub fn scheme_image(
+    school: &str,
+    exam: &str,
+    subject: i32,
+    paper: i32,
+    index: i32,
+    ttl: u64,
+    write: bool,
+) -> String {
+    let key = format!(
+        "schools/{}/exams/{}/papers/{}_{}/scheme/{}",
+        school, exam, subject, paper, index
+    );
+    url(&key, ttl, write)
+}
+
+/// Presigned URL for a student answer sheet image.
+/// Path: schools/{school}/exams/{exam}/papers/{subject}_{paper}/students/{adm}/{index}
+pub fn answer_sheet(
+    school: &str,
+    exam: &str,
+    subject: i32,
+    paper: i32,
+    adm: i32,
+    index: i32,
+    ttl: u64,
+    write: bool,
+) -> String {
+    let key = format!(
+        "schools/{}/exams/{}/papers/{}_{}/students/{}/{}",
+        school, exam, subject, paper, adm, index
+    );
+    url(&key, ttl, write)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,3 +1,4 @@
+mod ai;
 mod config;
 mod db;
 mod proto;

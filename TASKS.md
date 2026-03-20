@@ -142,10 +142,10 @@ Verify files are generated in `../eduxal/lib/proto/services/`:
 - `ai_marking.pbjson.dart`
 
 **Update after completion:**
-- [ ] Verify `cargo build` succeeds
-- [ ] Verify Dart stubs exist in `../eduxal/lib/proto/services/`
-- [ ] Mark this task `[x]`
-- [ ] git commit: `feat: add ai_marking.proto with RequestUploadUrls and MarkPaper RPCs`
+- [x] Verify `cargo build` succeeds
+- [x] Verify Dart stubs exist in `../eduxal/lib/proto/services/`
+- [x] Mark this task `[x]`
+- [x] git commit: `feat: add ai_marking.proto with RequestUploadUrls and MarkPaper RPCs`
 
 ---
 
@@ -178,8 +178,8 @@ pub fn answer_sheet(school: &str, exam: &str, subject: i32, paper: i32, adm: i32
 These use the existing `url()` function which handles the presigning.
 
 **Update after completion:**
-- [ ] Mark this task `[x]`
-- [ ] git commit: `feat: add S3 path helpers for exam paper scheme and answer sheets`
+- [x] Mark this task `[x]`
+- [x] git commit: `feat: add S3 path helpers for exam paper scheme and answer sheets`
 
 ---
 
@@ -282,8 +282,8 @@ pub struct StudentScore {
 **Add `mod ai;`** to `src/main.rs` alongside the existing `mod config; mod db; mod proto; mod services; mod types;`.
 
 **Update after completion:**
-- [ ] Mark this task `[x]`
-- [ ] git commit: `feat: add Gemini API client for AI exam marking`
+- [x] Mark this task `[x]`
+- [x] git commit: `feat: add Gemini API client for AI exam marking`
 
 ---
 
