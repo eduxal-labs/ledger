@@ -531,9 +531,9 @@ pub mod ai_marking;
 ```
 
 **Update after completion:**
-- [ ] Verify `cargo build` succeeds
-- [ ] Mark this task `[x]`
-- [ ] git commit: `feat: implement AiMarking service with RequestUploadUrls and MarkPaper handlers`
+- [x] Verify `cargo build` succeeds
+- [x] Mark this task `[x]`
+- [x] git commit: `feat: implement AiMarking service with RequestUploadUrls and MarkPaper handlers`
 
 ---
 

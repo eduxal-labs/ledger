@@ -1,0 +1,234 @@
+use crate::ai::gemini::GeminiClient;
+use crate::config::storage::sign;
+use crate::db::changelog::{LOG, Record};
+use crate::db::database::CONN;
+use crate::db::database::tables::{insert, update};
+use crate::proto::services::ai_marking::*;
+use crate::proto::services::sync::{GradeInsert, UpdateGradePayload};
+use crate::types::error::{Error, Result};
+use crate::types::id::Id;
+use crate::types::token::Token;
+use std::sync::Arc;
+
+const TBL_GRADES: u8 = 18;
+const OP_INSERT: u8 = 0;
+const OP_UPDATE: u8 = 1;
+
+pub struct AiMarkingService<C> {
+    #[allow(dead_code)]
+    config: Arc<C>,
+    gemini: GeminiClient,
+}
+
+impl<C: Send + Sync + 'static> AiMarking for AiMarkingService<C> {
+    type Config = Arc<C>;
+
+    fn new(config: Self::Config) -> AiMarkingServer<Self> {
+        AiMarkingServer::new(Self {
+            config,
+            gemini: GeminiClient::new(),
+        })
+    }
+
+    async fn request_upload_urls(
+        &self,
+        _token: Token,
+        req: UploadUrlsRequest,
+    ) -> Result<UploadUrlsResponse> {
+        let paper_num = req.paper.unwrap_or(0);
+
+        // Generate PUT URLs for scheme images
+        let scheme_urls: Vec<SignedUrl> = (0..req.scheme_count)
+            .map(|i| {
+                let key = format!(
+                    "schools/{}/exams/{}/papers/{}_{}/scheme/{}",
+                    req.school, req.exam, req.subject, paper_num, i
+                );
+                let url = sign::url(&key, sign::PUT_TTL, true);
+                SignedUrl { key, url }
+            })
+            .collect();
+
+        // Generate PUT URLs for student answer sheets
+        let student_urls: Vec<StudentSignedUrls> = req
+            .students
+            .iter()
+            .map(|s| {
+                let urls: Vec<SignedUrl> = (0..s.count)
+                    .map(|i| {
+                        let key = format!(
+                            "schools/{}/exams/{}/papers/{}_{}/students/{}/{}",
+                            req.school, req.exam, req.subject, paper_num, s.adm, i
+                        );
+                        let url = sign::url(&key, sign::PUT_TTL, true);
+                        SignedUrl { key, url }
+                    })
+                    .collect();
+                StudentSignedUrls { adm: s.adm, urls }
+            })
+            .collect();
+
+        Ok(UploadUrlsResponse {
+            scheme_urls,
+            student_urls,
+        })
+    }
+
+    async fn mark_paper(&self, _token: Token, req: MarkPaperRequest) -> Result<MarkPaperResponse> {
+        // Generate GET URLs for all S3 keys
+        let scheme_get_urls: Vec<String> = req
+            .scheme_keys
+            .iter()
+            .map(|key| sign::url(key, sign::GET_TTL, false))
+            .collect();
+
+        let student_data: Vec<(i32, Vec<String>)> = req
+            .students
+            .iter()
+            .map(|s| {
+                let urls: Vec<String> = s
+                    .keys
+                    .iter()
+                    .map(|key| sign::url(key, sign::GET_TTL, false))
+                    .collect();
+                (s.adm, urls)
+            })
+            .collect();
+
+        let student_count = student_data.len();
+
+        // Clone values for the spawned task
+        let gemini = self.gemini.clone();
+        let total_marks = req.total_marks;
+        let school = req.school.clone();
+        let exam = req.exam.clone();
+        let subject = req.subject;
+        let paper = req.paper;
+
+        // Spawn async marking task (return immediately to client)
+        tokio::spawn(async move {
+            match gemini
+                .mark_paper(&scheme_get_urls, &student_data, total_marks)
+                .await
+            {
+                Ok(scores) => {
+                    // Write grades on a blocking thread (DB access is thread-local)
+                    let school2 = school.clone();
+                    let exam2 = exam.clone();
+                    let result = tokio::task::spawn_blocking(move || {
+                        for score in &scores {
+                            if let Err(e) = write_ai_grade(
+                                &school2,
+                                &exam2,
+                                score.adm,
+                                subject,
+                                paper,
+                                score.score,
+                                total_marks,
+                            ) {
+                                tracing::error!(
+                                    "Failed to write AI grade for student {}: {}",
+                                    score.adm,
+                                    e
+                                );
+                            }
+                        }
+                        scores.len()
+                    })
+                    .await;
+
+                    match result {
+                        Ok(count) => {
+                            tracing::info!(
+                                "AI marking complete: {}/{} students scored for school={} exam={}",
+                                count,
+                                student_count,
+                                school,
+                                exam
+                            );
+                        }
+                        Err(e) => {
+                            tracing::error!("Grade write task panicked: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Gemini marking failed for school={} exam={}: {}",
+                        school,
+                        exam,
+                        e
+                    );
+                }
+            }
+        });
+
+        Ok(MarkPaperResponse {
+            accepted: true,
+            message: format!("Marking {} students...", student_count),
+        })
+    }
+}
+
+/// Write a single AI-generated grade to the database and append a changelog entry.
+fn write_ai_grade(
+    school: &str,
+    exam: &str,
+    student: i32,
+    subject: i32,
+    paper: Option<i32>,
+    score: f64,
+    total: i32,
+) -> Result<()> {
+    let log_user = Id::system();
+
+    let grade = GradeInsert {
+        school: school.to_string(),
+        exam: exam.to_string(),
+        student,
+        subject,
+        paper,
+        score: score as f32,
+        total,
+    };
+
+    let row_key = format!(
+        "{}|{}|{}|{}|{}",
+        school,
+        exam,
+        student,
+        subject,
+        paper.map(|v| v.to_string()).unwrap_or_default()
+    );
+
+    // Upsert: try insert, on conflict update
+    let inserted = CONN.with(|cell| insert::insert_grade(&mut *cell.borrow_mut(), &grade));
+    if inserted.is_err() {
+        // Row exists — update score/total
+        let update_payload = UpdateGradePayload {
+            school: school.to_string(),
+            exam: exam.to_string(),
+            student,
+            subject,
+            paper,
+            score: Some(score as f32),
+            total: Some(total),
+        };
+        CONN.with(|cell| update::update_grade(&mut *cell.borrow_mut(), &row_key, &update_payload))?;
+        let record = Record::new(log_user, TBL_GRADES, OP_UPDATE, 0);
+        LOG.with(|cell| cell.borrow_mut().append(&record))
+            .map_err(|e| {
+                tracing::error!("changelog append failed: {e}");
+                Error::Internal
+            })?;
+    } else {
+        let record = Record::new(log_user, TBL_GRADES, OP_INSERT, 0);
+        LOG.with(|cell| cell.borrow_mut().append(&record))
+            .map_err(|e| {
+                tracing::error!("changelog append failed: {e}");
+                Error::Internal
+            })?;
+    }
+
+    Ok(())
+}
