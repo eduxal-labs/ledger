@@ -869,6 +869,46 @@ message DeleteDiscountPayload {
   int32 grade = 5;
 }
 
+// --- File Sync: Scheme & Answer Pages (4 actions: 91–94) ---
+
+// Action 91: Replace/set scheme pages for a paper. Server deletes existing
+// pages, creates new rows, returns presigned PUT URLs.
+message UploadSchemePayload {
+  string school = 1;
+  string exam = 2;
+  int32 subject = 3;
+  optional int32 paper = 4; // NULL = single-paper subject
+  int32 count = 5; // number of pages being uploaded (>= 1)
+}
+
+// Action 92: Remove all scheme pages for a paper.
+message DeleteSchemePayload {
+  string school = 1;
+  string exam = 2;
+  int32 subject = 3;
+  optional int32 paper = 4;
+}
+
+// Action 93: Replace/set answer sheet pages for a student's paper.
+// Server deletes existing pages, creates new rows, returns presigned PUT URLs.
+message UploadAnswerSheetPayload {
+  string school = 1;
+  string exam = 2;
+  int32 student = 3;
+  int32 subject = 4;
+  optional int32 paper = 5;
+  int32 count = 6;
+}
+
+// Action 94: Remove all answer sheet pages for a student's paper.
+message DeleteAnswerSheetPayload {
+  string school = 1;
+  string exam = 2;
+  int32 student = 3;
+  int32 subject = 4;
+  optional int32 paper = 5;
+}
+
 // ===========================================================================
 // InsertData (KEPT — used by WatchChanges/SyncDelta and ActionRow)
 // This is the READ direction format (server → client via watch stream)
@@ -910,6 +950,8 @@ message InsertData {
     StreamInsert stream = 33;
     MpesaInsert mpesa = 34;
     // ExamGradeInsert exam_grade = 35;  // REMOVED
+    SchemePageInsert scheme_page = 36;
+    AnswerPageInsert answer_page = 37;
   }
   reserved 35;
 }
@@ -1196,6 +1238,27 @@ message MpesaInsert {
 }
 
 // ExamGradeInsert removed — grade/stream moved to PaperInsert
+
+message SchemePageInsert {
+  string school = 1;
+  string exam = 2;
+  int32 subject = 3;
+  optional int32 paper = 4;
+  int32 page = 5;
+  string key = 6; // S3 object key
+  int64 created = 7;
+}
+
+message AnswerPageInsert {
+  string school = 1;
+  string exam = 2;
+  int32 student = 3;
+  int32 subject = 4;
+  optional int32 paper = 5;
+  int32 page = 6;
+  string key = 7; // S3 object key
+  int64 created = 8;
+}
 
 message RoleInsert {
   string id = 1;
