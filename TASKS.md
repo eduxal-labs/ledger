@@ -271,14 +271,14 @@ When broadcasting to watchers, each changelog entry for scheme_pages should incl
 - For DELETEs: `SyncDelta { table=36, operation=2, rowKey="...", file_urls=[] }`
 
 **Update after completion:**
-- [ ] Implement `uploadScheme` handler with S3 PUT URL generation
-- [ ] Implement `deleteScheme` handler with S3 object deletion
-- [ ] Wire handlers into action dispatch
-- [ ] Changelog entries produce correct table=36 deltas
-- [ ] `cargo build` succeeds
+- [x] Implement `uploadScheme` handler with S3 PUT URL generation
+- [x] Implement `deleteScheme` handler with S3 object deletion
+- [x] Wire handlers into action dispatch
+- [x] Changelog entries produce correct table=36 deltas
+- [x] `cargo build` succeeds
 - [ ] Test: upload scheme → verify scheme_pages rows + PUT URLs returned
-- [ ] Mark this task `[x]`
-- [ ] git commit: `feat: implement uploadScheme and deleteScheme action handlers with S3 integration`
+- [x] Mark this task `[x]`
+- [x] git commit: `feat: implement uploadScheme and deleteScheme action handlers with S3 integration`
 
 ---
 
@@ -324,14 +324,14 @@ Same pattern as `deleteScheme` but for `answer_pages` (table=37).
 Same pattern as S3 but with table=37 and `AnswerPageInsert` data.
 
 **Update after completion:**
-- [ ] Implement `uploadAnswerSheet` handler
-- [ ] Implement `deleteAnswerSheet` handler
-- [ ] Wire handlers into action dispatch
-- [ ] Changelog entries produce correct table=37 deltas
-- [ ] `cargo build` succeeds
+- [x] Implement `uploadAnswerSheet` handler
+- [x] Implement `deleteAnswerSheet` handler
+- [x] Wire handlers into action dispatch
+- [x] Changelog entries produce correct table=37 deltas
+- [x] `cargo build` succeeds
 - [ ] Test: upload answer sheet → verify answer_pages rows + PUT URLs returned
-- [ ] Mark this task `[x]`
-- [ ] git commit: `feat: implement uploadAnswerSheet and deleteAnswerSheet action handlers`
+- [x] Mark this task `[x]`
+- [x] git commit: `feat: implement uploadAnswerSheet and deleteAnswerSheet action handlers`
 
 ---
 
@@ -364,10 +364,10 @@ For each changelog row with table=36 or table=37:
 - answer_pages: `{school}|{exam}|{student}|{subject}|{paper}|{page}` (paper is empty string when NULL)
 
 **Update after completion:**
-- [ ] Watch stream handles table=36 (scheme_pages) changelog entries
-- [ ] Watch stream handles table=37 (answer_pages) changelog entries
-- [ ] GET URLs generated with ~1 month expiry
-- [ ] `cargo build` succeeds
+- [x] Watch stream handles table=36 (scheme_pages) changelog entries
+- [x] Watch stream handles table=37 (answer_pages) changelog entries
+- [x] GET URLs generated with ~1 month expiry
+- [x] `cargo build` succeeds
 - [ ] End-to-end test: Device A uploads scheme → Device B receives delta with GET URL → downloads file
-- [ ] Mark this task `[x]`
-- [ ] git commit: `feat: wire scheme_pages and answer_pages into watch stream delta builder`
+- [x] Mark this task `[x]`
+- [x] git commit: `feat: wire scheme_pages and answer_pages into watch stream delta builder`
