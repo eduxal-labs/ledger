@@ -29,6 +29,19 @@ diesel::table! {
 }
 
 diesel::table! {
+    answer_pages (school, exam, student, subject, paper, page) {
+        school -> Text,
+        exam -> Text,
+        student -> Integer,
+        subject -> Integer,
+        paper -> Nullable<SmallInt>,
+        page -> SmallInt,
+        key -> Text,
+        created -> BigInt,
+    }
+}
+
+diesel::table! {
     attendance (school, year, term, grade, stream, student, date) {
         school -> Text,
         year -> Integer,
@@ -280,6 +293,18 @@ diesel::table! {
 }
 
 diesel::table! {
+    scheme_pages (school, exam, subject, paper, page) {
+        school -> Text,
+        exam -> Text,
+        subject -> Integer,
+        paper -> Nullable<SmallInt>,
+        page -> SmallInt,
+        key -> Text,
+        created -> BigInt,
+    }
+}
+
+diesel::table! {
     schools (id) {
         id -> Text,
         name -> Text,
@@ -451,6 +476,9 @@ diesel::table! {
 diesel::joinable!(aiusage -> schools (school));
 diesel::joinable!(announcements -> schools (school));
 diesel::joinable!(announcements -> users (author));
+diesel::joinable!(answer_pages -> exams (exam));
+diesel::joinable!(answer_pages -> schools (school));
+diesel::joinable!(answer_pages -> subjects (subject));
 diesel::joinable!(attendance -> schools (school));
 diesel::joinable!(class_teachers -> schools (school));
 diesel::joinable!(departments -> schools (school));
@@ -481,6 +509,9 @@ diesel::joinable!(payments -> invoices (invoice));
 diesel::joinable!(payments -> schools (school));
 diesel::joinable!(payments -> users (recorder));
 diesel::joinable!(roles -> schools (school));
+diesel::joinable!(scheme_pages -> exams (exam));
+diesel::joinable!(scheme_pages -> schools (school));
+diesel::joinable!(scheme_pages -> subjects (subject));
 diesel::joinable!(scopes -> roles (role));
 diesel::joinable!(scopes -> schools (school));
 diesel::joinable!(scopes -> users (user));
@@ -503,6 +534,7 @@ diesel::joinable!(topics -> subjects (subject));
 diesel::allow_tables_to_appear_in_same_query!(
     aiusage,
     announcements,
+    answer_pages,
     attendance,
     class_teachers,
     departments,
@@ -521,6 +553,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     payments,
     plans,
     roles,
+    scheme_pages,
     schools,
     scopes,
     staff,

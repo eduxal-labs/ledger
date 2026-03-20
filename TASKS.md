@@ -192,10 +192,10 @@ CREATE INDEX idx_answer_pages_student ON answer_pages(school, exam, student, sub
 **Note on NULL paper in Postgres PK:** Postgres handles NULL in composite PKs differently than SQLite. If the server uses Postgres, NULL values in PKs are considered distinct (each NULL is unique). If this causes issues, consider adding a `COALESCE(paper, -1)` expression index or using -1 as a sentinel. Check the server's Postgres version and behavior.
 
 **Update after completion:**
-- [ ] Create `scheme_pages` table with indexes
-- [ ] Create `answer_pages` table with indexes
-- [ ] Run migration — database accepts the new tables
-- [ ] Mark this task `[x]`
+- [x] Create `scheme_pages` table with indexes
+- [x] Create `answer_pages` table with indexes
+- [x] Run migration — database accepts the new tables
+- [x] Mark this task `[x]`
 - [ ] git commit: `db: add scheme_pages and answer_pages tables for file sync metadata`
 
 ---
