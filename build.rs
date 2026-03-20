@@ -15,6 +15,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             &[
                 "./protos/services/authentication.proto",
                 "./protos/services/sync.proto",
+                "./protos/services/ai_marking.proto",
                 "./protos/types/role.proto",
                 "./protos/types/member.proto",
             ],
