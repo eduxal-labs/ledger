@@ -2,7 +2,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 use std::time::Instant;
 
-const MODEL: &str = "gemini-2.5-flash";
+const MODEL: &str = "gemini-3.1-flash-lite-preview";
 const BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta/models";
 const BASE_URL_CACHE: &str = "https://generativelanguage.googleapis.com/v1beta/cachedContents";
 
@@ -51,6 +51,8 @@ struct Content {
 #[derive(Deserialize)]
 struct Part {
     text: Option<String>,
+    #[serde(default)]
+    thought: bool,
 }
 
 // -- Marking result deserialization --
@@ -291,7 +293,10 @@ Return ONLY valid JSON with exactly one result entry for this student:
             "contents": [{"parts": parts}],
             "generationConfig": {
                 "responseMimeType": "application/json",
-                "temperature": 0
+                "temperature": 0,
+                "thinkingConfig": {
+                    "thinkingLevel": "high"
+                }
             }
         });
 
@@ -363,7 +368,12 @@ Return ONLY valid JSON with exactly one result entry for this student:
         let result_text = gemini_resp
             .candidates
             .first()
-            .and_then(|c| c.content.parts.first())
+            .and_then(|c| {
+                c.content
+                    .parts
+                    .iter()
+                    .find(|p| !p.thought && p.text.is_some())
+            })
             .and_then(|p| p.text.as_ref())
             .ok_or_else(|| {
                 tracing::error!(adm = adm, raw_response = %text, "gemini: no text in response");
@@ -704,7 +714,10 @@ Return ONLY valid JSON with exactly one result entry for this student:
             "contents": [{"parts": parts, "role": "user"}],
             "generationConfig": {
                 "responseMimeType": "application/json",
-                "temperature": 0
+                "temperature": 0,
+                "thinkingConfig": {
+                    "thinkingLevel": "high"
+                }
             }
         });
 
@@ -777,7 +790,7 @@ Return ONLY valid JSON with exactly one result entry for this student:
         let result_text = gemini_resp
             .candidates
             .first()
-            .and_then(|c| c.content.parts.first())
+            .and_then(|c| c.content.parts.iter().find(|p| !p.thought && p.text.is_some()))
             .and_then(|p| p.text.as_ref())
             .ok_or_else(|| {
                 tracing::error!(adm = adm, raw_response = %text, "gemini: no text in cached response");
