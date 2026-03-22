@@ -1,9 +1,11 @@
 use crate::config::Config;
+use crate::db::changelog::{LOG, Record};
 use crate::db::database::CONN as conn;
 use crate::db::database::traits::Database;
 use crate::proto::services::authentication::{
     Authenticated, Authentication, AuthenticationServer, Verified,
 };
+use crate::services::sync::LogTable;
 use crate::types::{
     error::{Error, Result},
     id::Id,
@@ -13,10 +15,26 @@ use crate::types::{
     verification::{Code, Purpose, Verification},
 };
 use std::sync::Arc;
+use tracing::error;
 
 pub struct Authenticator<C> {
     config: Arc<C>,
 }
+
+/// Append a changelog record for a Users table event.
+///
+/// Errors are non-fatal: an auth operation should never fail just because
+/// the changelog write failed.  We log the error and move on — the watch
+/// loop will still pick up the change on its next poll interval.
+fn append_log(user_id: Id, op: u8) {
+    let record = Record::new(user_id, LogTable::Users as u8, op, 0);
+    if let Err(e) = LOG.with(|cell| cell.borrow_mut().append(&record)) {
+        error!("changelog append failed in auth (user={user_id}, op={op}): {e}");
+    }
+}
+
+const OP_INSERT: u8 = 0;
+const OP_UPDATE: u8 = 1;
 
 impl<C: Config + Send + Sync + 'static> Authentication for Authenticator<C> {
     type Config = Arc<C>;
@@ -61,6 +79,9 @@ impl<C: Config + Send + Sync + 'static> Authentication for Authenticator<C> {
                     ..Default::default()
                 };
                 user = conn.update(user.id, update)?;
+                // Notify watch clients that this user row changed.
+                append_log(user.id, OP_UPDATE);
+                self.config.change_notifier().notify_waiters();
                 Verified::authenticated(user)
             }
             None => Verified::registered(phone),
@@ -86,10 +107,16 @@ impl<C: Config + Send + Sync + 'static> Authentication for Authenticator<C> {
                 ..Default::default()
             };
             user = conn.update(user.id, update)?;
+            // Existing invited user completed setup — row changed.
+            append_log(user.id, OP_UPDATE);
+            self.config.change_notifier().notify_waiters();
             return Ok(Authenticated::new(user)?);
         }
         let user = User::new(phone, name);
         let user = conn.create(user)?;
+        // Brand-new user just registered — notify watch clients.
+        append_log(user.id, OP_INSERT);
+        self.config.change_notifier().notify_waiters();
         Ok(Authenticated::new(user)?)
     }
 
@@ -126,11 +153,16 @@ impl<C: Config + Send + Sync + 'static> Authentication for Authenticator<C> {
         let purpose = Purpose::ChangePhone;
         let Verification { phone, .. } = self.config.verify(id, code, user, purpose).await?;
         let phone = Some(phone);
+        let updated = Some(chrono::Utc::now().timestamp());
         let record = user::Update {
             phone,
+            updated,
             ..Default::default()
         };
         let user = conn.update(token.user, record)?;
+        // Phone changed — notify watch clients.
+        append_log(user.id, OP_UPDATE);
+        self.config.change_notifier().notify_waiters();
         let authenticated = Authenticated::new(user)?;
         Ok(authenticated)
     }

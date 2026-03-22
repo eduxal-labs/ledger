@@ -181,7 +181,6 @@ pub const OP_DELETE: i32 = 2;
 
 pub struct SyncService<C> {
     config: Arc<C>,
-    notify: Arc<tokio::sync::Notify>,
 }
 
 impl<C: Config + Send + ::std::marker::Sync + 'static> Sync for SyncService<C> {
@@ -189,10 +188,7 @@ impl<C: Config + Send + ::std::marker::Sync + 'static> Sync for SyncService<C> {
     type WatchStream = std::pin::Pin<Box<dyn Stream<Item = Result<SyncDelta>> + Send>>;
 
     fn new(config: Self::Config) -> SyncServer<Self> {
-        SyncServer::new(Self {
-            config,
-            notify: Arc::new(tokio::sync::Notify::new()),
-        })
+        SyncServer::new(Self { config })
     }
 
     async fn push_actions(
@@ -217,7 +213,7 @@ impl<C: Config + Send + ::std::marker::Sync + 'static> Sync for SyncService<C> {
         info!(user_id = %user.id, level = ?user.level, "[SYNC] PushActions stream opened");
 
         let (tx, rx) = mpsc::channel::<ActionResponse>(64);
-        let notify = self.notify.clone();
+        let notify = self.config.change_notifier().clone();
 
         tokio::spawn(async move {
             let mut stream = stream;
@@ -285,7 +281,7 @@ impl<C: Config + Send + ::std::marker::Sync + 'static> Sync for SyncService<C> {
 
         let (tx, rx) = mpsc::channel::<Result<SyncDelta>>(256);
         let last_cursor = request.last_seq;
-        let notify = self.notify.clone();
+        let notify = self.config.change_notifier().clone();
 
         tokio::spawn(async move {
             let result = watch_loop(&tx, &user, last_cursor, &notify).await;
@@ -870,7 +866,22 @@ async fn watch_loop(
         cursor += (records.len() as u64) * 24;
         delete_cursor = new_delete_cursor;
 
-        let mut needs_rebuild = false;
+        // If any record in this batch touches a membership/scope table,
+        // rebuild the filter NOW — before populating table_min_ts — so
+        // that tables which become visible in this very batch (e.g.
+        // Schools and Owners when the user is just added to a school) are
+        // captured in the data fetch below.  Rebuilding after the scan
+        // (the old behaviour) was too late: the cursor had already
+        // advanced past those records and they would never be retried.
+        if records
+            .iter()
+            .any(|r| should_rebuild_filter_record(r, user))
+        {
+            info!(user_id = %user.id, "[SYNC] WATCH → pre-batch filter rebuild (membership change detected)");
+            if let Ok(f) = SyncFilter::build(user) {
+                filter = f;
+            }
+        }
 
         let mut deltas_sent: usize = 0;
 
@@ -878,11 +889,6 @@ async fn watch_loop(
         let mut table_min_ts: HashMap<u8, i64> = HashMap::new();
 
         for record in &records {
-            // Detect membership/scope changes that require a filter rebuild
-            if should_rebuild_filter_record(record, user) {
-                needs_rebuild = true;
-            }
-
             // Skip deletes here — they are handled via the delete sidecar
             if record.op == OP_DELETE as u8 {
                 continue;
@@ -1020,14 +1026,6 @@ async fn watch_loop(
             };
             if tx.send(Ok(bookmark)).await.is_err() {
                 return Err(());
-            }
-        }
-
-        // Rebuild filter if membership/scope tables changed
-        if needs_rebuild {
-            info!(user_id = %user.id, "[SYNC] WATCH → rebuilding sync filter (membership/scope change detected)");
-            if let Ok(f) = SyncFilter::build(user) {
-                filter = f;
             }
         }
     }

@@ -9,15 +9,34 @@ use crate::types::id::Id;
 use crate::types::phone::Phone;
 use crate::types::verification::{Code, Purpose, Verification};
 use messenger::Messenger;
+use std::sync::Arc;
 use verifyer::Verifyer;
 
-pub trait Config: Messenger<Recipient = Phone> + Verifyer {}
-impl Config for Configuration {}
+pub trait Config: Messenger<Recipient = Phone> + Verifyer {
+    fn change_notifier(&self) -> &Arc<tokio::sync::Notify>;
+}
 
-#[derive(Clone, Default)]
+impl Config for Configuration {
+    fn change_notifier(&self) -> &Arc<tokio::sync::Notify> {
+        &self.notifier
+    }
+}
+
+#[derive(Clone)]
 pub struct Configuration {
     verifyer: verifications::Verifications,
     messenger: whatsapp::Whatsapp,
+    notifier: Arc<tokio::sync::Notify>,
+}
+
+impl Default for Configuration {
+    fn default() -> Self {
+        Self {
+            verifyer: Default::default(),
+            messenger: Default::default(),
+            notifier: Arc::new(tokio::sync::Notify::new()),
+        }
+    }
 }
 
 impl Messenger for Configuration {

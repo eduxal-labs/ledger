@@ -85,7 +85,7 @@ impl SchoolRow {
         self.id.clone()
     }
     pub fn school_id(&self) -> Option<&str> {
-        None
+        Some(&self.id)
     }
 }
 
