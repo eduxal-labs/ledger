@@ -4,6 +4,7 @@ use std::time::Instant;
 
 const MODEL: &str = "gemini-2.5-flash";
 const BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta/models";
+const BASE_URL_CACHE: &str = "https://generativelanguage.googleapis.com/v1beta/cachedContents";
 
 /// Max concurrent Gemini API requests when marking multiple students.
 const MAX_CONCURRENT: usize = 4;
@@ -75,6 +76,11 @@ struct BreakdownEntry {
     out_of: f64,
     #[serde(default)]
     note: String,
+}
+
+#[derive(Deserialize)]
+struct CacheCreateResponse {
+    name: String,
 }
 
 const SYSTEM_INSTRUCTION: &str = r#"You are an expert national-exam marker for Kenyan secondary school examinations (KCSE and equivalent). You mark ALL subjects: Mathematics, Sciences (Biology, Chemistry, Physics), Languages (English, Kiswahili), Humanities (History, Geography, CRE, IRE, HRE), and Technical subjects (Business Studies, Agriculture, Computer Studies, Home Science).
@@ -182,19 +188,19 @@ impl GeminiClient {
     }
 
     /// Download an image from a URL and return it as a base64-encoded string.
-    async fn download_b64(
+    pub async fn download_b64(
         &self,
         url: &str,
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-        use base64::engine::general_purpose::STANDARD;
         use base64::Engine;
+        use base64::engine::general_purpose::STANDARD;
         let bytes = self.http.get(url).send().await?.bytes().await?;
         Ok(STANDARD.encode(&bytes))
     }
 
     /// Build the shared marking-scheme content parts (text + base64 images).
     /// These are identical for every student and are computed once.
-    async fn build_scheme_parts(
+    pub async fn build_scheme_parts(
         &self,
         scheme_urls: &[String],
     ) -> Result<Vec<serde_json::Value>, Box<dyn std::error::Error + Send + Sync>> {
@@ -246,7 +252,11 @@ impl GeminiClient {
                 adm,
                 i + 1
             );
-            tracing::debug!(adm = adm, sheet = i, "gemini: downloading student answer sheet");
+            tracing::debug!(
+                adm = adm,
+                sheet = i,
+                "gemini: downloading student answer sheet"
+            );
             let b64 = self.download_b64(url).await?;
             tracing::debug!(adm = adm, sheet = i, "gemini: student sheet downloaded");
             parts.push(serde_json::json!({
@@ -324,7 +334,12 @@ Return ONLY valid JSON with exactly one result entry for this student:
         );
 
         if !status.is_success() {
-            eprintln!("[GEMINI] ADM {}: ERROR HTTP {} — {}", adm, status.as_u16(), text);
+            eprintln!(
+                "[GEMINI] ADM {}: ERROR HTTP {} — {}",
+                adm,
+                status.as_u16(),
+                text
+            );
             tracing::error!(
                 model = MODEL,
                 adm = adm,
@@ -370,7 +385,10 @@ Return ONLY valid JSON with exactly one result entry for this student:
         // Log breakdown
         eprintln!(
             "[GEMINI] ADM {} — score: {}/{} ({} questions)",
-            entry.adm, entry.score, entry.total, entry.breakdown.len()
+            entry.adm,
+            entry.score,
+            entry.total,
+            entry.breakdown.len()
         );
         tracing::info!(
             adm = entry.adm,
@@ -386,7 +404,10 @@ Return ONLY valid JSON with exactly one result entry for this student:
                 serde_json::Value::Number(n) => n.to_string(),
                 other => other.to_string(),
             };
-            eprintln!("[GEMINI]   Q{}: {}/{} — {}", q_label, b.awarded, b.out_of, b.note);
+            eprintln!(
+                "[GEMINI]   Q{}: {}/{} — {}",
+                q_label, b.awarded, b.out_of, b.note
+            );
             tracing::info!(
                 adm = entry.adm,
                 question = %q_label,
@@ -434,8 +455,7 @@ Return ONLY valid JSON with exactly one result entry for this student:
         scheme_urls: &[String],
         students: &[(i32, Vec<String>)],
     ) -> Result<Vec<StudentScore>, Box<dyn std::error::Error + Send + Sync>> {
-        let total_images =
-            scheme_urls.len() + students.iter().map(|(_, u)| u.len()).sum::<usize>();
+        let total_images = scheme_urls.len() + students.iter().map(|(_, u)| u.len()).sum::<usize>();
 
         eprintln!(
             "[GEMINI] starting: model={} scheme_images={} students={} total_images={} concurrency={}",
@@ -543,5 +563,293 @@ Return ONLY valid JSON with exactly one result entry for this student:
         );
 
         Ok(scores)
+    }
+    /// Create a Gemini context cache containing the system instruction and scheme images.
+    /// Returns the cache name (e.g., "cachedContents/abc123").
+    pub async fn create_context_cache(
+        &self,
+        scheme_parts: &[serde_json::Value],
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        let url = format!("{}?key={}", BASE_URL_CACHE, self.api_key);
+
+        let body = serde_json::json!({
+            "model": format!("models/{}", MODEL),
+            "systemInstruction": {
+                "parts": [{"text": SYSTEM_INSTRUCTION}]
+            },
+            "contents": [{"parts": scheme_parts, "role": "user"}],
+            "ttl": "600s"
+        });
+
+        let request_size = body.to_string().len();
+        eprintln!("[GEMINI] creating context cache ({} bytes)", request_size);
+        tracing::info!(
+            request_body_bytes = request_size,
+            "gemini: creating context cache"
+        );
+
+        let start = Instant::now();
+        let response = self.http.post(&url).json(&body).send().await?;
+        let status = response.status();
+        let text = response.text().await?;
+
+        eprintln!(
+            "[GEMINI] cache create response: HTTP {} ({} bytes) in {}ms",
+            status.as_u16(),
+            text.len(),
+            start.elapsed().as_millis()
+        );
+        tracing::info!(
+            http_status = status.as_u16(),
+            response_bytes = text.len(),
+            elapsed_ms = start.elapsed().as_millis(),
+            "gemini: cache create response"
+        );
+
+        if !status.is_success() {
+            eprintln!(
+                "[GEMINI] cache create FAILED: HTTP {} — {}",
+                status.as_u16(),
+                text
+            );
+            tracing::error!(http_status = status.as_u16(), response_body = %text, "gemini: cache create failed");
+            return Err(format!(
+                "Gemini cache create returned status {} — body: {}",
+                status, text
+            )
+            .into());
+        }
+
+        let resp: CacheCreateResponse = serde_json::from_str(&text).map_err(|e| {
+            tracing::error!(parse_error = %e, raw_response = %text, "gemini: failed to parse CacheCreateResponse");
+            e
+        })?;
+
+        eprintln!("[GEMINI] context cache created: {}", resp.name);
+        tracing::info!(cache_name = %resp.name, "gemini: context cache created");
+
+        Ok(resp.name)
+    }
+
+    /// Delete a Gemini context cache (best-effort, fire-and-forget).
+    pub async fn delete_context_cache(&self, cache_name: &str) {
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/{}?key={}",
+            cache_name, self.api_key
+        );
+
+        eprintln!("[GEMINI] deleting context cache: {}", cache_name);
+        tracing::info!(cache_name = %cache_name, "gemini: deleting context cache");
+
+        match self.http.delete(&url).send().await {
+            Ok(resp) => {
+                eprintln!("[GEMINI] cache delete: HTTP {}", resp.status().as_u16());
+                tracing::info!(
+                    cache_name = %cache_name,
+                    http_status = resp.status().as_u16(),
+                    "gemini: cache deleted"
+                );
+            }
+            Err(e) => {
+                eprintln!("[GEMINI] cache delete failed: {}", e);
+                tracing::warn!(cache_name = %cache_name, error = %e, "gemini: cache delete failed (ignored)");
+            }
+        }
+    }
+
+    /// Mark a single student using a pre-created context cache.
+    /// The cache already contains the system instruction and scheme images,
+    /// so only the student's answer sheets and final instruction are sent.
+    pub async fn mark_student_cached(
+        &self,
+        cache_name: &str,
+        adm: i32,
+        answer_images_b64: &[String],
+    ) -> Result<StudentScore, Box<dyn std::error::Error + Send + Sync>> {
+        let mut parts = Vec::with_capacity(answer_images_b64.len() + 2);
+
+        // Student answer sheets (already base64-encoded)
+        parts.push(serde_json::json!({
+            "text": format!("## STUDENT ANSWER SHEETS\n\nMark the following student's answer sheets against the marking scheme above. Apply all marking rules — especially follow-through marking.\n\n### Student ADM {}:", adm)
+        }));
+
+        for b64 in answer_images_b64 {
+            parts.push(serde_json::json!({
+                "inline_data": { "mime_type": "image/jpeg", "data": b64 }
+            }));
+        }
+
+        // Final instruction
+        let final_instruction = format!(
+            r#"## FINAL INSTRUCTIONS
+
+Mark student ADM {} against the marking scheme above.
+
+Remember:
+- Apply follow-through (FT) marking: only deduct at the point of error, not at every subsequent step.
+- Accept equivalent forms unless the rubric explicitly requires a specific form.
+- Give benefit of the doubt on ambiguous handwriting.
+- The total marks must be determined from the marking scheme (sum of all mark allocations).
+
+Return ONLY valid JSON with exactly one result entry for this student:
+
+{{"results": [{{"adm": {}, "score": <marks_awarded>, "total": <total_marks_for_paper>, "breakdown": [{{"q": "<question number>", "awarded": <number>, "out_of": <number>, "note": "<one-sentence justification>"}}]}}]}}"#,
+            adm, adm
+        );
+        parts.push(serde_json::json!({ "text": final_instruction }));
+
+        // Build request using cachedContent — no system_instruction, no scheme parts
+        let body = serde_json::json!({
+            "cachedContent": cache_name,
+            "contents": [{"parts": parts, "role": "user"}],
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "temperature": 0
+            }
+        });
+
+        let request_size = body.to_string().len();
+        let url = format!(
+            "{}/{}:generateContent?key={}",
+            BASE_URL, MODEL, self.api_key
+        );
+
+        eprintln!(
+            "[GEMINI] ADM {} (cached): sending POST ({} bytes)",
+            adm, request_size
+        );
+        tracing::info!(
+            model = MODEL,
+            adm = adm,
+            cache_name = %cache_name,
+            request_body_bytes = request_size,
+            "gemini: sending cached per-student POST"
+        );
+
+        let post_start = Instant::now();
+        let response = self.http.post(&url).json(&body).send().await?;
+        let status = response.status();
+        let text = response.text().await?;
+
+        eprintln!(
+            "[GEMINI] ADM {} (cached): response HTTP {} ({} bytes) in {}ms",
+            adm,
+            status.as_u16(),
+            text.len(),
+            post_start.elapsed().as_millis()
+        );
+        tracing::info!(
+            model = MODEL,
+            adm = adm,
+            http_status = status.as_u16(),
+            response_bytes = text.len(),
+            elapsed_ms = post_start.elapsed().as_millis(),
+            "gemini: received cached per-student response"
+        );
+
+        if !status.is_success() {
+            eprintln!(
+                "[GEMINI] ADM {} (cached): ERROR HTTP {} — {}",
+                adm,
+                status.as_u16(),
+                text
+            );
+            tracing::error!(
+                model = MODEL,
+                adm = adm,
+                http_status = status.as_u16(),
+                response_body = %text,
+                "gemini: cached per-student API error"
+            );
+            return Err(format!(
+                "Gemini API returned status {} for ADM {} (cached) — body: {}",
+                status, adm, text
+            )
+            .into());
+        }
+
+        // Parse response — same logic as mark_single_student
+        let gemini_resp: GeminiResponse = serde_json::from_str(&text).map_err(|e| {
+            tracing::error!(adm = adm, parse_error = %e, raw_response = %text, "gemini: failed to parse GeminiResponse (cached)");
+            e
+        })?;
+
+        let result_text = gemini_resp
+            .candidates
+            .first()
+            .and_then(|c| c.content.parts.first())
+            .and_then(|p| p.text.as_ref())
+            .ok_or_else(|| {
+                tracing::error!(adm = adm, raw_response = %text, "gemini: no text in cached response");
+                format!("No text in Gemini cached response for ADM {}", adm)
+            })?;
+
+        tracing::debug!(adm = adm, result_json = %result_text, "gemini: raw cached marking JSON");
+
+        let marking: MarkingResult = serde_json::from_str(result_text).map_err(|e| {
+            tracing::error!(adm = adm, parse_error = %e, raw_result = %result_text, "gemini: failed to parse cached MarkingResult");
+            e
+        })?;
+
+        let entry = marking.results.into_iter().next().ok_or_else(|| {
+            tracing::error!(adm = adm, "gemini: empty results array (cached)");
+            format!("Gemini returned empty results for ADM {} (cached)", adm)
+        })?;
+
+        eprintln!(
+            "[GEMINI] ADM {} (cached) — score: {}/{} ({} questions)",
+            entry.adm,
+            entry.score,
+            entry.total,
+            entry.breakdown.len()
+        );
+        tracing::info!(
+            adm = entry.adm,
+            score = entry.score,
+            total = entry.total,
+            question_count = entry.breakdown.len(),
+            "gemini: cached student score summary"
+        );
+
+        for b in &entry.breakdown {
+            let q_label = match &b.q {
+                serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::Number(n) => n.to_string(),
+                other => other.to_string(),
+            };
+            tracing::info!(
+                adm = entry.adm,
+                question = %q_label,
+                awarded = b.awarded,
+                out_of = b.out_of,
+                note = %b.note,
+                "gemini: cached question breakdown"
+            );
+        }
+
+        let breakdown = entry
+            .breakdown
+            .into_iter()
+            .map(|b| {
+                let question = match b.q {
+                    serde_json::Value::String(s) => s,
+                    serde_json::Value::Number(n) => n.to_string(),
+                    other => other.to_string(),
+                };
+                QuestionBreakdown {
+                    question,
+                    awarded: b.awarded,
+                    out_of: b.out_of,
+                    note: b.note,
+                }
+            })
+            .collect();
+
+        Ok(StudentScore {
+            adm: entry.adm,
+            score: entry.score,
+            total: entry.total,
+            breakdown,
+        })
     }
 }
