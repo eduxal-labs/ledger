@@ -1,4 +1,4 @@
-use crate::ai::anthropic::AnthropicClient;
+use crate::ai::gemini::GeminiClient;
 use crate::config::storage::sign;
 use crate::db::changelog::{LOG, Record};
 use crate::db::database::CONN;
@@ -60,7 +60,7 @@ impl<C: Send + Sync + 'static> AiMarking for AiMarkingService<C> {
 
     fn new(config: Self::Config) -> AiMarkingServer<Self> {
         let (tx, rx) = mpsc::channel::<MarkRequest>(QUEUE_CAPACITY);
-        let client = AnthropicClient::new();
+        let client = GeminiClient::new();
 
         spawn_marking_worker(rx, client);
 
@@ -217,7 +217,7 @@ impl<C: Send + Sync + 'static> AiMarking for AiMarkingService<C> {
 // Background marking worker with pipeline prefetching
 // ---------------------------------------------------------------------------
 
-fn spawn_marking_worker(rx: mpsc::Receiver<MarkRequest>, gemini: AnthropicClient) {
+fn spawn_marking_worker(rx: mpsc::Receiver<MarkRequest>, gemini: GeminiClient) {
     tokio::spawn(async move {
         let mut rx = rx;
         let mut prefetched: Option<PreparedRequest> = None;
@@ -311,7 +311,7 @@ enum DownloadTag {
     Student(i32, usize),
 }
 
-async fn prepare(gemini: &AnthropicClient, req: MarkRequest) -> PreparedRequest {
+async fn prepare(gemini: &GeminiClient, req: MarkRequest) -> PreparedRequest {
     let start = Instant::now();
     eprintln!(
         "[AI-PREPARE] starting (school={} exam={} scheme_images={} students={})",
@@ -441,7 +441,7 @@ async fn prepare(gemini: &AnthropicClient, req: MarkRequest) -> PreparedRequest 
 
 /// Try to create a Gemini context cache with 3 retries.
 async fn create_cache_with_retry(
-    gemini: &AnthropicClient,
+    gemini: &GeminiClient,
     scheme_parts: &[serde_json::Value],
 ) -> Option<String> {
     let delays = [0u64, 2, 4];
@@ -479,7 +479,7 @@ async fn create_cache_with_retry(
 
 /// Retry a per-student marking call up to 3 times with exponential backoff.
 async fn mark_student_with_retry(
-    gemini: &AnthropicClient,
+    gemini: &GeminiClient,
     cache_name: &str,
     adm: i32,
     images: &[String],
@@ -518,7 +518,7 @@ async fn mark_student_with_retry(
 // ---------------------------------------------------------------------------
 
 async fn mark_and_write(
-    gemini: &AnthropicClient,
+    gemini: &GeminiClient,
     prepared: PreparedRequest,
 ) -> std::result::Result<usize, Box<dyn std::error::Error + Send + Sync>> {
     let task_start = Instant::now();
