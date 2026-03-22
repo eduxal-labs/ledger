@@ -59,8 +59,10 @@ struct BreakdownEntry {
 }
 
 /// Local context cache: stores scheme parts keyed by a UUID string.
-/// Anthropic does not have server-side context caching like Gemini,
-/// so we emulate it with an in-process store.
+/// We store scheme_parts in-process so we can include them in every request.
+/// Anthropic's server-side prompt caching kicks in automatically via
+/// `cache_control` breakpoints on the system instruction and last scheme image,
+/// giving us a ~5 min KV-cache hit window for repeated requests with the same prefix.
 static CACHE: std::sync::LazyLock<tokio::sync::RwLock<HashMap<String, Vec<serde_json::Value>>>> =
     std::sync::LazyLock::new(|| tokio::sync::RwLock::new(HashMap::new()));
 
@@ -202,14 +204,28 @@ impl AnthropicClient {
             tracing::debug!(index = i, "anthropic: downloading scheme image");
             let b64 = self.download_b64(url).await?;
             tracing::debug!(index = i, "anthropic: scheme image downloaded");
-            parts.push(serde_json::json!({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": "image/jpeg",
-                    "data": b64
-                }
-            }));
+            if i == scheme_urls.len() - 1 {
+                // Last scheme image: add cache_control breakpoint so Anthropic
+                // caches everything up to and including this block server-side.
+                parts.push(serde_json::json!({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": b64
+                    },
+                    "cache_control": {"type": "ephemeral"}
+                }));
+            } else {
+                parts.push(serde_json::json!({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": b64
+                    }
+                }));
+            }
         }
 
         Ok(parts)
@@ -277,15 +293,18 @@ Return ONLY valid JSON with exactly one result entry for this student:
         );
         content_blocks.push(serde_json::json!({ "type": "text", "text": final_instruction }));
 
-        // 4. Build request body — extended thinking enabled, NO temperature
+        // 4. Build request body — temperature 0 for deterministic marking
         let body = serde_json::json!({
             "model": MODEL,
             "max_tokens": 16384,
-            "system": SYSTEM_INSTRUCTION,
-            "thinking": {
-                "type": "enabled",
-                "budget_tokens": 10000
-            },
+            "temperature": 0,
+            "system": [
+                {
+                    "type": "text",
+                    "text": SYSTEM_INSTRUCTION,
+                    "cache_control": {"type": "ephemeral"}
+                }
+            ],
             "messages": [
                 {
                     "role": "user",
@@ -569,8 +588,11 @@ Return ONLY valid JSON with exactly one result entry for this student:
     }
 
     /// Create a local context cache containing scheme parts.
-    /// Anthropic does not have server-side context caching like Gemini,
-    /// so we store the scheme_parts in an in-process HashMap keyed by UUID.
+    /// The scheme_parts are stored in an in-process HashMap so they can be
+    /// included in every per-student request. Anthropic's server-side prompt
+    /// caching is triggered automatically by `cache_control` breakpoints that
+    /// `build_scheme_parts` places on the last scheme image block — identical
+    /// prefixes across requests hit the server KV cache (~5 min TTL).
     /// Returns a cache ID string.
     pub async fn create_context_cache(
         &self,
@@ -602,6 +624,8 @@ Return ONLY valid JSON with exactly one result entry for this student:
     }
 
     /// Delete a local context cache (remove from the in-process HashMap).
+    /// Anthropic's server-side prompt cache expires automatically (~5 min TTL),
+    /// so this only cleans up the local in-process storage.
     pub async fn delete_context_cache(&self, cache_name: &str) {
         eprintln!("[ANTHROPIC] deleting local context cache: {}", cache_name);
         tracing::info!(cache_name = %cache_name, "anthropic: deleting local context cache");
@@ -681,15 +705,21 @@ Return ONLY valid JSON with exactly one result entry for this student:
         );
         content_blocks.push(serde_json::json!({ "type": "text", "text": final_instruction }));
 
-        // 4. Build request body — extended thinking enabled, NO temperature
+        // 4. Build request body — temperature 0 for deterministic marking
+        //    System instruction has cache_control so it's cached server-side.
+        //    Scheme parts (from local cache) already have cache_control on the
+        //    last image block, so the entire prefix is cached by Anthropic.
         let body = serde_json::json!({
             "model": MODEL,
             "max_tokens": 16384,
-            "system": SYSTEM_INSTRUCTION,
-            "thinking": {
-                "type": "enabled",
-                "budget_tokens": 10000
-            },
+            "temperature": 0,
+            "system": [
+                {
+                    "type": "text",
+                    "text": SYSTEM_INSTRUCTION,
+                    "cache_control": {"type": "ephemeral"}
+                }
+            ],
             "messages": [
                 {
                     "role": "user",
