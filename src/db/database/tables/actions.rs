@@ -2365,13 +2365,16 @@ fn handle_mark_attendance(conn: &mut Conn, payload: &[u8]) -> Result<ActionResul
             "{}|{}|{}|{}|{}|{}|{}",
             p.school, p.year, p.term, p.grade, p.stream, rec.student, p.date
         );
-        let inserted = insert::insert_attendance(conn, &att_insert);
-        if inserted.is_err() {
-            // Row already exists — update instead
-            update::update_attendance(conn, &row_key, rec.status as i16)?;
-            append_log(log_user, TBL_ATTENDANCE as u8, OP_UPDATE, 0)?;
-        } else {
-            append_log(log_user, TBL_ATTENDANCE as u8, OP_INSERT, 0)?;
+        match insert::insert_attendance(conn, &att_insert) {
+            Ok(()) => {
+                append_log(log_user, TBL_ATTENDANCE as u8, OP_INSERT, 0)?;
+            }
+            Err(Error::Conflict) => {
+                // Row already exists — update instead
+                update::update_attendance(conn, &row_key, rec.status as i16)?;
+                append_log(log_user, TBL_ATTENDANCE as u8, OP_UPDATE, 0)?;
+            }
+            Err(e) => return Err(e),
         }
 
         let row = fetch_attendance(
@@ -2665,22 +2668,25 @@ fn handle_mark_grades(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
             p.paper.map(|v| v.to_string()).unwrap_or_default()
         );
         // Upsert: try insert, on conflict update
-        let inserted = insert::insert_grade(conn, &grade_insert);
-        if inserted.is_err() {
-            // Row exists — update score/total
-            let update_payload = UpdateGradePayload {
-                school: p.school.clone(),
-                exam: p.exam.clone(),
-                student: rec.student,
-                subject: p.subject,
-                paper: p.paper,
-                score: Some(rec.score),
-                total: Some(rec.total),
-            };
-            update::update_grade(conn, &row_key, &update_payload)?;
-            append_log(log_user, TBL_GRADES as u8, OP_UPDATE, 0)?;
-        } else {
-            append_log(log_user, TBL_GRADES as u8, OP_INSERT, 0)?;
+        match insert::insert_grade(conn, &grade_insert) {
+            Ok(()) => {
+                append_log(log_user, TBL_GRADES as u8, OP_INSERT, 0)?;
+            }
+            Err(Error::Conflict) => {
+                // Row exists — update score/total
+                let update_payload = UpdateGradePayload {
+                    school: p.school.clone(),
+                    exam: p.exam.clone(),
+                    student: rec.student,
+                    subject: p.subject,
+                    paper: p.paper,
+                    score: Some(rec.score),
+                    total: Some(rec.total),
+                };
+                update::update_grade(conn, &row_key, &update_payload)?;
+                append_log(log_user, TBL_GRADES as u8, OP_UPDATE, 0)?;
+            }
+            Err(e) => return Err(e),
         }
 
         let row = fetch_grade(
@@ -2773,12 +2779,15 @@ fn handle_update_mastery(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult
         topic: p.topic,
         score: p.score,
     };
-    let inserted = insert::insert_mastery(conn, &mastery_insert);
-    if inserted.is_err() {
-        update::update_mastery(conn, &row_key, &p)?;
-        append_log(log_user, TBL_MASTERY as u8, OP_UPDATE, 0)?;
-    } else {
-        append_log(log_user, TBL_MASTERY as u8, OP_INSERT, 0)?;
+    match insert::insert_mastery(conn, &mastery_insert) {
+        Ok(()) => {
+            append_log(log_user, TBL_MASTERY as u8, OP_INSERT, 0)?;
+        }
+        Err(Error::Conflict) => {
+            update::update_mastery(conn, &row_key, &p)?;
+            append_log(log_user, TBL_MASTERY as u8, OP_UPDATE, 0)?;
+        }
+        Err(e) => return Err(e),
     }
 
     let row = fetch_mastery(conn, &p.school, p.student, p.subject as i32, p.topic as i32)?;
