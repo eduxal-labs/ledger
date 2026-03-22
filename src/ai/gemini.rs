@@ -2,7 +2,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 use std::time::Instant;
 
-const MODEL: &str = "gemini-3-flash-preview";
+const MODEL: &str = "gemini-3.1-pro-preview";
 const BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta/models";
 const BASE_URL_CACHE: &str = "https://generativelanguage.googleapis.com/v1beta/cachedContents";
 
