@@ -1,0 +1,13 @@
+# Caddy reverse proxy for the Ledger gRPC server.
+#
+# Caddy automatically provisions and renews TLS certificates via Let's Encrypt.
+# gRPC requires HTTP/2. Caddy speaks HTTP/2 with TLS to clients, then proxies
+# to the backend over h2c (HTTP/2 cleartext) since TLS is terminated at Caddy.
+#
+# Prerequisites:
+#   - DNS A record for ledger.eduxal.com must point to this server's IP.
+#   - Ports 80 (ACME challenge) and 443 (HTTPS) must be open.
+
+ledger.eduxal.com {
+	reverse_proxy h2c://127.0.0.1:50051
+}

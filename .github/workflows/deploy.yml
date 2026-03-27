@@ -1,0 +1,220 @@
+# =============================================================================
+# Deploy Ledger gRPC server to VPS
+# =============================================================================
+#
+# This workflow:
+#   1. Builds the Rust release binary natively in CI (same arch as VPS).
+#   2. SCPs the binary + config files to the VPS.
+#   3. Installs/configures Caddy and a systemd service on the VPS.
+#
+# Required GitHub configuration:
+#
+#   Secrets (Settings → Secrets and variables → Actions → Secrets):
+#     SSH_PRIVATE_KEY      — Ed25519/RSA private key for VPS SSH access
+#     PASETO_PASSWORD      — Password for PASETO v4 symmetric key derivation
+#     WHATSAPP_TOKEN       — Meta WhatsApp Business API bearer token
+#     R2_ACCESS_KEY_ID     — Cloudflare R2 storage access key
+#     R2_SECRET_ACCESS_KEY — Cloudflare R2 storage secret key
+#     GEMINI_API_KEY       — Google Gemini AI API key
+#     ANTHROPIC_API_KEY    — Anthropic Claude AI API key
+#
+#   Variables (Settings → Secrets and variables → Actions → Variables):
+#     VPS_HOST      — IP address (or hostname) of the VPS
+#     VPS_USER      — SSH username on the VPS (e.g. root)
+#     R2_ACCOUNT_ID — Cloudflare account ID
+#     R2_BUCKET     — R2 bucket name
+#
+#   DNS:
+#     An A record for ledger.eduxal.com must point to VPS_HOST before the
+#     first deploy so that Caddy can obtain a TLS certificate via ACME.
+#
+#   Firewall:
+#     Ports 22, 80, and 443 (TCP + UDP for HTTP/3) must be reachable.
+#     Port 50051 should NOT be exposed — only Caddy talks to the server.
+# =============================================================================
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # -----------------------------------------------------------------------
+      # 1. Checkout
+      # -----------------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------------
+      # 2. Install Rust (stable) and protobuf compiler
+      # -----------------------------------------------------------------------
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install protobuf compiler
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler
+
+      # -----------------------------------------------------------------------
+      # 3. Cache Cargo registry + target directory across runs
+      # -----------------------------------------------------------------------
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      # -----------------------------------------------------------------------
+      # 4. Write compile-time .env from GitHub secrets / variables.
+      #    build.rs reads this file and injects every KEY=VALUE pair via
+      #    cargo:rustc-env so that env!() and macros::key!() resolve at
+      #    compile time.
+      # -----------------------------------------------------------------------
+      - name: Prepare compile-time .env
+        env:
+          PASETO_PASSWORD: ${{ secrets.PASETO_PASSWORD }}
+          WHATSAPP_TOKEN: ${{ secrets.WHATSAPP_TOKEN }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          {
+            echo "PASETO_PASSWORD=${PASETO_PASSWORD}"
+            echo "WHATSAPP_TOKEN=${WHATSAPP_TOKEN}"
+            echo "R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID}"
+            echo "R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY}"
+            echo "R2_ACCOUNT_ID=${R2_ACCOUNT_ID}"
+            echo "R2_BUCKET=${R2_BUCKET}"
+            echo "GEMINI_API_KEY=${GEMINI_API_KEY}"
+            echo "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}"
+          } > .env
+
+      # -----------------------------------------------------------------------
+      # 5. Build the release binary (x86_64-unknown-linux-gnu — matches VPS)
+      # -----------------------------------------------------------------------
+      - name: Build release binary
+        run: cargo build --release
+
+      # -----------------------------------------------------------------------
+      # 6. Set up SSH (key + known_hosts)
+      # -----------------------------------------------------------------------
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ vars.VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      # -----------------------------------------------------------------------
+      # 7. Stop the running service, upload the new binary + configs
+      # -----------------------------------------------------------------------
+      - name: Upload artifacts to VPS
+        run: |
+          SSH="ssh -i ~/.ssh/deploy_key"
+          SCP="scp -i ~/.ssh/deploy_key"
+          VPS="${{ vars.VPS_USER }}@${{ vars.VPS_HOST }}"
+
+          # Gracefully stop the service before replacing the binary
+          $SSH "$VPS" "sudo systemctl stop ledger 2>/dev/null || true"
+
+          # Upload binary and deployment configuration files
+          $SCP target/release/ledger          "$VPS":/tmp/ledger-new
+          $SCP deploy/ledger.service         "$VPS":/tmp/ledger.service
+          $SCP deploy/Caddyfile              "$VPS":/tmp/Caddyfile
+
+      # -----------------------------------------------------------------------
+      # 8. SSH into VPS: install binary, configure systemd + Caddy, start
+      # -----------------------------------------------------------------------
+      - name: Deploy on VPS
+        run: |
+          ssh -i ~/.ssh/deploy_key "${{ vars.VPS_USER }}@${{ vars.VPS_HOST }}" 'bash -s' << 'DEPLOY'
+          set -euo pipefail
+
+          # ====== Service user and data directory (first deploy) ======
+          if ! id ledger &>/dev/null; then
+            echo ">>> Creating system user 'ledger'..."
+            sudo useradd --system --no-create-home --shell /usr/sbin/nologin --home-dir /opt/ledger ledger
+          fi
+          sudo mkdir -p /opt/ledger
+          sudo chown ledger:ledger /opt/ledger
+
+          # ====== Install binary ======
+          echo ">>> Installing ledger binary..."
+          sudo mv /tmp/ledger-new /opt/ledger/ledger
+          sudo chmod 755 /opt/ledger/ledger
+          sudo chown root:root /opt/ledger/ledger
+
+          # ====== Install systemd service ======
+          echo ">>> Installing systemd unit..."
+          sudo mv /tmp/ledger.service /etc/systemd/system/ledger.service
+          sudo chmod 644 /etc/systemd/system/ledger.service
+          sudo systemctl daemon-reload
+          sudo systemctl enable ledger
+
+          # ====== Install Caddy via official apt repo (first deploy) ======
+          if ! command -v caddy &>/dev/null; then
+            echo ">>> Installing Caddy..."
+            sudo apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl
+            curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
+              | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+            curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
+              | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+            sudo apt-get update -qq
+            sudo apt-get install -y caddy
+          fi
+
+          # ====== Configure Caddy ======
+          echo ">>> Updating Caddyfile..."
+          sudo cp /tmp/Caddyfile /etc/caddy/Caddyfile
+          sudo chown root:root /etc/caddy/Caddyfile
+          sudo chmod 644 /etc/caddy/Caddyfile
+
+          # Validate the Caddyfile before applying
+          if sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile; then
+            sudo systemctl reload caddy 2>/dev/null || sudo systemctl restart caddy
+          else
+            echo "!!! Caddyfile validation failed — Caddy was NOT reloaded"
+            exit 1
+          fi
+
+          # ====== Configure firewall (idempotent) ======
+          if command -v ufw &>/dev/null; then
+            echo ">>> Configuring firewall rules..."
+            sudo ufw allow OpenSSH                        >/dev/null 2>&1 || true
+            sudo ufw allow 80/tcp comment 'HTTP - ACME'   >/dev/null 2>&1 || true
+            sudo ufw allow 443/tcp comment 'HTTPS - gRPC' >/dev/null 2>&1 || true
+            sudo ufw allow 443/udp comment 'HTTP/3 - QUIC' >/dev/null 2>&1 || true
+            echo "y" | sudo ufw enable                    >/dev/null 2>&1 || true
+          fi
+
+          # ====== Start the Ledger service ======
+          echo ">>> Starting ledger service..."
+          sudo systemctl start ledger
+
+          # ====== Health check — wait up to 5 seconds for the port ======
+          echo ">>> Waiting for ledger to listen on :50051..."
+          for i in $(seq 1 10); do
+            if ss -tlnp | grep -q ':50051'; then
+              echo ">>> ledger is UP on :50051"
+              break
+            fi
+            if [ "$i" -eq 10 ]; then
+              echo "!!! ledger did not start in time — check: journalctl -u ledger"
+              sudo journalctl -u ledger --no-pager -n 30
+              exit 1
+            fi
+            sleep 0.5
+          done
+
+          echo ""
+          echo "=============================="
+          echo "  Deploy complete!"
+          echo "=============================="
+          sudo systemctl status ledger --no-pager -l
+          DEPLOY
