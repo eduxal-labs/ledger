@@ -435,6 +435,16 @@ enum SyncFilter {
 }
 
 impl SyncFilter {
+    /// Returns the set of school IDs visible to this user.
+    /// Empty for Super (they see everything, diffing is meaningless).
+    fn school_ids(&self) -> HashSet<Id> {
+        match self {
+            Self::Super => HashSet::new(),
+            Self::System { schools, .. } => schools.clone(),
+            Self::Normal { schools, .. } => schools.clone(),
+        }
+    }
+
     /// Build a `SyncFilter` for the given user.
     ///
     /// Loads system-scoped roles (for System users) and school
@@ -734,6 +744,119 @@ async fn send_full_snapshot(
     Ok(())
 }
 
+/// Backfill all rows from every school-scoped table for a set of
+/// newly-visible schools.
+///
+/// Called from `watch_loop` when the incremental sync filter detects
+/// that the watching user has just been added to one or more schools.
+/// Because the `schools` table record (and all other pre-existing school
+/// data: settings, terms, departments, roles, etc.) has no new changelog
+/// entry, it would never be fetched through the normal `table_min_ts`
+/// path.  This function fills that gap.
+///
+/// For the `Users` table specifically, it loads the set of co-member
+/// user IDs for the new schools and sends those user rows, so the
+/// invited user can resolve other members' names and profiles.
+async fn send_school_backfill(
+    tx: &mpsc::Sender<Result<SyncDelta>>,
+    new_schools: &HashSet<Id>,
+    cursor: u64,
+) -> std::result::Result<(), ()> {
+    use crate::db::database::tables::snapshot::snapshot_table;
+
+    info!(
+        count = new_schools.len(),
+        "[SYNC] WATCH → school backfill: sending all data for {} newly-joined school(s)",
+        new_schools.len()
+    );
+
+    // Load all user IDs that are members of the newly-added schools so
+    // we can backfill their user rows too.
+    let new_member_ids: HashSet<Id> = CONN
+        .with(|cell| Load::<&HashSet<Id>, Id>::load(&mut *cell.borrow_mut(), new_schools))
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+
+    let mut rows_sent: usize = 0;
+
+    for &table_num in SNAPSHOT_TABLE_ORDER {
+        let table_enum = match LogTable::from_i32(table_num) {
+            Some(t) => t,
+            None => continue,
+        };
+
+        let rows = CONN.with(|cell| snapshot_table(&mut *cell.borrow_mut(), table_num));
+
+        let rows = match rows {
+            Ok(r) => r,
+            Err(e) => {
+                warn!(
+                    table = table_num,
+                    error = %e,
+                    "[SYNC] WATCH → school backfill: snapshot query failed, skipping table"
+                );
+                continue;
+            }
+        };
+
+        for row in &rows {
+            let should_send = match table_enum {
+                // For the Users table: send rows for co-members of the
+                // newly-added schools (so the invitee can see names/profiles).
+                LogTable::Users => row
+                    .row_key
+                    .parse::<Id>()
+                    .map(|id| new_member_ids.contains(&id))
+                    .unwrap_or(false),
+
+                // Plans, SubjectCatalog and Topics are globally visible
+                // and were already sent at cold-start — skip them here.
+                LogTable::Plans
+                | LogTable::Subscriptions
+                | LogTable::Discounts
+                | LogTable::SubjectCatalog
+                | LogTable::Topics => false,
+
+                // For every other table: send rows that belong to one of
+                // the newly-added schools.
+                _ => row
+                    .school_id
+                    .as_ref()
+                    .map(|sid| new_schools.contains(sid))
+                    .unwrap_or(false),
+            };
+
+            if !should_send {
+                continue;
+            }
+
+            let file_urls =
+                file_urls_for_delta(table_enum, OP_INSERT, &row.row_key, Some(&row.insert_data));
+
+            let delta = SyncDelta {
+                seq: cursor as i64,
+                table: table_num,
+                operation: OP_INSERT,
+                row_key: row.row_key.clone(),
+                data: Some(row.insert_data.clone()),
+                file_urls,
+            };
+
+            if tx.send(Ok(delta)).await.is_err() {
+                return Err(());
+            }
+            rows_sent += 1;
+        }
+    }
+
+    info!(
+        rows = rows_sent,
+        "[SYNC] WATCH → school backfill complete, {} rows sent", rows_sent
+    );
+    Ok(())
+}
+
 /// Long-running loop that streams `SyncDelta` messages to a client.
 ///
 /// 1. Builds a `SyncFilter` based on the user's level, roles and memberships.
@@ -878,8 +1001,30 @@ async fn watch_loop(
             .any(|r| should_rebuild_filter_record(r, user))
         {
             info!(user_id = %user.id, "[SYNC] WATCH → pre-batch filter rebuild (membership change detected)");
+            // Snapshot the schools the user could see BEFORE the rebuild.
+            let schools_before = filter.school_ids();
+
             if let Ok(f) = SyncFilter::build(user) {
                 filter = f;
+            }
+
+            // Find schools that became newly visible after the rebuild.
+            let schools_after = filter.school_ids();
+            let new_schools: HashSet<Id> =
+                schools_after.difference(&schools_before).copied().collect();
+
+            if !new_schools.is_empty() {
+                info!(
+                    user_id = %user.id,
+                    count = new_schools.len(),
+                    "[SYNC] WATCH → new school membership(s) detected, backfilling school data"
+                );
+                if send_school_backfill(tx, &new_schools, cursor)
+                    .await
+                    .is_err()
+                {
+                    return Err(());
+                }
             }
         }
 
