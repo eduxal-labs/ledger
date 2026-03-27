@@ -2,7 +2,8 @@ use serde::Deserialize;
 use std::sync::Arc;
 use std::time::Instant;
 
-const MODEL: &str = "gemini-3.1-pro-preview";
+const MODEL: &str = "gemini-3.1-flash-lite-preview";
+const FALLBACK_MODEL: &str = "gemini-2.5-flash";
 const BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta/models";
 const BASE_URL_CACHE: &str = "https://generativelanguage.googleapis.com/v1beta/cachedContents";
 
@@ -15,7 +16,7 @@ pub struct GeminiClient {
     api_key: &'static str,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct StudentScore {
     pub adm: i32,
     pub score: f64,
@@ -23,7 +24,7 @@ pub struct StudentScore {
     pub breakdown: Vec<QuestionBreakdown>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct QuestionBreakdown {
     pub question: String,
     pub awarded: f64,
@@ -83,6 +84,63 @@ struct BreakdownEntry {
 #[derive(Deserialize)]
 struct CacheCreateResponse {
     name: String,
+}
+
+// -- Batch API types --
+
+/// Status of a batch marking job
+#[derive(Debug, Clone)]
+pub enum BatchStatus {
+    Pending,
+    Running,
+    Succeeded(Vec<BatchStudentResult>),
+    Failed(String),
+    Cancelled,
+    Expired,
+}
+
+/// Result for one student within a batch
+#[derive(Debug, Clone)]
+pub enum BatchStudentResult {
+    Ok(StudentScore),
+    Err { adm_key: String, error: String },
+}
+
+#[derive(Deserialize)]
+struct BatchCreateResponse {
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct BatchStatusResponse {
+    #[allow(dead_code)]
+    done: Option<bool>,
+    metadata: Option<BatchMetadata>,
+    response: Option<BatchResponsePayload>,
+    error: Option<BatchError>,
+}
+
+#[derive(Deserialize)]
+struct BatchMetadata {
+    state: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BatchResponsePayload {
+    inlined_responses: Option<Vec<InlinedResponse>>,
+}
+
+#[derive(Deserialize)]
+struct InlinedResponse {
+    response: Option<GeminiResponse>,
+    error: Option<BatchError>,
+    key: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct BatchError {
+    message: Option<String>,
 }
 
 const SYSTEM_INSTRUCTION: &str = r#"You are an expert national-exam marker for Kenyan secondary school examinations (KCSE and equivalent). You mark ALL subjects: Mathematics, Sciences (Biology, Chemistry, Physics), Languages (English, Kiswahili), Humanities (History, Geography, CRE, IRE, HRE), and Technical subjects (Business Studies, Agriculture, Computer Studies, Home Science).
@@ -229,6 +287,167 @@ impl GeminiClient {
         Ok(parts)
     }
 
+    /// Build the content parts for a single student's marking request.
+    /// Used by both mark_student_cached (real-time) and create_batch_job (batch).
+    fn build_student_parts(adm: i32, answer_images_b64: &[String]) -> Vec<serde_json::Value> {
+        let mut parts = Vec::with_capacity(answer_images_b64.len() + 2);
+
+        parts.push(serde_json::json!({
+            "text": format!("## STUDENT ANSWER SHEETS\n\nMark the following student's answer sheets against the marking scheme above. Apply all marking rules — especially follow-through marking.\n\n### Student ADM {}:", adm)
+        }));
+
+        for b64 in answer_images_b64 {
+            parts.push(serde_json::json!({
+                "inline_data": { "mime_type": "image/jpeg", "data": b64 }
+            }));
+        }
+
+        let final_instruction = format!(
+            r#"## FINAL INSTRUCTIONS
+
+Mark student ADM {} against the marking scheme above.
+
+Remember:
+- Apply follow-through (FT) marking: only deduct at the point of error, not at every subsequent step.
+- Accept equivalent forms unless the rubric explicitly requires a specific form.
+- Give benefit of the doubt on ambiguous handwriting.
+- The total marks must be determined from the marking scheme (sum of all mark allocations).
+
+Return ONLY valid JSON with exactly one result entry for this student:
+
+{{"results": [{{"adm": {}, "score": <marks_awarded>, "total": <total_marks_for_paper>, "breakdown": [{{"q": "<question number>", "awarded": <number>, "out_of": <number>, "note": "<one-sentence justification>"}}]}}]}}"#,
+            adm, adm
+        );
+        parts.push(serde_json::json!({ "text": final_instruction }));
+
+        parts
+    }
+
+    /// Send a generateContent request, retrying once with FALLBACK_MODEL on HTTP 503.
+    async fn send_with_fallback(
+        &self,
+        body: &serde_json::Value,
+        label: &str,
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        let request_size = body.to_string().len();
+        let url = format!(
+            "{}/{}:generateContent?key={}",
+            BASE_URL, MODEL, self.api_key
+        );
+
+        eprintln!("[GEMINI] {}: sending POST ({} bytes)", label, request_size);
+        tracing::info!(
+            model = MODEL,
+            label = %label,
+            request_body_bytes = request_size,
+            "gemini: sending POST"
+        );
+
+        let post_start = Instant::now();
+        let response = self.http.post(&url).json(body).send().await?;
+        let status = response.status();
+        let text = response.text().await?;
+
+        eprintln!(
+            "[GEMINI] {}: response HTTP {} ({} bytes) in {}ms",
+            label,
+            status.as_u16(),
+            text.len(),
+            post_start.elapsed().as_millis()
+        );
+        tracing::info!(
+            model = MODEL,
+            label = %label,
+            http_status = status.as_u16(),
+            response_bytes = text.len(),
+            elapsed_ms = post_start.elapsed().as_millis(),
+            "gemini: received response"
+        );
+
+        if status.as_u16() == 503 {
+            eprintln!(
+                "[GEMINI] {}: HTTP 503 — retrying with fallback model {}",
+                label, FALLBACK_MODEL
+            );
+            tracing::warn!(
+                label = %label,
+                fallback_model = FALLBACK_MODEL,
+                "gemini: HTTP 503 — retrying with fallback model"
+            );
+
+            let fallback_url = format!(
+                "{}/{}:generateContent?key={}",
+                BASE_URL, FALLBACK_MODEL, self.api_key
+            );
+            let fallback_start = Instant::now();
+            let response = self.http.post(&fallback_url).json(body).send().await?;
+            let status = response.status();
+            let text = response.text().await?;
+
+            eprintln!(
+                "[GEMINI] {} (fallback): response HTTP {} ({} bytes) in {}ms",
+                label,
+                status.as_u16(),
+                text.len(),
+                fallback_start.elapsed().as_millis()
+            );
+            tracing::info!(
+                model = FALLBACK_MODEL,
+                label = %label,
+                http_status = status.as_u16(),
+                response_bytes = text.len(),
+                elapsed_ms = fallback_start.elapsed().as_millis(),
+                "gemini: received fallback response"
+            );
+
+            if !status.is_success() {
+                eprintln!(
+                    "[GEMINI] {} (fallback): ERROR HTTP {} — {}",
+                    label,
+                    status.as_u16(),
+                    text
+                );
+                tracing::error!(
+                    model = FALLBACK_MODEL,
+                    label = %label,
+                    http_status = status.as_u16(),
+                    response_body = %text,
+                    "gemini: fallback API error"
+                );
+                return Err(format!(
+                    "Gemini fallback API returned status {} for {} — body: {}",
+                    status, label, text
+                )
+                .into());
+            }
+
+            return Ok(text);
+        }
+
+        if !status.is_success() {
+            eprintln!(
+                "[GEMINI] {}: ERROR HTTP {} — {}",
+                label,
+                status.as_u16(),
+                text
+            );
+            tracing::error!(
+                model = MODEL,
+                label = %label,
+                http_status = status.as_u16(),
+                response_body = %text,
+                "gemini: API error"
+            );
+            return Err(format!(
+                "Gemini API returned status {} for {} — body: {}",
+                status, label, text
+            )
+            .into());
+        }
+
+        Ok(text)
+    }
+
     /// Mark a single student against the prebuilt scheme parts.
     /// Returns a single StudentScore.
     async fn mark_single_student(
@@ -295,69 +514,13 @@ Return ONLY valid JSON with exactly one result entry for this student:
                 "responseMimeType": "application/json",
                 "temperature": 0,
                 "thinkingConfig": {
-                    "thinkingLevel": "high"
+                    "thinkingLevel": "low"
                 }
             }
         });
 
-        let request_size = body.to_string().len();
-        let url = format!(
-            "{}/{}:generateContent?key={}",
-            BASE_URL, MODEL, self.api_key
-        );
-
-        eprintln!(
-            "[GEMINI] ADM {}: sending POST ({} bytes)",
-            adm, request_size
-        );
-        tracing::info!(
-            model = MODEL,
-            adm = adm,
-            request_body_bytes = request_size,
-            "gemini: sending per-student POST"
-        );
-
-        let post_start = Instant::now();
-        let response = self.http.post(&url).json(&body).send().await?;
-        let status = response.status();
-        let text = response.text().await?;
-
-        eprintln!(
-            "[GEMINI] ADM {}: response HTTP {} ({} bytes) in {}ms",
-            adm,
-            status.as_u16(),
-            text.len(),
-            post_start.elapsed().as_millis()
-        );
-        tracing::info!(
-            model = MODEL,
-            adm = adm,
-            http_status = status.as_u16(),
-            response_bytes = text.len(),
-            elapsed_ms = post_start.elapsed().as_millis(),
-            "gemini: received per-student response"
-        );
-
-        if !status.is_success() {
-            eprintln!(
-                "[GEMINI] ADM {}: ERROR HTTP {} — {}",
-                adm,
-                status.as_u16(),
-                text
-            );
-            tracing::error!(
-                model = MODEL,
-                adm = adm,
-                http_status = status.as_u16(),
-                response_body = %text,
-                "gemini: per-student API error"
-            );
-            return Err(format!(
-                "Gemini API returned status {} for ADM {} — body: {}",
-                status, adm, text
-            )
-            .into());
-        }
+        let label = format!("ADM {}", adm);
+        let text = self.send_with_fallback(&body, &label).await?;
 
         // Parse response
         let gemini_resp: GeminiResponse = serde_json::from_str(&text).map_err(|e| {
@@ -588,7 +751,7 @@ Return ONLY valid JSON with exactly one result entry for this student:
                 "parts": [{"text": SYSTEM_INSTRUCTION}]
             },
             "contents": [{"parts": scheme_parts, "role": "user"}],
-            "ttl": "600s"
+            "ttl": "3600s"
         });
 
         let request_size = body.to_string().len();
@@ -676,37 +839,7 @@ Return ONLY valid JSON with exactly one result entry for this student:
         adm: i32,
         answer_images_b64: &[String],
     ) -> Result<StudentScore, Box<dyn std::error::Error + Send + Sync>> {
-        let mut parts = Vec::with_capacity(answer_images_b64.len() + 2);
-
-        // Student answer sheets (already base64-encoded)
-        parts.push(serde_json::json!({
-            "text": format!("## STUDENT ANSWER SHEETS\n\nMark the following student's answer sheets against the marking scheme above. Apply all marking rules — especially follow-through marking.\n\n### Student ADM {}:", adm)
-        }));
-
-        for b64 in answer_images_b64 {
-            parts.push(serde_json::json!({
-                "inline_data": { "mime_type": "image/jpeg", "data": b64 }
-            }));
-        }
-
-        // Final instruction
-        let final_instruction = format!(
-            r#"## FINAL INSTRUCTIONS
-
-Mark student ADM {} against the marking scheme above.
-
-Remember:
-- Apply follow-through (FT) marking: only deduct at the point of error, not at every subsequent step.
-- Accept equivalent forms unless the rubric explicitly requires a specific form.
-- Give benefit of the doubt on ambiguous handwriting.
-- The total marks must be determined from the marking scheme (sum of all mark allocations).
-
-Return ONLY valid JSON with exactly one result entry for this student:
-
-{{"results": [{{"adm": {}, "score": <marks_awarded>, "total": <total_marks_for_paper>, "breakdown": [{{"q": "<question number>", "awarded": <number>, "out_of": <number>, "note": "<one-sentence justification>"}}]}}]}}"#,
-            adm, adm
-        );
-        parts.push(serde_json::json!({ "text": final_instruction }));
+        let parts = Self::build_student_parts(adm, answer_images_b64);
 
         // Build request using cachedContent — no system_instruction, no scheme parts
         let body = serde_json::json!({
@@ -716,7 +849,7 @@ Return ONLY valid JSON with exactly one result entry for this student:
                 "responseMimeType": "application/json",
                 "temperature": 0,
                 "thinkingConfig": {
-                    "thinkingLevel": "high"
+                    "thinkingLevel": "low"
                 }
             }
         });
@@ -864,5 +997,340 @@ Return ONLY valid JSON with exactly one result entry for this student:
             total: entry.total,
             breakdown,
         })
+    }
+
+    /// Submit a batch marking job for multiple students.
+    /// Each student's request uses the pre-created context cache.
+    /// Returns the batch job name (e.g., "batches/123456").
+    pub async fn create_batch_job(
+        &self,
+        cache_name: &str,
+        students: &[(i32, &[String])],
+        display_name: &str,
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        let mut requests = Vec::with_capacity(students.len());
+
+        for (adm, images) in students {
+            let parts = Self::build_student_parts(*adm, images);
+            let request = serde_json::json!({
+                "request": {
+                    "cachedContent": cache_name,
+                    "contents": [{"parts": parts, "role": "user"}],
+                    "generationConfig": {
+                        "responseMimeType": "application/json",
+                        "temperature": 0,
+                        "thinkingConfig": {
+                            "thinkingLevel": "low"
+                        }
+                    }
+                },
+                "metadata": {
+                    "key": format!("adm-{}", adm)
+                }
+            });
+            requests.push(request);
+        }
+
+        let body = serde_json::json!({
+            "batch": {
+                "display_name": display_name,
+                "input_config": {
+                    "requests": {
+                        "requests": requests
+                    }
+                }
+            }
+        });
+
+        let url = format!(
+            "{}/{}:batchGenerateContent?key={}",
+            BASE_URL, MODEL, self.api_key
+        );
+
+        let request_size = body.to_string().len();
+        eprintln!(
+            "[GEMINI] creating batch job '{}' ({} students, {} bytes)",
+            display_name,
+            students.len(),
+            request_size
+        );
+        tracing::info!(
+            display_name = %display_name,
+            student_count = students.len(),
+            request_body_bytes = request_size,
+            "gemini: creating batch job"
+        );
+
+        let start = Instant::now();
+        let response = self.http.post(&url).json(&body).send().await?;
+        let status = response.status();
+        let text = response.text().await?;
+
+        eprintln!(
+            "[GEMINI] batch create response: HTTP {} ({} bytes) in {}ms",
+            status.as_u16(),
+            text.len(),
+            start.elapsed().as_millis()
+        );
+        tracing::info!(
+            http_status = status.as_u16(),
+            response_bytes = text.len(),
+            elapsed_ms = start.elapsed().as_millis(),
+            "gemini: batch create response"
+        );
+
+        if !status.is_success() {
+            eprintln!(
+                "[GEMINI] batch create FAILED: HTTP {} — {}",
+                status.as_u16(),
+                text
+            );
+            tracing::error!(
+                http_status = status.as_u16(),
+                response_body = %text,
+                "gemini: batch create failed"
+            );
+            return Err(format!(
+                "Gemini batch create returned status {} — body: {}",
+                status, text
+            )
+            .into());
+        }
+
+        let resp: BatchCreateResponse = serde_json::from_str(&text).map_err(|e| {
+            tracing::error!(
+                parse_error = %e,
+                raw_response = %text,
+                "gemini: failed to parse BatchCreateResponse"
+            );
+            e
+        })?;
+
+        eprintln!("[GEMINI] batch job created: {}", resp.name);
+        tracing::info!(batch_name = %resp.name, "gemini: batch job created");
+
+        Ok(resp.name)
+    }
+
+    /// Poll the status of a batch job. Returns the current status.
+    /// If the job succeeded, includes parsed StudentScore results.
+    pub async fn get_batch_status(
+        &self,
+        batch_name: &str,
+    ) -> Result<BatchStatus, Box<dyn std::error::Error + Send + Sync>> {
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/{}?key={}",
+            batch_name, self.api_key
+        );
+
+        let response = self.http.get(&url).send().await?;
+        let status = response.status();
+        let text = response.text().await?;
+
+        if !status.is_success() {
+            return Err(format!("Batch status check returned HTTP {} — {}", status, text).into());
+        }
+
+        let resp: BatchStatusResponse = serde_json::from_str(&text).map_err(|e| {
+            tracing::error!(
+                parse_error = %e,
+                raw_response = %text,
+                "gemini: failed to parse BatchStatusResponse"
+            );
+            e
+        })?;
+
+        let state = resp
+            .metadata
+            .as_ref()
+            .map(|m| m.state.as_str())
+            .unwrap_or("UNKNOWN");
+
+        match state {
+            "JOB_STATE_PENDING" => Ok(BatchStatus::Pending),
+            "JOB_STATE_RUNNING" => Ok(BatchStatus::Running),
+            "JOB_STATE_CANCELLED" => Ok(BatchStatus::Cancelled),
+            "JOB_STATE_EXPIRED" => Ok(BatchStatus::Expired),
+            "JOB_STATE_FAILED" => {
+                let msg = resp
+                    .error
+                    .and_then(|e| e.message)
+                    .unwrap_or_else(|| "unknown error".to_string());
+                Ok(BatchStatus::Failed(msg))
+            }
+            "JOB_STATE_SUCCEEDED" => {
+                let inlined = resp
+                    .response
+                    .and_then(|r| r.inlined_responses)
+                    .unwrap_or_default();
+
+                let mut results = Vec::with_capacity(inlined.len());
+
+                for item in inlined {
+                    let adm_key = item.key.unwrap_or_default();
+                    let adm: i32 = adm_key
+                        .strip_prefix("adm-")
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(0);
+
+                    if let Some(err) = item.error {
+                        let msg = err
+                            .message
+                            .unwrap_or_else(|| "unknown batch item error".to_string());
+                        results.push(BatchStudentResult::Err {
+                            adm_key,
+                            error: msg,
+                        });
+                        continue;
+                    }
+
+                    let gemini_resp = match item.response {
+                        Some(r) => r,
+                        None => {
+                            results.push(BatchStudentResult::Err {
+                                adm_key,
+                                error: "no response in batch item".to_string(),
+                            });
+                            continue;
+                        }
+                    };
+
+                    // Same parsing logic as mark_student_cached
+                    let result_text = match gemini_resp
+                        .candidates
+                        .first()
+                        .and_then(|c| {
+                            c.content
+                                .parts
+                                .iter()
+                                .find(|p| !p.thought && p.text.is_some())
+                        })
+                        .and_then(|p| p.text.as_ref())
+                    {
+                        Some(t) => t,
+                        None => {
+                            results.push(BatchStudentResult::Err {
+                                adm_key,
+                                error: "no text in batch response".to_string(),
+                            });
+                            continue;
+                        }
+                    };
+
+                    let marking: MarkingResult = match serde_json::from_str(result_text) {
+                        Ok(m) => m,
+                        Err(e) => {
+                            results.push(BatchStudentResult::Err {
+                                adm_key,
+                                error: format!("JSON parse error: {}", e),
+                            });
+                            continue;
+                        }
+                    };
+
+                    let entry = match marking.results.into_iter().next() {
+                        Some(e) => e,
+                        None => {
+                            results.push(BatchStudentResult::Err {
+                                adm_key,
+                                error: "empty results array".to_string(),
+                            });
+                            continue;
+                        }
+                    };
+
+                    let breakdown = entry
+                        .breakdown
+                        .into_iter()
+                        .map(|b| {
+                            let question = match b.q {
+                                serde_json::Value::String(s) => s,
+                                serde_json::Value::Number(n) => n.to_string(),
+                                other => other.to_string(),
+                            };
+                            QuestionBreakdown {
+                                question,
+                                awarded: b.awarded,
+                                out_of: b.out_of,
+                                note: b.note,
+                            }
+                        })
+                        .collect();
+
+                    results.push(BatchStudentResult::Ok(StudentScore {
+                        adm: if adm != 0 { adm } else { entry.adm },
+                        score: entry.score,
+                        total: entry.total,
+                        breakdown,
+                    }));
+                }
+
+                Ok(BatchStatus::Succeeded(results))
+            }
+            other => Ok(BatchStatus::Failed(format!(
+                "unknown batch state: {}",
+                other
+            ))),
+        }
+    }
+
+    /// Cancel an ongoing batch job (best-effort).
+    pub async fn cancel_batch_job(&self, batch_name: &str) {
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/{}:cancel?key={}",
+            batch_name, self.api_key
+        );
+
+        eprintln!("[GEMINI] cancelling batch job: {}", batch_name);
+        tracing::info!(batch_name = %batch_name, "gemini: cancelling batch job");
+
+        match self.http.post(&url).send().await {
+            Ok(resp) => {
+                eprintln!("[GEMINI] batch cancel: HTTP {}", resp.status().as_u16());
+                tracing::info!(
+                    batch_name = %batch_name,
+                    http_status = resp.status().as_u16(),
+                    "gemini: batch cancel response"
+                );
+            }
+            Err(e) => {
+                eprintln!("[GEMINI] batch cancel failed: {}", e);
+                tracing::warn!(
+                    batch_name = %batch_name,
+                    error = %e,
+                    "gemini: batch cancel failed (ignored)"
+                );
+            }
+        }
+    }
+
+    /// Delete a batch job (best-effort, fire-and-forget).
+    pub async fn delete_batch_job(&self, batch_name: &str) {
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/{}?key={}",
+            batch_name, self.api_key
+        );
+
+        eprintln!("[GEMINI] deleting batch job: {}", batch_name);
+        tracing::info!(batch_name = %batch_name, "gemini: deleting batch job");
+
+        match self.http.delete(&url).send().await {
+            Ok(resp) => {
+                eprintln!("[GEMINI] batch delete: HTTP {}", resp.status().as_u16());
+                tracing::info!(
+                    batch_name = %batch_name,
+                    http_status = resp.status().as_u16(),
+                    "gemini: batch deleted"
+                );
+            }
+            Err(e) => {
+                eprintln!("[GEMINI] batch delete failed: {}", e);
+                tracing::warn!(
+                    batch_name = %batch_name,
+                    error = %e,
+                    "gemini: batch delete failed (ignored)"
+                );
+            }
+        }
     }
 }
