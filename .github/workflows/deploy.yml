@@ -102,40 +102,37 @@ jobs:
         run: cargo build --release
 
       # -----------------------------------------------------------------------
-      # 6. Set up SSH (key + known_hosts)
+      # 6. Set up SSH (agent + known_hosts)
       # -----------------------------------------------------------------------
-      - name: Set up SSH
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-        run: |
-          mkdir -p ~/.ssh
-          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H "${{ vars.VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+      - name: Set up SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add VPS to known hosts
+        run: ssh-keyscan -H "${{ vars.VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
 
       # -----------------------------------------------------------------------
       # 7. Stop the running service, upload the new binary + configs
       # -----------------------------------------------------------------------
       - name: Upload artifacts to VPS
         run: |
-          SSH="ssh -i ~/.ssh/deploy_key"
-          SCP="scp -i ~/.ssh/deploy_key"
           VPS="${{ vars.VPS_USER }}@${{ vars.VPS_HOST }}"
 
           # Gracefully stop the service before replacing the binary
-          $SSH "$VPS" "sudo systemctl stop ledger 2>/dev/null || true"
+          ssh "$VPS" "sudo systemctl stop ledger 2>/dev/null || true"
 
           # Upload binary and deployment configuration files
-          $SCP target/release/ledger          "$VPS":/tmp/ledger-new
-          $SCP deploy/ledger.service         "$VPS":/tmp/ledger.service
-          $SCP deploy/Caddyfile              "$VPS":/tmp/Caddyfile
+          scp target/release/ledger         "$VPS":/tmp/ledger-new
+          scp deploy/ledger.service         "$VPS":/tmp/ledger.service
+          scp deploy/Caddyfile              "$VPS":/tmp/Caddyfile
 
       # -----------------------------------------------------------------------
       # 8. SSH into VPS: install binary, configure systemd + Caddy, start
       # -----------------------------------------------------------------------
       - name: Deploy on VPS
         run: |
-          ssh -i ~/.ssh/deploy_key "${{ vars.VPS_USER }}@${{ vars.VPS_HOST }}" 'bash -s' << 'DEPLOY'
+          ssh "${{ vars.VPS_USER }}@${{ vars.VPS_HOST }}" 'bash -s' << 'DEPLOY'
           set -euo pipefail
 
           # ====== Service user and data directory (first deploy) ======
