@@ -514,6 +514,232 @@ async fn mark_student_with_retry(
 }
 
 // ---------------------------------------------------------------------------
+// Stage B helpers: real-time concurrent marking + batch API
+// ---------------------------------------------------------------------------
+
+/// Mark students concurrently using the real-time cached API with bounded concurrency.
+async fn mark_students_realtime(
+    gemini: &GeminiClient,
+    cache_name: &str,
+    student_images: &[(i32, Vec<String>)],
+) -> (Vec<crate::ai::gemini::StudentScore>, Vec<i32>) {
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT));
+    let mut handles = Vec::with_capacity(student_images.len());
+
+    for (adm, images) in student_images {
+        let client = gemini.clone();
+        let sem = Arc::clone(&semaphore);
+        let adm = *adm;
+        let images = images.clone();
+        let cn = cache_name.to_string();
+
+        let handle = tokio::spawn(async move {
+            let _permit = sem.acquire().await.expect("semaphore closed");
+            mark_student_with_retry(&client, &cn, adm, &images).await
+        });
+        handles.push((adm, handle));
+    }
+
+    let mut scores = Vec::with_capacity(student_images.len());
+    let mut failed_adms = Vec::new();
+
+    for (adm, handle) in handles {
+        match handle.await {
+            Ok(Ok(score)) => scores.push(score),
+            Ok(Err(e)) => {
+                eprintln!("[AI-MARK] ADM {} failed after retries: {}", adm, e);
+                tracing::error!(adm = adm, error = %e, "ai_mark: student failed after retries");
+                failed_adms.push(adm);
+            }
+            Err(e) => {
+                eprintln!("[AI-MARK] ADM {} task panicked: {}", adm, e);
+                tracing::error!(adm = adm, error = %e, "ai_mark: student task panicked");
+                failed_adms.push(adm);
+            }
+        }
+    }
+
+    (scores, failed_adms)
+}
+
+/// Mark students using the Batch API with polling, falling back to real-time on failure.
+async fn mark_batch_with_fallback(
+    gemini: &GeminiClient,
+    cache_name: &str,
+    student_images: &[(i32, Vec<String>)],
+    school: &str,
+    exam: &str,
+) -> Vec<crate::ai::gemini::StudentScore> {
+    let display_name = format!("marking-{}-{}", school, exam);
+
+    // Convert student_images to the format expected by create_batch_job
+    let students_ref: Vec<(i32, &[String])> = student_images
+        .iter()
+        .map(|(adm, imgs)| (*adm, imgs.as_slice()))
+        .collect();
+
+    let batch_name = match gemini
+        .create_batch_job(cache_name, &students_ref, &display_name)
+        .await
+    {
+        Ok(name) => name,
+        Err(e) => {
+            eprintln!(
+                "[AI-BATCH] batch creation failed: {} — will use real-time fallback",
+                e
+            );
+            tracing::warn!(
+                error = %e,
+                "ai_batch: batch creation failed — falling back to real-time"
+            );
+            return Vec::new();
+        }
+    };
+
+    eprintln!(
+        "[AI-BATCH] batch job created: {} — polling every 15s (max 30min)",
+        batch_name
+    );
+    tracing::info!(
+        batch_name = %batch_name,
+        "ai_batch: polling started"
+    );
+
+    let mut scores = Vec::new();
+    let max_polls: usize = 120; // 120 × 15s = 30 minutes
+
+    for poll in 0..max_polls {
+        tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+
+        match gemini.get_batch_status(&batch_name).await {
+            Ok(status) => {
+                use crate::ai::gemini::{BatchStatus, BatchStudentResult};
+                match status {
+                    BatchStatus::Pending => {
+                        if poll % 4 == 0 {
+                            eprintln!(
+                                "[AI-BATCH] {} still pending (poll {})",
+                                batch_name,
+                                poll + 1
+                            );
+                            tracing::info!(
+                                batch_name = %batch_name,
+                                poll = poll + 1,
+                                "ai_batch: still pending"
+                            );
+                        }
+                    }
+                    BatchStatus::Running => {
+                        if poll % 4 == 0 {
+                            eprintln!("[AI-BATCH] {} running (poll {})", batch_name, poll + 1);
+                            tracing::info!(
+                                batch_name = %batch_name,
+                                poll = poll + 1,
+                                "ai_batch: running"
+                            );
+                        }
+                    }
+                    BatchStatus::Succeeded(results) => {
+                        let mut ok_count = 0usize;
+                        let mut err_count = 0usize;
+                        for result in results {
+                            match result {
+                                BatchStudentResult::Ok(score) => {
+                                    eprintln!(
+                                        "[AI-BATCH] ADM {} — score: {}/{}",
+                                        score.adm, score.score, score.total
+                                    );
+                                    tracing::info!(
+                                        adm = score.adm,
+                                        score = score.score,
+                                        total = score.total,
+                                        "ai_batch: student scored"
+                                    );
+                                    scores.push(score);
+                                    ok_count += 1;
+                                }
+                                BatchStudentResult::Err { adm_key, error } => {
+                                    eprintln!("[AI-BATCH] {} failed: {}", adm_key, error);
+                                    tracing::warn!(
+                                        adm_key = %adm_key,
+                                        error = %error,
+                                        "ai_batch: student failed in batch"
+                                    );
+                                    err_count += 1;
+                                }
+                            }
+                        }
+                        eprintln!(
+                            "[AI-BATCH] batch succeeded: {} ok, {} errors",
+                            ok_count, err_count
+                        );
+                        tracing::info!(
+                            ok_count = ok_count,
+                            err_count = err_count,
+                            "ai_batch: batch completed"
+                        );
+                        break;
+                    }
+                    BatchStatus::Failed(msg) => {
+                        eprintln!("[AI-BATCH] batch FAILED: {}", msg);
+                        tracing::error!(
+                            batch_name = %batch_name,
+                            error = %msg,
+                            "ai_batch: batch failed"
+                        );
+                        break;
+                    }
+                    BatchStatus::Cancelled => {
+                        eprintln!("[AI-BATCH] batch was cancelled");
+                        tracing::warn!(
+                            batch_name = %batch_name,
+                            "ai_batch: batch cancelled"
+                        );
+                        break;
+                    }
+                    BatchStatus::Expired => {
+                        eprintln!("[AI-BATCH] batch expired");
+                        tracing::warn!(
+                            batch_name = %batch_name,
+                            "ai_batch: batch expired"
+                        );
+                        break;
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("[AI-BATCH] status poll failed: {}", e);
+                tracing::warn!(
+                    batch_name = %batch_name,
+                    error = %e,
+                    poll = poll + 1,
+                    "ai_batch: poll failed — continuing"
+                );
+                // Don't break on transient poll failures, just continue
+            }
+        }
+    }
+
+    if scores.is_empty() {
+        eprintln!("[AI-BATCH] batch timed out or failed — cancelling");
+        tracing::warn!(
+            batch_name = %batch_name,
+            "ai_batch: timed out — cancelling"
+        );
+        gemini.cancel_batch_job(&batch_name).await;
+    }
+
+    // Clean up: delete batch job (fire-and-forget)
+    let gemini_cleanup = gemini.clone();
+    let bn = batch_name.clone();
+    tokio::spawn(async move {
+        gemini_cleanup.delete_batch_job(&bn).await;
+    });
+
+    scores
+}
+
+// ---------------------------------------------------------------------------
 // Stage B: Mark all students + write grades to DB
 // ---------------------------------------------------------------------------
 
@@ -573,43 +799,38 @@ async fn mark_and_write(
 
     let cache_name_str = cache_name.unwrap(); // safe — checked above
 
-    // Mark all students concurrently with bounded concurrency
-    let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT));
-    let mut handles = Vec::with_capacity(student_count);
+    // Determine scoring strategy based on student count
+    let (scores, failed_adms) = if student_count > 1 {
+        // Multiple students — try batch API first (50% cost saving)
+        eprintln!("[AI-MARK] {} students — trying batch API", student_count);
+        tracing::info!(
+            student_count = student_count,
+            "ai_mark: using batch API for multi-student marking"
+        );
 
-    for (adm, images) in &prepared.student_images {
-        let client = gemini.clone();
-        let sem = Arc::clone(&semaphore);
-        let adm = *adm;
-        let images = images.clone();
-        let cn = cache_name_str.to_string();
+        let batch_scores = mark_batch_with_fallback(
+            gemini,
+            cache_name_str,
+            &prepared.student_images,
+            school,
+            exam,
+        )
+        .await;
 
-        let handle = tokio::spawn(async move {
-            let _permit = sem.acquire().await.expect("semaphore closed");
-            mark_student_with_retry(&client, &cn, adm, &images).await
-        });
-        handles.push((adm, handle));
-    }
-
-    // Collect results
-    let mut scores = Vec::with_capacity(student_count);
-    let mut failed_adms = Vec::new();
-
-    for (adm, handle) in handles {
-        match handle.await {
-            Ok(Ok(score)) => scores.push(score),
-            Ok(Err(e)) => {
-                eprintln!("[AI-MARK] ADM {} failed after retries: {}", adm, e);
-                tracing::error!(adm = adm, error = %e, "ai_mark: student failed after retries");
-                failed_adms.push(adm);
-            }
-            Err(e) => {
-                eprintln!("[AI-MARK] ADM {} task panicked: {}", adm, e);
-                tracing::error!(adm = adm, error = %e, "ai_mark: student task panicked");
-                failed_adms.push(adm);
-            }
+        if !batch_scores.is_empty() {
+            (batch_scores, Vec::new())
+        } else {
+            // Batch failed — fall back to real-time concurrent marking
+            eprintln!(
+                "[AI-MARK] batch returned no scores — falling back to real-time concurrent marking"
+            );
+            tracing::warn!("ai_mark: batch failed — falling back to real-time");
+            mark_students_realtime(gemini, cache_name_str, &prepared.student_images).await
         }
-    }
+    } else {
+        // Single student — use real-time path directly
+        mark_students_realtime(gemini, cache_name_str, &prepared.student_images).await
+    };
 
     if !failed_adms.is_empty() {
         eprintln!(
