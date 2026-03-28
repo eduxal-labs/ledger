@@ -284,8 +284,9 @@ impl<C: Config + Send + ::std::marker::Sync + 'static> Sync for SyncService<C> {
         let notify = self.config.change_notifier().clone();
 
         tokio::spawn(async move {
-            let result = watch_loop(&tx, &user, last_cursor, &notify).await;
-            info!(user_id = %user.id, success = result.is_ok(), "[SYNC] WatchChanges stream closed");
+            let user_id = user.id;
+            let result = watch_loop(&tx, user, last_cursor, &notify).await;
+            info!(user_id = %user_id, success = result.is_ok(), "[SYNC] WatchChanges stream closed");
             if result.is_err() {
                 // Stream ended or send failed — task exits naturally
             }
@@ -857,6 +858,91 @@ async fn send_school_backfill(
     Ok(())
 }
 
+/// Send a full data snapshot to a user whose access level was upgraded while
+/// their watch stream was already open.
+///
+/// Functionally identical to `send_full_snapshot` but stamps every delta with
+/// `seq = cursor` (the current changelog byte-offset) instead of 0.  This
+/// prevents the client's stored cursor from regressing when an admin promotes
+/// a connected user mid-session — whether the user was online at the time of
+/// the upgrade or reconnects later with a stale cursor from before the upgrade.
+///
+/// Called before the corresponding bookmark so the client atomically receives
+/// all newly-visible data and then persists the updated cursor.
+async fn send_level_upgrade_backfill(
+    tx: &mpsc::Sender<Result<SyncDelta>>,
+    filter: &SyncFilter,
+    cursor: u64,
+) -> std::result::Result<(), ()> {
+    use crate::db::database::tables::snapshot::snapshot_table;
+
+    info!(
+        cursor = cursor,
+        "[SYNC] WATCH → level upgrade backfill: sending full snapshot at cursor={}", cursor
+    );
+
+    let mut rows_sent: usize = 0;
+
+    for &table_num in SNAPSHOT_TABLE_ORDER {
+        let table_enum = match LogTable::from_i32(table_num) {
+            Some(t) => t,
+            None => continue,
+        };
+
+        if !filter.table_visible(table_enum) {
+            continue;
+        }
+
+        let rows = CONN.with(|cell| snapshot_table(&mut *cell.borrow_mut(), table_num));
+
+        let rows = match rows {
+            Ok(r) => r,
+            Err(e) => {
+                warn!(
+                    table = table_num,
+                    error = %e,
+                    "[SYNC] WATCH → level upgrade backfill: snapshot query failed, skipping table"
+                );
+                continue;
+            }
+        };
+
+        for row in &rows {
+            if !filter.row_visible(table_enum, &row.row_key, row.school_id.as_ref()) {
+                continue;
+            }
+
+            let file_urls =
+                file_urls_for_delta(table_enum, OP_INSERT, &row.row_key, Some(&row.insert_data));
+
+            let delta = SyncDelta {
+                seq: cursor as i64,
+                table: table_num,
+                operation: OP_INSERT,
+                row_key: row.row_key.clone(),
+                data: Some(row.insert_data.clone()),
+                file_urls,
+            };
+
+            if tx.send(Ok(delta)).await.is_err() {
+                return Err(());
+            }
+
+            rows_sent += 1;
+            // Yield periodically to avoid starving other tasks
+            if rows_sent % 200 == 0 {
+                tokio::task::yield_now().await;
+            }
+        }
+    }
+
+    info!(
+        rows = rows_sent,
+        "[SYNC] WATCH → level upgrade backfill complete, {} rows sent", rows_sent
+    );
+    Ok(())
+}
+
 /// Long-running loop that streams `SyncDelta` messages to a client.
 ///
 /// 1. Builds a `SyncFilter` based on the user's level, roles and memberships.
@@ -871,14 +957,16 @@ async fn send_school_backfill(
 /// error as a signal to stop.
 async fn watch_loop(
     tx: &mpsc::Sender<Result<SyncDelta>>,
-    user: &User,
+    user: User,
     last_cursor: i64,
     notify: &tokio::sync::Notify,
 ) -> std::result::Result<(), ()> {
     use crate::db::database::tables::snapshot::snapshot_table_since;
 
+    let mut current_user = user;
+
     // Build the filter at stream open.
-    let mut filter = match SyncFilter::build(user) {
+    let mut filter = match SyncFilter::build(&current_user) {
         Ok(f) => f,
         Err(e) => {
             let _ = tx.send(Err(e)).await;
@@ -903,7 +991,7 @@ async fn watch_loop(
     let cursor_valid = cursor % 24 == 0 && cursor <= changelog_len;
     if !cursor_valid && cursor != 0 {
         warn!(
-            user_id = %user.id,
+            user_id = %current_user.id,
             cursor = cursor,
             changelog_len = changelog_len,
             "[SYNC] WATCH → invalid cursor (misaligned or ahead), falling back to full snapshot"
@@ -918,7 +1006,7 @@ async fn watch_loop(
 
     // --- Initial sync: if cursor == 0, dump all tables ---
     if cursor == 0 {
-        info!(user_id = %user.id, "[SYNC] WATCH → cold start (cursor=0), sending full snapshot");
+        info!(user_id = %current_user.id, "[SYNC] WATCH → cold start (cursor=0), sending full snapshot");
         if send_full_snapshot(tx, &filter).await.is_err() {
             return Err(());
         }
@@ -926,7 +1014,7 @@ async fn watch_loop(
         // don't re-send entries that were created while we were snapshotting.
         cursor = LOG.with(|cell| cell.borrow().len().unwrap_or(0));
         delete_cursor = LOG.with(|cell| cell.borrow().delete_cursor().unwrap_or(0));
-        info!(user_id = %user.id, cursor = cursor, delete_cursor = delete_cursor, "[SYNC] WATCH → snapshot done, cursor={}, delete_cursor={}", cursor, delete_cursor);
+        info!(user_id = %current_user.id, cursor = cursor, delete_cursor = delete_cursor, "[SYNC] WATCH → snapshot done, cursor={}, delete_cursor={}", cursor, delete_cursor);
 
         // Send a bookmark delta so the client learns the cursor position
         // after the full snapshot.  table=0 signals "no data, just a cursor
@@ -943,7 +1031,7 @@ async fn watch_loop(
         if tx.send(Ok(bookmark)).await.is_err() {
             return Err(());
         }
-        info!(user_id = %user.id, seq = cursor, "[SYNC] WATCH → sent snapshot bookmark seq={}", cursor);
+        info!(user_id = %current_user.id, seq = cursor, "[SYNC] WATCH → sent snapshot bookmark seq={}", cursor);
     }
 
     // --- Incremental sync loop ---
@@ -970,7 +1058,7 @@ async fn watch_loop(
         if records.is_empty() && delete_records.is_empty() {
             tokio::select! {
                 _ = notify.notified() => {
-                    info!(user_id = %user.id, "[SYNC] WATCH → woke up via notify");
+                    info!(user_id = %current_user.id, "[SYNC] WATCH → woke up via notify");
                 },
                 _ = tokio::time::sleep(POLL_INTERVAL) => {},
             }
@@ -978,7 +1066,7 @@ async fn watch_loop(
         }
 
         info!(
-            user_id = %user.id,
+            user_id = %current_user.id,
             changelog_records = records.len(),
             delete_records = delete_records.len(),
             cursor = cursor,
@@ -989,41 +1077,108 @@ async fn watch_loop(
         cursor += (records.len() as u64) * 24;
         delete_cursor = new_delete_cursor;
 
-        // If any record in this batch touches a membership/scope table,
-        // rebuild the filter NOW — before populating table_min_ts — so
-        // that tables which become visible in this very batch (e.g.
-        // Schools and Owners when the user is just added to a school) are
-        // captured in the data fetch below.  Rebuilding after the scan
-        // (the old behaviour) was too late: the cursor had already
-        // advanced past those records and they would never be retried.
-        if records
-            .iter()
-            .any(|r| should_rebuild_filter_record(r, user))
+        // ── Level upgrade detection ───────────────────────────────────────────
+        // If any record in this batch is a Users table Insert/Update, re-fetch
+        // the watching user's own row to detect a level promotion.  A level
+        // promotion means the user now has access to significantly more data;
+        // we handle this by sending a full snapshot with the new filter so they
+        // receive all newly-visible rows without requiring a reconnect.  This
+        // also covers the offline-reconnect case: if the user was promoted while
+        // disconnected and reconnects with a stale cursor, the changelog record
+        // for the users table update is processed here in the incremental loop.
+        let level_upgraded = if records.iter().any(|r| {
+            LogTable::from_i32(r.table as i32) == Some(LogTable::Users) && r.op != OP_DELETE as u8
+        }) {
+            match CONN.find::<Id, User>(current_user.id) {
+                Ok(Some(refreshed)) if refreshed.level > current_user.level => {
+                    info!(
+                        user_id = %current_user.id,
+                        old_level = ?current_user.level,
+                        new_level = ?refreshed.level,
+                        "[SYNC] WATCH → user level upgraded from {:?} to {:?}, triggering full backfill",
+                        current_user.level, refreshed.level
+                    );
+                    current_user = refreshed;
+                    true
+                }
+                Ok(Some(refreshed)) => {
+                    // Level unchanged or lowered — update cached profile anyway.
+                    current_user = refreshed;
+                    false
+                }
+                _ => false,
+            }
+        } else {
+            false
+        };
+
+        // If any record in this batch touches a membership/scope table OR the
+        // user's own level was upgraded, rebuild the filter NOW — before
+        // populating table_min_ts — so that tables which become visible in this
+        // very batch (e.g. Schools and Owners when the user is just added to a
+        // school, or all tables when the user is promoted to System/Super) are
+        // captured in the data fetch below.
+        if level_upgraded
+            || records
+                .iter()
+                .any(|r| should_rebuild_filter_record(r, &current_user))
         {
-            info!(user_id = %user.id, "[SYNC] WATCH → pre-batch filter rebuild (membership change detected)");
-            // Snapshot the schools the user could see BEFORE the rebuild.
+            info!(
+                user_id = %current_user.id,
+                "[SYNC] WATCH → pre-batch filter rebuild ({})",
+                if level_upgraded { "level upgrade" } else { "membership change" }
+            );
             let schools_before = filter.school_ids();
 
-            if let Ok(f) = SyncFilter::build(user) {
+            if let Ok(f) = SyncFilter::build(&current_user) {
                 filter = f;
             }
 
-            // Find schools that became newly visible after the rebuild.
-            let schools_after = filter.school_ids();
-            let new_schools: HashSet<Id> =
-                schools_after.difference(&schools_before).copied().collect();
-
-            if !new_schools.is_empty() {
-                info!(
-                    user_id = %user.id,
-                    count = new_schools.len(),
-                    "[SYNC] WATCH → new school membership(s) detected, backfilling school data"
-                );
-                if send_school_backfill(tx, &new_schools, cursor)
+            if level_upgraded {
+                // Level went up — push a full snapshot under the new filter.
+                // Using the current cursor as seq so the client's stored cursor
+                // does not regress mid-session.
+                if send_level_upgrade_backfill(tx, &filter, cursor)
                     .await
                     .is_err()
                 {
                     return Err(());
+                }
+                // Bookmark so the client persists the cursor after the backfill.
+                let bookmark = SyncDelta {
+                    seq: cursor as i64,
+                    table: 0,
+                    operation: OP_INSERT,
+                    row_key: String::new(),
+                    data: None,
+                    file_urls: vec![],
+                };
+                if tx.send(Ok(bookmark)).await.is_err() {
+                    return Err(());
+                }
+                info!(
+                    user_id = %current_user.id,
+                    cursor = cursor,
+                    "[SYNC] WATCH → level upgrade backfill complete, bookmark sent seq={}", cursor
+                );
+            } else {
+                // Membership-only change: backfill newly-joined schools.
+                let schools_after = filter.school_ids();
+                let new_schools: HashSet<Id> =
+                    schools_after.difference(&schools_before).copied().collect();
+
+                if !new_schools.is_empty() {
+                    info!(
+                        user_id = %current_user.id,
+                        count = new_schools.len(),
+                        "[SYNC] WATCH → new school membership(s) detected, backfilling school data"
+                    );
+                    if send_school_backfill(tx, &new_schools, cursor)
+                        .await
+                        .is_err()
+                    {
+                        return Err(());
+                    }
                 }
             }
         }
@@ -1059,7 +1214,7 @@ async fn watch_loop(
             let tbl_dbg = LogTable::from_i32(table_num as i32)
                 .map(|t| format!("{t:?}"))
                 .unwrap_or_else(|| format!("Unknown({table_num})"));
-            info!(user_id = %user.id, table = %tbl_dbg, min_ts = min_ts, "[SYNC] WATCH → fetching changed rows for {:?} since ts={}", tbl_dbg, min_ts);
+            info!(user_id = %current_user.id, table = %tbl_dbg, min_ts = min_ts, "[SYNC] WATCH → fetching changed rows for {:?} since ts={}", tbl_dbg, min_ts);
             let table_enum = match LogTable::from_i32(table_num as i32) {
                 Some(t) => t,
                 None => continue,
@@ -1099,7 +1254,7 @@ async fn watch_loop(
                 };
 
                 info!(
-                    user_id = %user.id,
+                    user_id = %current_user.id,
                     table = table_num,
                     row_key = %row.row_key,
                     seq = cursor,
@@ -1145,7 +1300,7 @@ async fn watch_loop(
                 .map(|t| format!("{t:?}"))
                 .unwrap_or_else(|| format!("Unknown({})", delete.table));
             info!(
-                user_id = %user.id,
+                user_id = %current_user.id,
                 table = %tbl_dbg,
                 row_key = %delete.key,
                 "[SYNC] WATCH → sending delete delta table={} key={}",
