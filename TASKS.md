@@ -209,7 +209,7 @@ fn handle_create_student(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult
 
 ---
 
-### Task 3: Rewrite `handle_update_student` with phone resolution and unlink logic
+### Task 3: Rewrite `handle_update_student` with phone resolution and unlink logic ✅
 
 **Files to modify:** `src/db/database/tables/actions.rs`
 **Reference files to read:** `src/db/database/tables/actions.rs` (the current `handle_update_student` at L1769–1811; `update::update_student` in `src/db/database/tables/update.rs` at L74–105; `delete::delete_user` in `src/db/database/tables/delete.rs` at L19–24; helpers from Task 1)
@@ -373,7 +373,7 @@ fn handle_update_student(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult
 - `diesel::sql_types::Integer` — already imported at the file level
 
 **Update after completion:**
-- [ ] `handle_update_student` rewritten with phone resolution + unlink + orphan cleanup
-- [ ] `cargo build` succeeds
-- [ ] Mark this task `[x]`
+- [x] `handle_update_student` rewritten with phone resolution + unlink + orphan cleanup
+- [x] `cargo build` succeeds
+- [x] Mark this task `[x]`
 - [ ] Orchestrator: git commit `feat: handle_update_student resolves phone, supports unlink with orphan cleanup`

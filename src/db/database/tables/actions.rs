@@ -1853,27 +1853,97 @@ fn handle_create_student(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult
 
 fn handle_update_student(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
     use crate::config::storage::sign;
+    use crate::types::phone::Phone;
     use chrono::Utc;
+    use std::str::FromStr;
 
-    let p: UpdateStudentPayload = decode(payload)?;
+    let mut p: UpdateStudentPayload = decode(payload)?;
     let log_user = Id::system();
     let row_key = format!("{}|{}", p.school, p.adm);
 
+    let mut rows = Vec::new();
+
+    // Track whether we need to unlink and the old user ID for orphan check.
+    let mut unlink = false;
+    let mut old_user_id: Option<String> = None;
+
+    // --- Phase 1: Resolve the user field ---
+    if let Some(ref value) = p.user {
+        match Phone::from_str(value) {
+            Ok(phone) => {
+                // Valid phone → resolve to user ID (link or relink).
+                let old_student = fetch_student(conn, &p.school, p.adm)?;
+                old_user_id = old_student.user.clone();
+
+                let name = p.name.as_deref().unwrap_or(&old_student.name);
+
+                let (user_row, was_created) =
+                    resolve_phone_to_user(conn, &phone.to_string(), name)?;
+                if was_created {
+                    append_log(log_user, TBL_USERS as u8, OP_INSERT, 0)?;
+                }
+
+                let new_user_id = user_row.id.clone();
+                rows.push(upsert_row(
+                    TBL_USERS,
+                    user_row.row_key(),
+                    InsertData {
+                        row: Some(insert_data::Row::User((&user_row).into())),
+                    },
+                ));
+
+                // Set the resolved ID so update_student writes it via COALESCE.
+                p.user = Some(new_user_id.clone());
+
+                // If the old user was different, we may need to clean it up.
+                if old_user_id.as_deref() == Some(&new_user_id) {
+                    old_user_id = None; // Same user, no orphan check needed.
+                }
+            }
+            Err(_) => {
+                // Invalid phone (including "-") → unlink.
+                let old_student = fetch_student(conn, &p.school, p.adm)?;
+                old_user_id = old_student.user.clone();
+                unlink = true;
+                p.user = None; // Don't let COALESCE touch user; we handle it below.
+            }
+        }
+    }
+
+    // --- Phase 2: Run the standard update (handles all other fields) ---
     update::update_student(conn, &row_key, &p)?;
+
+    // --- Phase 3: Explicit NULL for unlink (COALESCE can't do this) ---
+    if unlink {
+        sql_query("UPDATE students SET user = NULL WHERE school = ? AND adm = ?")
+            .bind::<Text, _>(&p.school)
+            .bind::<diesel::sql_types::Integer, _>(p.adm)
+            .execute(conn)
+            .map_err(|e| {
+                tracing::error!("clear student user link failed: {e}");
+                Error::Internal
+            })?;
+    }
+
+    // --- Phase 4: Orphan cleanup for old user ---
+    if let Some(ref orphan_id) = old_user_id {
+        if !user_has_school_links(conn, orphan_id)? {
+            delete::delete_user(conn, orphan_id)?;
+            append_log(log_user, TBL_USERS as u8, OP_DELETE, 0)?;
+            append_delete_log(TBL_USERS as u8, orphan_id)?;
+            rows.push(delete_row(TBL_USERS, orphan_id.clone()));
+        }
+    }
+
+    // --- Phase 5: Changelog + build response ---
     append_log(log_user, TBL_STUDENTS as u8, OP_UPDATE, 0)?;
 
     let row = fetch_student(conn, &p.school, p.adm)?;
 
-    // Build the S3 path for this student's profile image.
-    // Convention: schools/{school_id}/students/{adm}/image  (no extension)
+    // S3 presigned URLs for student profile image (preserve existing behavior).
     let path = format!("schools/{}/students/{}/image", p.school, p.adm);
-
-    // PUT URL — valid 1 hour — for the originator to upload their local image.
     let put_url = sign::url(&path, sign::PUT_TTL, true);
-    // GET URL — valid 1 month — for any client to download the image.
     let get_url = sign::url(&path, sign::GET_TTL, false);
-
-    // expiry is milliseconds since epoch when the GET URL expires.
     let expiry_ms = (Utc::now().timestamp() + sign::GET_TTL as i64) * 1000;
 
     let file_url = FileUrl {
@@ -1883,16 +1953,15 @@ fn handle_update_student(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult
         expiry: expiry_ms,
     };
 
-    Ok(ActionResult::with_rows_and_urls(
-        vec![upsert_row(
-            TBL_STUDENTS,
-            row.row_key(),
-            InsertData {
-                row: Some(insert_data::Row::Student((&row).into())),
-            },
-        )],
-        vec![file_url],
-    ))
+    rows.push(upsert_row(
+        TBL_STUDENTS,
+        row.row_key(),
+        InsertData {
+            row: Some(insert_data::Row::Student((&row).into())),
+        },
+    ));
+
+    Ok(ActionResult::with_rows_and_urls(rows, vec![file_url]))
 }
 
 fn handle_delete_student(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
