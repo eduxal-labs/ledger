@@ -1802,10 +1802,33 @@ fn handle_create_student(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult
     let p: CreateStudentPayload = decode(payload)?;
     let log_user = Id::system();
 
+    let mut rows = Vec::new();
+
+    // Resolve optional phone → user ID
+    let resolved_user: Option<String> = match p.user.as_deref() {
+        None => None,
+        Some(phone_str) => {
+            // On create, the value MUST be a valid phone. Invalid → reject.
+            let (user_row, was_created) = resolve_phone_to_user(conn, phone_str, &p.name)?;
+            if was_created {
+                append_log(log_user, TBL_USERS as u8, OP_INSERT, 0)?;
+            }
+            let user_id = user_row.id.clone();
+            rows.push(upsert_row(
+                TBL_USERS,
+                user_row.row_key(),
+                InsertData {
+                    row: Some(insert_data::Row::User((&user_row).into())),
+                },
+            ));
+            Some(user_id)
+        }
+    };
+
     let student_insert = StudentInsert {
         school: p.school.clone(),
         adm: p.adm,
-        user: p.user.clone(),
+        user: resolved_user,
         name: p.name.clone(),
         dob: p.dob,
         gender: p.gender,
@@ -1817,13 +1840,15 @@ fn handle_create_student(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult
     append_log(log_user, TBL_STUDENTS as u8, OP_INSERT, 0)?;
 
     let row = fetch_student(conn, &p.school, p.adm)?;
-    Ok(ActionResult::with_rows(vec![upsert_row(
+    rows.push(upsert_row(
         TBL_STUDENTS,
         row.row_key(),
         InsertData {
             row: Some(insert_data::Row::Student((&row).into())),
         },
-    )]))
+    ));
+
+    Ok(ActionResult::with_rows(rows))
 }
 
 fn handle_update_student(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {

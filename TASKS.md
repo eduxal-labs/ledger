@@ -127,7 +127,7 @@ This requires adding `use crate::types::id::Id;` at the top of the file if not a
 
 ---
 
-### Task 2: Rewrite `handle_create_student` with phone-based invitation pattern
+### Task 2: Rewrite `handle_create_student` with phone-based invitation pattern ✅
 
 **Files to modify:** `src/db/database/tables/actions.rs`
 **Reference files to read:** `src/db/database/tables/actions.rs` (the `handle_create_teacher` function at L1486–1540 for the pattern to follow; the existing `handle_create_student` at L1741–1767; the helpers from Task 1)
@@ -202,9 +202,9 @@ fn handle_create_student(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult
 5. The user row is always included in the response (even if the user already existed) so the pushing client gets the full user data.
 
 **Update after completion:**
-- [ ] `handle_create_student` rewritten with phone resolution
-- [ ] `cargo build` succeeds
-- [ ] Mark this task `[x]`
+- [x] `handle_create_student` rewritten with phone resolution
+- [x] `cargo build` succeeds
+- [x] Mark this task `[x]`
 - [ ] Orchestrator: git commit `feat: handle_create_student resolves phone to user via invitation pattern`
 
 ---
