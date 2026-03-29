@@ -503,6 +503,66 @@ fn fetch_guardian(conn: &mut Conn, school: &str, user: &str, student: i32) -> Re
     })
 }
 
+fn user_has_school_links(conn: &mut Conn, user_id: &str) -> Result<bool> {
+    let rows = sql_query(
+        "SELECT 1 AS cnt FROM owners WHERE user = ? \
+         UNION ALL SELECT 1 FROM teachers WHERE user = ? \
+         UNION ALL SELECT 1 FROM staff WHERE user = ? \
+         UNION ALL SELECT 1 FROM guardians WHERE user = ? \
+         UNION ALL SELECT 1 FROM students WHERE user = ? \
+         LIMIT 1",
+    )
+    .bind::<Text, _>(user_id)
+    .bind::<Text, _>(user_id)
+    .bind::<Text, _>(user_id)
+    .bind::<Text, _>(user_id)
+    .bind::<Text, _>(user_id)
+    .load::<FkCheckRow>(conn)
+    .map_err(|e| {
+        tracing::error!("user_has_school_links failed: {e}");
+        Error::Internal
+    })?;
+    Ok(!rows.is_empty())
+}
+
+/// Validates `phone_str` as a Kenyan phone number, looks up the user by the
+/// normalised phone, and creates a new Invited user when none exists.
+///
+/// Returns `(resolved_user_row, true)` if a new user was created, or
+/// `(existing_user_row, false)` if the phone matched an existing user.
+fn resolve_phone_to_user(
+    conn: &mut Conn,
+    phone_str: &str,
+    fallback_name: &str,
+) -> Result<(UserRow, bool)> {
+    use crate::types::phone::Phone;
+    use std::str::FromStr;
+
+    let phone = Phone::from_str(phone_str).map_err(|_| {
+        tracing::warn!("invalid phone in student user field: {phone_str}");
+        Error::InvalidPhone
+    })?;
+    let normalized = phone.to_string(); // "0XXXXXXXXX"
+
+    match fetch_user_by_phone(conn, &normalized)? {
+        Some(existing) => Ok((existing, false)),
+        None => {
+            let new_id = Id::default().to_string();
+            let user_insert = UserInsert {
+                id: new_id.clone(),
+                phone: normalized,
+                email: None,
+                name: fallback_name.to_string(),
+                level: 0,  // Normal
+                status: 0, // Invited
+            };
+            insert::insert_user(conn, &user_insert)?;
+            let row = fetch_user(conn, &new_id)?;
+            Ok((row, true))
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers to build ActionRow entries
 // ---------------------------------------------------------------------------
