@@ -954,7 +954,7 @@ Layout:
 
 ---
 
-### Task S11: Select production Gemini model and update `src/ai/gemini.rs`
+### Task S11: Select production Gemini model and update `src/ai/gemini.rs` [x]
 **Files to modify:** `src/ai/gemini.rs`
 **Depends on:** S10
 **Parallel group:** P9

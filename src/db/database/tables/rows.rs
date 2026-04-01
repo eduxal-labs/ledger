@@ -1752,3 +1752,127 @@ impl From<&AnswerPageRow> for AnswerPageInsert {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Question Bank — Server-Only Tables
+// ---------------------------------------------------------------------------
+
+#[derive(QueryableByName)]
+pub struct QuestionRow {
+    #[diesel(sql_type = Integer)]
+    pub id: i32,
+    #[diesel(sql_type = Integer)]
+    pub topic: i32,
+    #[diesel(sql_type = Text)]
+    pub text: String,
+    #[diesel(sql_type = SmallInt)]
+    pub marks: i16,
+    #[diesel(sql_type = Nullable<Text>)]
+    pub example_answer: Option<String>,
+    #[diesel(sql_type = BigInt)]
+    pub created: i64,
+    #[diesel(sql_type = BigInt)]
+    pub updated: i64,
+    #[diesel(sql_type = Text)]
+    pub created_by: String,
+}
+
+#[derive(QueryableByName)]
+pub struct RubricCriterionRow {
+    #[diesel(sql_type = Integer)]
+    pub question: i32,
+    #[diesel(sql_type = SmallInt)]
+    pub position: i16,
+    #[diesel(sql_type = Text)]
+    pub criterion: String,
+    #[diesel(sql_type = SmallInt)]
+    pub marks: i16,
+}
+
+#[derive(QueryableByName)]
+pub struct QuestionImageRow {
+    #[diesel(sql_type = Integer)]
+    pub id: i32,
+    #[diesel(sql_type = Integer)]
+    pub question: i32,
+    #[diesel(sql_type = SmallInt)]
+    pub position: i16,
+    #[diesel(sql_type = SmallInt)]
+    pub context: i16,
+    #[diesel(sql_type = Text)]
+    pub key: String,
+    #[diesel(sql_type = Nullable<Text>)]
+    pub caption: Option<String>,
+}
+
+#[derive(QueryableByName)]
+pub struct QuestionGradeRow {
+    #[diesel(sql_type = Text)]
+    pub school: String,
+    #[diesel(sql_type = Text)]
+    pub exam: String,
+    #[diesel(sql_type = Integer)]
+    pub student: i32,
+    #[diesel(sql_type = Integer)]
+    pub question: i32,
+    #[diesel(sql_type = Float)]
+    pub score: f32,
+    #[diesel(sql_type = Nullable<Text>)]
+    pub feedback: Option<String>,
+    #[diesel(sql_type = BigInt)]
+    pub created: i64,
+    #[diesel(sql_type = BigInt)]
+    pub updated: i64,
+}
+
+#[derive(QueryableByName)]
+pub struct PaperQuestionRow {
+    #[diesel(sql_type = Text)]
+    pub school: String,
+    #[diesel(sql_type = Text)]
+    pub exam: String,
+    #[diesel(sql_type = Integer)]
+    pub subject: i32,
+    #[diesel(sql_type = Nullable<SmallInt>)]
+    pub paper: Option<i16>,
+    #[diesel(sql_type = SmallInt)]
+    pub grade: i16,
+    #[diesel(sql_type = Nullable<SmallInt>)]
+    pub stream: Option<i16>,
+    #[diesel(sql_type = Integer)]
+    pub question: i32,
+    #[diesel(sql_type = SmallInt)]
+    pub position: i16,
+}
+
+#[derive(QueryableByName)]
+pub struct MarkingQueueRow {
+    #[diesel(sql_type = Integer)]
+    pub id: i32,
+    #[diesel(sql_type = Text)]
+    pub school: String,
+    #[diesel(sql_type = Text)]
+    pub exam: String,
+    #[diesel(sql_type = Integer)]
+    pub subject: i32,
+    #[diesel(sql_type = Nullable<SmallInt>)]
+    pub paper: Option<i16>,
+    #[diesel(sql_type = SmallInt)]
+    pub grade: i16,
+    #[diesel(sql_type = Nullable<SmallInt>)]
+    pub stream: Option<i16>,
+    #[diesel(sql_type = SmallInt)]
+    pub phase: i16,
+    #[diesel(sql_type = Text)]
+    pub progress: String,
+    #[diesel(sql_type = Nullable<Text>)]
+    pub error: Option<String>,
+    #[diesel(sql_type = Integer)]
+    pub total_students: i32,
+    #[diesel(sql_type = Integer)]
+    pub marked_students: i32,
+    #[diesel(sql_type = BigInt)]
+    pub created: i64,
+    #[diesel(sql_type = BigInt)]
+    pub updated: i64,
+}
