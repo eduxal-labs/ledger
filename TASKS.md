@@ -755,7 +755,7 @@ Add `pub mod question_bank;` to `src/db/database/tables/mod.rs`.
 
 ## Phase 4: QuestionBank gRPC Service
 
-### Task S07: Create `src/services/question_bank.rs` — question CRUD RPCs
+### Task S07: Create `src/services/question_bank.rs` — question CRUD RPCs [x]
 **Files to create:** `src/services/question_bank.rs`
 **Files to modify:** `src/services/mod.rs`
 **Depends on:** S03, S06
