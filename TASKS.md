@@ -6,6 +6,34 @@
 
 ---
 
+> **Commit rule:** Every executor agent MUST run `git add -A && git commit -m "<type>: <description>"` 
+> immediately after completing its task. Do NOT defer commits. Types: `feat`, `fix`, `refactor`, `docs`, `chore`, `db`.
+
+---
+
+## Phase 0: Commit Uncommitted Changes
+
+### Task S00: Commit any uncommitted changes
+**Files to modify:** None (git operation only)
+**Depends on:** None
+**Parallel group:** P0
+
+**Specification:**
+Before starting any work, check for uncommitted changes:
+```bash
+git status --short
+```
+If there are uncommitted changes, commit them:
+```bash
+git add -A && git commit -m "chore: commit pending changes before question bank overhaul"
+```
+
+**Expected outcome:** Clean working tree. All previous work preserved.
+
+**Commit:** `git add -A && git commit -m "<type>: <description of what this task did>"`
+
+---
+
 ## Phase 1: Proto Definitions
 
 ### Task S01: Create `protos/services/question_bank.proto`
@@ -294,6 +322,8 @@ message MarkingStatusResponse {
 
 **Expected outcome:** Proto file compiles successfully with `tonic-prost-build`. All messages and service RPCs are defined.
 
+**Commit:** `git add -A && git commit -m "<type>: <description of what this task did>"`
+
 ---
 
 ### Task S02: Update `build.rs` to compile `question_bank.proto`
@@ -321,6 +351,8 @@ Run `cargo build` to verify proto compilation succeeds.
 
 **Expected outcome:** `cargo build` generates Rust bindings for the QuestionBank service in `target/`.
 
+**Commit:** `git add -A && git commit -m "<type>: <description of what this task did>"`
+
 ---
 
 ### Task S03: Create proto binding module `src/proto/services/question_bank.rs`
@@ -343,6 +375,8 @@ Follow the exact pattern from `src/proto/services/ai_marking.rs`:
 6. Add `pub mod question_bank;` to `src/proto/services/mod.rs`.
 
 **Expected outcome:** `cargo build` succeeds. QuestionBank trait and server bindings compile.
+
+**Commit:** `git add -A && git commit -m "<type>: <description of what this task did>"`
 
 ---
 
@@ -461,6 +495,8 @@ Run `diesel migration run` to verify.
 **IMPORTANT:** Do NOT add any of these tables to `LogTable` enum in `src/services/sync.rs`. Do NOT add them to `SNAPSHOT_TABLE_ORDER`. These are server-only.
 
 **Expected outcome:** Migration runs successfully. Tables exist in database.db.
+
+**Commit:** `git add -A && git commit -m "<type>: <description of what this task did>"`
 
 ---
 
@@ -604,6 +640,8 @@ These do NOT need `row_key()`, `school_id()`, or `From<&Row> for Insert` impleme
 
 **Expected outcome:** `cargo build` succeeds with new row structs.
 
+**Commit:** `git add -A && git commit -m "<type>: <description of what this task did>"`
+
 ---
 
 ### Task S06: Add CRUD functions for question bank tables
@@ -711,6 +749,8 @@ Add `pub mod question_bank;` to `src/db/database/tables/mod.rs`.
 
 **Expected outcome:** `cargo build` succeeds. All CRUD functions compile.
 
+**Commit:** `git add -A && git commit -m "<type>: <description of what this task did>"`
+
 ---
 
 ## Phase 4: QuestionBank gRPC Service
@@ -786,6 +826,8 @@ Add `pub mod question_bank;` to `src/services/mod.rs`.
 
 **Expected outcome:** Question CRUD RPCs compile and are logically correct.
 
+**Commit:** `git add -A && git commit -m "<type>: <description of what this task did>"`
+
 ---
 
 ### Task S08: Implement paper generation RPCs (`generate_paper`, `regenerate_question`, `edit_paper_question`)
@@ -822,6 +864,8 @@ Add `pub mod question_bank;` to `src/services/mod.rs`.
 - Return updated `Question`
 
 **Expected outcome:** Paper generation RPCs compile and implement correct selection logic.
+
+**Commit:** `git add -A && git commit -m "<type>: <description of what this task did>"`
 
 ---
 
@@ -885,6 +929,8 @@ Layout:
 
 **Expected outcome:** PDF generation produces valid PDF files. FinalizePaper uploads to R2 and returns download URL.
 
+**Commit:** `git add -A && git commit -m "<type>: <description of what this task did>"`
+
 ---
 
 ## Phase 5: AI Marking Overhaul
@@ -903,6 +949,8 @@ Layout:
 5. Remove `ANTHROPIC_API_KEY` from `.env` if present (but don't break the build — it's not referenced via `env!()` in any remaining file after anthropic.rs is deleted).
 
 **Expected outcome:** `cargo build` succeeds with no Anthropic references.
+
+**Commit:** `git add -A && git commit -m "<type>: <description of what this task did>"`
 
 ---
 
@@ -932,6 +980,8 @@ Update `gemini.rs`:
 4. Test by running `cargo build` and manually checking model availability via the API
 
 **Expected outcome:** Production model selected. No more 503 errors in normal operation.
+
+**Commit:** `git add -A && git commit -m "<type>: <description of what this task did>"`
 
 ---
 
@@ -1031,6 +1081,8 @@ Replace the `mark_and_write` function with a new flow:
 
 **Expected outcome:** Per-question marking works. Question-level grades stored. Aggregation produces correct paper totals and mastery scores. Status tracking via marking_queue table.
 
+**Commit:** `git add -A && git commit -m "<type>: <description of what this task did>"`
+
 ---
 
 ### Task S13: Implement `get_marking_status` RPC
@@ -1052,6 +1104,8 @@ Implement the `GetMarkingStatus` RPC. Since the marking_queue table persists sta
 **Note:** This RPC can live in either the QuestionBank service or the AiMarking service. Since `ai_marking.proto` already exists and this is marking-related, it may be cleaner to add the RPC to `ai_marking.proto` and implement it in `ai_marking.rs`. However, since we defined it in `question_bank.proto`, implement it in `question_bank.rs`.
 
 **Expected outcome:** Client can poll marking status.
+
+**Commit:** `git add -A && git commit -m "<type>: <description of what this task did>"`
 
 ---
 
@@ -1084,6 +1138,8 @@ Server::builder()
 
 **Expected outcome:** Server starts with 4 gRPC services. QuestionBank RPCs are reachable.
 
+**Commit:** `git add -A && git commit -m "<type>: <description of what this task did>"`
+
 ---
 
 ## Phase 7: Integration & Testing
@@ -1104,6 +1160,8 @@ Implement `get_question_grades`:
 
 **Expected outcome:** Client can fetch per-question breakdown for a student's paper.
 
+**Commit:** `git add -A && git commit -m "<type>: <description of what this task did>"`
+
 ---
 
 ### Task S16: Verify end-to-end: proto compilation, service registration, basic RPC flow
@@ -1123,6 +1181,8 @@ Implement `get_question_grades`:
    - `GetMarkingStatus` with a non-existent paper → should return appropriate response
 
 **Expected outcome:** Server compiles, starts, and responds to QuestionBank RPCs.
+
+**Commit:** `git add -A && git commit -m "<type>: <description of what this task did>"`
 
 ---
 
