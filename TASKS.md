@@ -644,7 +644,7 @@ These do NOT need `row_key()`, `school_id()`, or `From<&Row> for Insert` impleme
 
 ---
 
-### Task S06: Add CRUD functions for question bank tables
+### Task S06: Add CRUD functions for question bank tables [x]
 **Files to create:** `src/db/database/tables/question_bank.rs`
 **Files to modify:** `src/db/database/tables/mod.rs`
 **Depends on:** S05
