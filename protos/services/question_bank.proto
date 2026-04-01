@@ -1,0 +1,306 @@
+syntax = "proto3";
+
+package question_bank;
+
+service QuestionBank {
+  // === System User Operations (question management) ===
+  rpc CreateQuestion(CreateQuestionRequest) returns (CreateQuestionResponse);
+  rpc UpdateQuestion(UpdateQuestionRequest) returns (UpdateQuestionResponse);
+  rpc DeleteQuestion(DeleteQuestionRequest) returns (DeleteQuestionResponse);
+  rpc BulkImportQuestions(BulkImportRequest) returns (BulkImportResponse);
+  rpc RequestImageUploadUrls(ImageUploadUrlsRequest) returns (ImageUploadUrlsResponse);
+
+  // === Teacher Operations (exam paper assembly) ===
+  rpc GeneratePaper(GeneratePaperRequest) returns (GeneratePaperResponse);
+  rpc RegenerateQuestion(RegenerateQuestionRequest) returns (RegenerateQuestionResponse);
+  rpc EditPaperQuestion(EditPaperQuestionRequest) returns (EditPaperQuestionResponse);
+  rpc FinalizePaper(FinalizePaperRequest) returns (FinalizePaperResponse);
+  rpc GetPaperPdf(GetPaperPdfRequest) returns (GetPaperPdfResponse);
+
+  // === Read Operations ===
+  rpc ListQuestions(ListQuestionsRequest) returns (ListQuestionsResponse);
+  rpc GetQuestion(GetQuestionRequest) returns (GetQuestionResponse);
+  rpc GetQuestionGrades(GetQuestionGradesRequest) returns (GetQuestionGradesResponse);
+  rpc GetMarkingStatus(MarkingStatusRequest) returns (MarkingStatusResponse);
+}
+
+// === Shared types ===
+
+message Question {
+  int32 id = 1;
+  int32 topic_id = 2;
+  string text = 3;
+  int32 marks = 4;
+  optional string example_answer = 5;
+  repeated RubricCriterion rubric = 6;
+  repeated QuestionImage images = 7;
+  int64 created = 8;
+  int64 updated = 9;
+}
+
+message RubricCriterion {
+  int32 position = 1;
+  string criterion = 2;
+  int32 marks = 3;
+}
+
+message QuestionImage {
+  int32 id = 1;
+  int32 position = 2;
+  int32 context = 3;
+  string key = 4;
+  optional string url = 5;
+  optional string caption = 6;
+}
+
+// === CreateQuestion ===
+
+message CreateQuestionRequest {
+  int32 topic_id = 1;
+  string text = 2;
+  int32 marks = 3;
+  optional string example_answer = 4;
+  repeated RubricCriterionInput rubric = 5;
+}
+
+message RubricCriterionInput {
+  string criterion = 1;
+  int32 marks = 2;
+}
+
+message CreateQuestionResponse {
+  Question question = 1;
+}
+
+// === UpdateQuestion ===
+
+message UpdateQuestionRequest {
+  int32 question_id = 1;
+  optional string text = 2;
+  optional int32 marks = 3;
+  optional string example_answer = 4;
+  repeated RubricCriterionInput rubric = 5;
+}
+
+message UpdateQuestionResponse {
+  Question question = 1;
+}
+
+// === DeleteQuestion ===
+
+message DeleteQuestionRequest {
+  int32 question_id = 1;
+}
+
+message DeleteQuestionResponse {}
+
+// === BulkImport ===
+
+message BulkImportRequest {
+  string json_content = 1;
+}
+
+message BulkImportResponse {
+  int32 questions_created = 1;
+  repeated ImportError errors = 2;
+  repeated int32 question_ids = 3;
+}
+
+message ImportError {
+  int32 index = 1;
+  string message = 2;
+}
+
+// === Image Upload URLs ===
+
+message ImageUploadUrlsRequest {
+  repeated ImageUploadSpec images = 1;
+}
+
+message ImageUploadSpec {
+  int32 question_id = 1;
+  int32 position = 2;
+  int32 context = 3;
+  optional string caption = 4;
+}
+
+message ImageUploadUrlsResponse {
+  repeated ImageUploadUrl urls = 1;
+}
+
+message ImageUploadUrl {
+  int32 question_id = 1;
+  int32 position = 2;
+  string key = 3;
+  string put_url = 4;
+}
+
+// === GeneratePaper ===
+
+message GeneratePaperRequest {
+  string school = 1;
+  string exam = 2;
+  int32 subject = 3;
+  optional int32 paper = 4;
+  int32 grade = 5;
+  optional int32 stream = 6;
+  int32 total_marks = 7;
+  repeated TopicAllocation topic_allocations = 8;
+}
+
+message TopicAllocation {
+  int32 topic_id = 1;
+  int32 marks = 2;
+}
+
+message GeneratePaperResponse {
+  repeated PaperQuestion questions = 1;
+}
+
+message PaperQuestion {
+  int32 position = 1;
+  Question question = 2;
+}
+
+// === RegenerateQuestion ===
+
+message RegenerateQuestionRequest {
+  string school = 1;
+  string exam = 2;
+  int32 subject = 3;
+  optional int32 paper = 4;
+  int32 grade = 5;
+  optional int32 stream = 6;
+  int32 position = 7;
+  int32 topic_id = 8;
+  int32 marks = 9;
+  repeated int32 exclude_ids = 10;
+}
+
+message RegenerateQuestionResponse {
+  PaperQuestion replacement = 1;
+}
+
+// === EditPaperQuestion ===
+
+message EditPaperQuestionRequest {
+  int32 question_id = 1;
+  optional string text = 2;
+  optional int32 marks = 3;
+  optional string example_answer = 4;
+  repeated RubricCriterionInput rubric = 5;
+}
+
+message EditPaperQuestionResponse {
+  Question question = 1;
+}
+
+// === FinalizePaper ===
+
+message FinalizePaperRequest {
+  string school = 1;
+  string exam = 2;
+  int32 subject = 3;
+  optional int32 paper = 4;
+  int32 grade = 5;
+  optional int32 stream = 6;
+}
+
+message FinalizePaperResponse {
+  string pdf_url = 1;
+  int64 pdf_expiry = 2;
+}
+
+// === GetPaperPdf ===
+
+message GetPaperPdfRequest {
+  string school = 1;
+  string exam = 2;
+  int32 subject = 3;
+  optional int32 paper = 4;
+  int32 grade = 5;
+  optional int32 stream = 6;
+}
+
+message GetPaperPdfResponse {
+  string pdf_url = 1;
+  int64 pdf_expiry = 2;
+}
+
+// === ListQuestions ===
+
+message ListQuestionsRequest {
+  int32 topic_id = 1;
+  optional int32 min_marks = 2;
+  optional int32 max_marks = 3;
+  int32 offset = 4;
+  int32 limit = 5;
+}
+
+message ListQuestionsResponse {
+  repeated Question questions = 1;
+  int32 total = 2;
+}
+
+// === GetQuestion ===
+
+message GetQuestionRequest {
+  int32 question_id = 1;
+}
+
+message GetQuestionResponse {
+  Question question = 1;
+}
+
+// === GetQuestionGrades ===
+
+message GetQuestionGradesRequest {
+  string school = 1;
+  string exam = 2;
+  int32 student = 3;
+  int32 subject = 4;
+  optional int32 paper = 5;
+  int32 grade = 6;
+  optional int32 stream = 7;
+}
+
+message GetQuestionGradesResponse {
+  repeated QuestionGradeDetail grades = 1;
+}
+
+message QuestionGradeDetail {
+  int32 question_id = 1;
+  string question_text = 2;
+  int32 question_marks = 3;
+  float score = 4;
+  optional string feedback = 5;
+  repeated RubricCriterion rubric = 6;
+}
+
+// === MarkingStatus ===
+
+enum MarkingPhase {
+  QUEUED = 0;
+  DOWNLOADING = 1;
+  CACHING = 2;
+  MARKING = 3;
+  AGGREGATING = 4;
+  COMPLETE = 5;
+  FAILED = 6;
+}
+
+message MarkingStatusRequest {
+  string school = 1;
+  string exam = 2;
+  int32 subject = 3;
+  optional int32 paper = 4;
+  int32 grade = 5;
+  optional int32 stream = 6;
+}
+
+message MarkingStatusResponse {
+  MarkingPhase phase = 1;
+  string progress = 2;
+  optional string error = 3;
+  optional int64 estimated_completion = 4;
+}
