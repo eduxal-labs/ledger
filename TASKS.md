@@ -13,7 +13,7 @@
 
 ## Phase 0: Commit Uncommitted Changes
 
-### Task S00: Commit any uncommitted changes
+### Task S00: Commit any uncommitted changes [x]
 **Files to modify:** None (git operation only)
 **Depends on:** None
 **Parallel group:** P0
@@ -36,7 +36,7 @@ git add -A && git commit -m "chore: commit pending changes before question bank 
 
 ## Phase 1: Proto Definitions
 
-### Task S01: Create `protos/services/question_bank.proto`
+### Task S01: Create `protos/services/question_bank.proto` [x]
 **Files to create:** `protos/services/question_bank.proto`
 **Depends on:** None
 **Parallel group:** P1
@@ -326,7 +326,7 @@ message MarkingStatusResponse {
 
 ---
 
-### Task S02: Update `build.rs` to compile `question_bank.proto`
+### Task S02: Update `build.rs` to compile `question_bank.proto` [x]
 **Files to modify:** `build.rs`
 **Depends on:** S01
 **Parallel group:** P2
@@ -355,7 +355,7 @@ Run `cargo build` to verify proto compilation succeeds.
 
 ---
 
-### Task S03: Create proto binding module `src/proto/services/question_bank.rs`
+### Task S03: Create proto binding module `src/proto/services/question_bank.rs` [x]
 **Files to create:** `src/proto/services/question_bank.rs`
 **Files to modify:** `src/proto/services/mod.rs`
 **Depends on:** S02
