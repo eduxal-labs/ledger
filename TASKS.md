@@ -1111,7 +1111,7 @@ Implement the `GetMarkingStatus` RPC. Since the marking_queue table persists sta
 
 ## Phase 6: Wire Service into Server
 
-### Task S14: Register QuestionBank service in `src/server.rs`
+### Task S14: Register QuestionBank service in `src/server.rs` [x]
 **Files to modify:** `src/server.rs`
 **Depends on:** S07 (at minimum — ideally after S08, S09, S13)
 **Parallel group:** P12
