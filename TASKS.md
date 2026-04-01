@@ -1164,7 +1164,7 @@ Implement `get_question_grades`:
 
 ---
 
-### Task S16: Verify end-to-end: proto compilation, service registration, basic RPC flow
+### Task S16: Verify end-to-end: proto compilation, service registration, basic RPC flow [x]
 **Files to modify:** None (verification only)
 **Depends on:** S14
 **Parallel group:** P13

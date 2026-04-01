@@ -530,6 +530,7 @@ pub fn insert_subscription(conn: &mut Conn, row: &SubscriptionInsert) -> Result<
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn insert_subject_catalog(conn: &mut Conn, row: &SubjectInsert) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     sql_query(
@@ -545,6 +546,7 @@ pub fn insert_subject_catalog(conn: &mut Conn, row: &SubjectInsert) -> Result<()
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn insert_topic(conn: &mut Conn, row: &TopicInsert) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     sql_query(

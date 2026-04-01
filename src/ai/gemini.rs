@@ -17,6 +17,7 @@ pub struct GeminiClient {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct StudentScore {
     pub adm: i32,
     pub score: f64,
@@ -25,6 +26,7 @@ pub struct StudentScore {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct QuestionBreakdown {
     pub question: String,
     pub awarded: f64,
