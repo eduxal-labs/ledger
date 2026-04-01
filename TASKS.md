@@ -382,7 +382,7 @@ Follow the exact pattern from `src/proto/services/ai_marking.rs`:
 
 ## Phase 2: Database Migration
 
-### Task S04: Create Diesel migration for new tables
+### Task S04: Create Diesel migration for new tables [x]
 **Files to create:** `migrations/2026-03-30-000000-0002_question_bank/up.sql`, `migrations/2026-03-30-000000-0002_question_bank/down.sql`
 **Depends on:** None (can run in parallel with Phase 1)
 **Parallel group:** P1
