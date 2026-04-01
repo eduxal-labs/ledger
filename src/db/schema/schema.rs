@@ -200,6 +200,25 @@ diesel::table! {
 }
 
 diesel::table! {
+    marking_queue (id) {
+        id -> Nullable<Integer>,
+        school -> Text,
+        exam -> Text,
+        subject -> Integer,
+        paper -> Nullable<SmallInt>,
+        grade -> SmallInt,
+        stream -> Nullable<SmallInt>,
+        phase -> SmallInt,
+        progress -> Text,
+        error -> Nullable<Text>,
+        total_students -> Integer,
+        marked_students -> Integer,
+        created -> BigInt,
+        updated -> BigInt,
+    }
+}
+
+diesel::table! {
     mastery (school, student, subject, topic) {
         school -> Text,
         student -> Integer,
@@ -229,6 +248,19 @@ diesel::table! {
         school -> Text,
         user -> Text,
         created -> BigInt,
+    }
+}
+
+diesel::table! {
+    paper_questions (school, exam, subject, paper, grade, stream, question) {
+        school -> Text,
+        exam -> Text,
+        subject -> Integer,
+        paper -> Nullable<SmallInt>,
+        grade -> SmallInt,
+        stream -> Nullable<SmallInt>,
+        question -> Integer,
+        position -> SmallInt,
     }
 }
 
@@ -281,6 +313,43 @@ diesel::table! {
 }
 
 diesel::table! {
+    question_grades (school, exam, student, question) {
+        school -> Text,
+        exam -> Text,
+        student -> Integer,
+        question -> Integer,
+        score -> Float,
+        feedback -> Nullable<Text>,
+        created -> BigInt,
+        updated -> BigInt,
+    }
+}
+
+diesel::table! {
+    question_images (id) {
+        id -> Nullable<Integer>,
+        question -> Integer,
+        position -> SmallInt,
+        context -> SmallInt,
+        key -> Text,
+        caption -> Nullable<Text>,
+    }
+}
+
+diesel::table! {
+    questions (id) {
+        id -> Nullable<Integer>,
+        topic -> Integer,
+        text -> Text,
+        marks -> SmallInt,
+        example_answer -> Nullable<Text>,
+        created -> BigInt,
+        updated -> BigInt,
+        created_by -> Text,
+    }
+}
+
+diesel::table! {
     roles (id) {
         id -> Text,
         school -> Nullable<Text>,
@@ -289,6 +358,15 @@ diesel::table! {
         permissions -> Binary,
         created -> BigInt,
         updated -> BigInt,
+    }
+}
+
+diesel::table! {
+    rubric_criteria (question, position) {
+        question -> Integer,
+        position -> SmallInt,
+        criterion -> Text,
+        marks -> SmallInt,
     }
 }
 
@@ -495,12 +573,15 @@ diesel::joinable!(guardians -> users (user));
 diesel::joinable!(invoices -> fees (fee));
 diesel::joinable!(invoices -> schools (school));
 diesel::joinable!(lessons -> schools (school));
+diesel::joinable!(marking_queue -> exams (exam));
+diesel::joinable!(marking_queue -> schools (school));
 diesel::joinable!(mastery -> schools (school));
 diesel::joinable!(mastery -> subjects (subject));
 diesel::joinable!(mastery -> topics (topic));
 diesel::joinable!(mpesa -> schools (school));
 diesel::joinable!(owners -> schools (school));
 diesel::joinable!(owners -> users (user));
+diesel::joinable!(paper_questions -> questions (question));
 diesel::joinable!(papers -> exams (exam));
 diesel::joinable!(papers -> schools (school));
 diesel::joinable!(papers -> subjects (subject));
@@ -508,7 +589,14 @@ diesel::joinable!(papers -> topics (topic));
 diesel::joinable!(payments -> invoices (invoice));
 diesel::joinable!(payments -> schools (school));
 diesel::joinable!(payments -> users (recorder));
+diesel::joinable!(question_grades -> exams (exam));
+diesel::joinable!(question_grades -> questions (question));
+diesel::joinable!(question_grades -> schools (school));
+diesel::joinable!(question_images -> questions (question));
+diesel::joinable!(questions -> topics (topic));
+diesel::joinable!(questions -> users (created_by));
 diesel::joinable!(roles -> schools (school));
+diesel::joinable!(rubric_criteria -> questions (question));
 diesel::joinable!(scheme_pages -> exams (exam));
 diesel::joinable!(scheme_pages -> schools (school));
 diesel::joinable!(scheme_pages -> subjects (subject));
@@ -546,13 +634,19 @@ diesel::allow_tables_to_appear_in_same_query!(
     guardians,
     invoices,
     lessons,
+    marking_queue,
     mastery,
     mpesa,
     owners,
+    paper_questions,
     papers,
     payments,
     plans,
+    question_grades,
+    question_images,
+    questions,
     roles,
+    rubric_criteria,
     scheme_pages,
     schools,
     scopes,

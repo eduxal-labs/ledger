@@ -935,7 +935,7 @@ Layout:
 
 ## Phase 5: AI Marking Overhaul
 
-### Task S10: Remove Anthropic client
+### Task S10: Remove Anthropic client [x]
 **Files to delete:** `src/ai/anthropic.rs`
 **Files to modify:** `src/ai/mod.rs`, `Cargo.toml`
 **Depends on:** None

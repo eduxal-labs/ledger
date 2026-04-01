@@ -16,7 +16,6 @@
 #     R2_ACCESS_KEY_ID     — Cloudflare R2 storage access key
 #     R2_SECRET_ACCESS_KEY — Cloudflare R2 storage secret key
 #     GEMINI_API_KEY       — Google Gemini AI API key
-#     ANTHROPIC_API_KEY    — Anthropic Claude AI API key
 #
 #   Variables (Settings → Secrets and variables → Actions → Variables):
 #     VPS_HOST      — IP address (or hostname) of the VPS
@@ -82,7 +81,6 @@ jobs:
           R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
           R2_BUCKET: ${{ vars.R2_BUCKET }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           {
             echo "PASETO_PASSWORD=${PASETO_PASSWORD}"
@@ -92,7 +90,6 @@ jobs:
             echo "R2_ACCOUNT_ID=${R2_ACCOUNT_ID}"
             echo "R2_BUCKET=${R2_BUCKET}"
             echo "GEMINI_API_KEY=${GEMINI_API_KEY}"
-            echo "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}"
           } > .env
 
       # -----------------------------------------------------------------------
