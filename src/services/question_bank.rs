@@ -106,6 +106,30 @@ fn marking_row_to_response(row: &MarkingQueueRow) -> MarkingStatusResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Helper row types for SQL lookups in finalize_paper
+// ---------------------------------------------------------------------------
+
+#[derive(diesel::QueryableByName)]
+struct SchoolInfoRow {
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub name: String,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+    pub motto: Option<String>,
+}
+
+#[derive(diesel::QueryableByName)]
+struct ExamNameRow {
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub name: String,
+}
+
+#[derive(diesel::QueryableByName)]
+struct SubjectNameRow {
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub name: String,
+}
+
+// ---------------------------------------------------------------------------
 // Bulk import: helper structs for JSON parsing
 // ---------------------------------------------------------------------------
 
@@ -636,26 +660,150 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
         })
     }
 
-    // ── finalize_paper (stub — implemented in S09) ───────────────────────
+    // ── finalize_paper ───────────────────────────────────────────────────
 
     async fn finalize_paper(
         &self,
         _token: Token,
-        _req: FinalizePaperRequest,
+        req: FinalizePaperRequest,
     ) -> Result<FinalizePaperResponse> {
-        tracing::warn!("finalize_paper: not yet implemented");
-        Err(Error::Internal)
+        let (pdf_bytes, pdf_key) = CONN.with(|cell| {
+            let conn = &mut *cell.borrow_mut();
+
+            // Load paper questions for this paper (ordered by position)
+            let paper_qs = question_bank::get_paper_questions(
+                conn,
+                &req.school,
+                &req.exam,
+                req.subject,
+                req.paper.map(|p| p as i16),
+                req.grade as i16,
+                req.stream.map(|s| s as i16),
+            )?;
+
+            if paper_qs.is_empty() {
+                return Err(Error::NothingToUpdate);
+            }
+
+            // Load full question data for each paper question
+            let mut questions_data: Vec<(String, i16, Vec<(String, i16)>)> = Vec::new();
+            for pq in &paper_qs {
+                let row = question_bank::get_question(conn, pq.question)?;
+                let rubric = question_bank::get_rubric_criteria(conn, pq.question)?;
+                questions_data.push((
+                    row.text.clone(),
+                    row.marks,
+                    rubric
+                        .iter()
+                        .map(|r| (r.criterion.clone(), r.marks))
+                        .collect(),
+                ));
+            }
+
+            // Load school name + motto
+            let school_info: SchoolInfoRow =
+                sql_query("SELECT name, motto FROM schools WHERE id = ?")
+                    .bind::<Text, _>(&req.school)
+                    .get_result(conn)?;
+
+            // Load exam name
+            let exam_info: ExamNameRow = sql_query("SELECT name FROM exams WHERE id = ?")
+                .bind::<Text, _>(&req.exam)
+                .get_result(conn)?;
+
+            // Load subject name
+            let subject_info: SubjectNameRow = sql_query("SELECT name FROM subjects WHERE id = ?")
+                .bind::<Integer, _>(req.subject)
+                .get_result(conn)?;
+
+            // Generate PDF
+            let pdf_bytes = crate::pdf::generate_paper_pdf(
+                &school_info.name,
+                school_info.motto.as_deref(),
+                &exam_info.name,
+                &subject_info.name,
+                req.paper.map(|p| p as i16),
+                req.grade as i16,
+                &questions_data,
+            )
+            .map_err(|e| {
+                error!("PDF generation failed: {}", e);
+                Error::Internal
+            })?;
+
+            // Build R2 key for the PDF
+            let paper_suffix = req.paper.map(|p| format!("_{}", p)).unwrap_or_default();
+            let stream_suffix = req.stream.map(|s| format!("_s{}", s)).unwrap_or_default();
+            let pdf_key = format!(
+                "schools/{}/exams/{}/papers/{}{}_{}{}/paper.pdf",
+                req.school, req.exam, req.subject, paper_suffix, req.grade, stream_suffix
+            );
+
+            Ok((pdf_bytes, pdf_key))
+        })?;
+
+        // Upload PDF to R2 using presigned PUT URL
+        let put_url = sign::presign(
+            env!("R2_ACCOUNT_ID"),
+            env!("R2_BUCKET"),
+            env!("R2_ACCESS_KEY_ID"),
+            env!("R2_SECRET_ACCESS_KEY"),
+            "PUT",
+            &pdf_key,
+            sign::PUT_TTL,
+            Some("application/pdf"),
+        );
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .put(&put_url)
+            .header("Content-Type", "application/pdf")
+            .body(pdf_bytes)
+            .send()
+            .await
+            .map_err(|e| {
+                error!("Failed to upload PDF to R2: {}", e);
+                Error::Internal
+            })?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            error!(status = %status, body = %body, "R2 PDF upload failed");
+            return Err(Error::Internal);
+        }
+
+        // Generate GET URL for download
+        let get_url = sign::url(&pdf_key, sign::GET_TTL, false);
+        let expiry = chrono::Utc::now().timestamp() + sign::GET_TTL as i64;
+
+        Ok(FinalizePaperResponse {
+            pdf_url: get_url,
+            pdf_expiry: expiry,
+        })
     }
 
-    // ── get_paper_pdf (stub — implemented in S09) ────────────────────────
+    // ── get_paper_pdf ────────────────────────────────────────────────────
 
     async fn get_paper_pdf(
         &self,
         _token: Token,
-        _req: GetPaperPdfRequest,
+        req: GetPaperPdfRequest,
     ) -> Result<GetPaperPdfResponse> {
-        tracing::warn!("get_paper_pdf: not yet implemented");
-        Err(Error::Internal)
+        let paper_suffix = req.paper.map(|p| format!("_{}", p)).unwrap_or_default();
+        let stream_suffix = req.stream.map(|s| format!("_s{}", s)).unwrap_or_default();
+        let pdf_key = format!(
+            "schools/{}/exams/{}/papers/{}{}_{}{}/paper.pdf",
+            req.school, req.exam, req.subject, paper_suffix, req.grade, stream_suffix
+        );
+
+        let get_url = sign::url(&pdf_key, sign::GET_TTL, false);
+        let expiry = chrono::Utc::now().timestamp() + sign::GET_TTL as i64;
+
+        Ok(GetPaperPdfResponse {
+            pdf_url: get_url,
+            pdf_expiry: expiry,
+        })
     }
 
     // ── list_questions ───────────────────────────────────────────────────

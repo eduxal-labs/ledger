@@ -869,7 +869,7 @@ Add `pub mod question_bank;` to `src/services/mod.rs`.
 
 ---
 
-### Task S09: Implement `finalize_paper` and `get_paper_pdf` RPCs + PDF generation
+### Task S09: Implement `finalize_paper` and `get_paper_pdf` RPCs + PDF generation [x]
 **Files to create:** `src/pdf.rs` (PDF generation module)
 **Files to modify:** `src/services/question_bank.rs`, `Cargo.toml`
 **Depends on:** S08
