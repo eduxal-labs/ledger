@@ -1,8 +1,8 @@
-use crate::ai::gemini::GeminiClient;
+use crate::ai::gemini::{GeminiClient, QuestionScore};
 use crate::config::storage::sign;
 use crate::db::changelog::{LOG, Record};
 use crate::db::database::CONN;
-use crate::db::database::tables::{insert, update};
+use crate::db::database::tables::{insert, question_bank, update};
 use crate::proto::services::ai_marking::*;
 use crate::proto::services::sync::{GradeInsert, UpdateGradePayload};
 use crate::types::error::{Error, Result};
@@ -35,6 +35,8 @@ struct MarkRequest {
     exam: String,
     subject: i32,
     paper: Option<i32>,
+    grade: i16,
+    stream: Option<i16>,
     scheme_get_urls: Vec<String>,
     students: Vec<(i32, Vec<String>)>, // (adm, [S3 GET URLs])
 }
@@ -176,6 +178,8 @@ impl<C: Send + Sync + 'static> AiMarking for AiMarkingService<C> {
             exam: req.exam.clone(),
             subject: req.subject,
             paper: req.paper,
+            grade: req.grade as i16,
+            stream: req.stream.map(|s| s as i16),
             scheme_get_urls,
             students,
         };
@@ -274,7 +278,7 @@ fn spawn_marking_worker(rx: mpsc::Receiver<MarkRequest>, gemini: GeminiClient) {
             // Run in parallel: mark current + prepare next (if any)
             let gemini_for_prefetch = gemini.clone();
             let (mark_result, prepared_next) =
-                tokio::join!(mark_and_write(&gemini, current), async {
+                tokio::join!(route_marking(&gemini, current), async {
                     match maybe_next {
                         Some(next_req) => Some(prepare(&gemini_for_prefetch, next_req).await),
                         None => None,
@@ -513,6 +517,52 @@ async fn mark_student_with_retry(
     Err(last_err.unwrap())
 }
 
+/// Retry a per-question marking call up to 3 times with exponential backoff.
+async fn mark_single_question_with_retry(
+    gemini: &GeminiClient,
+    cache_name: &str,
+    student_images: &[String],
+    question_text: &str,
+    question_marks: i16,
+    rubric_criteria: &[(String, i16)],
+    question_images_b64: &[(String, Option<String>)],
+) -> std::result::Result<QuestionScore, Box<dyn std::error::Error + Send + Sync>> {
+    let delays = [0u64, 2, 4];
+    let mut last_err = None;
+    for (attempt, &delay_secs) in delays.iter().enumerate() {
+        if delay_secs > 0 {
+            tracing::warn!(
+                attempt = attempt + 1,
+                delay_secs = delay_secs,
+                "retrying per-question marking"
+            );
+            tokio::time::sleep(std::time::Duration::from_secs(delay_secs)).await;
+        }
+        match gemini
+            .mark_single_question(
+                cache_name,
+                student_images,
+                question_text,
+                question_marks,
+                rubric_criteria,
+                question_images_b64,
+            )
+            .await
+        {
+            Ok(score) => return Ok(score),
+            Err(e) => {
+                tracing::warn!(
+                    attempt = attempt + 1,
+                    error = %e,
+                    "per-question marking attempt failed"
+                );
+                last_err = Some(e);
+            }
+        }
+    }
+    Err(last_err.unwrap())
+}
+
 // ---------------------------------------------------------------------------
 // Stage B helpers: real-time concurrent marking + batch API
 // ---------------------------------------------------------------------------
@@ -737,6 +787,421 @@ async fn mark_batch_with_fallback(
     });
 
     scores
+}
+
+// ---------------------------------------------------------------------------
+// Route marking: per-question (question bank) or legacy (whole-paper)
+// ---------------------------------------------------------------------------
+
+/// Check if the paper has question bank entries and route to the appropriate
+/// marking flow: per-question or legacy whole-paper.
+async fn route_marking(
+    gemini: &GeminiClient,
+    prepared: PreparedRequest,
+) -> std::result::Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+    let has_paper_questions = CONN.with(|cell| {
+        let mut conn = cell.borrow_mut();
+        match question_bank::get_paper_questions(
+            &mut conn,
+            &prepared.mark_req.school,
+            &prepared.mark_req.exam,
+            prepared.mark_req.subject,
+            prepared.mark_req.paper.map(|p| p as i16),
+            prepared.mark_req.grade,
+            prepared.mark_req.stream,
+        ) {
+            Ok(pqs) => !pqs.is_empty(),
+            Err(_) => false,
+        }
+    });
+
+    if has_paper_questions {
+        eprintln!(
+            "[AI-WORKER] routing to per-question marking (school={} exam={})",
+            prepared.mark_req.school, prepared.mark_req.exam
+        );
+        tracing::info!(
+            school = %prepared.mark_req.school,
+            exam = %prepared.mark_req.exam,
+            "ai_worker: routing to per-question marking"
+        );
+        mark_and_write_per_question(gemini, prepared).await
+    } else {
+        mark_and_write(gemini, prepared).await
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-question marking flow (question bank papers)
+// ---------------------------------------------------------------------------
+
+/// Per-question marking flow for papers generated from the question bank.
+/// Each question is marked individually via Gemini, then scores are aggregated
+/// into a total paper grade written to the main grades table.
+async fn mark_and_write_per_question(
+    gemini: &GeminiClient,
+    prepared: PreparedRequest,
+) -> std::result::Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+    let task_start = Instant::now();
+    let school = &prepared.mark_req.school;
+    let exam = &prepared.mark_req.exam;
+    let subject = prepared.mark_req.subject;
+    let paper = prepared.mark_req.paper;
+    let grade = prepared.mark_req.grade;
+    let stream = prepared.mark_req.stream;
+    let total_students = prepared.student_images.len();
+
+    eprintln!(
+        "[AI-PQ] per-question marking: {} students (school={} exam={} subject={} grade={})",
+        total_students, school, exam, subject, grade
+    );
+    tracing::info!(
+        school = %school,
+        exam = %exam,
+        subject = subject,
+        grade = grade,
+        stream = ?stream,
+        student_count = total_students,
+        "ai_pq: starting per-question marking"
+    );
+
+    // 1. Load paper_questions from DB
+    let paper_qs = match CONN.with(|cell| {
+        let mut conn = cell.borrow_mut();
+        question_bank::get_paper_questions(
+            &mut conn,
+            school,
+            exam,
+            subject,
+            paper.map(|p| p as i16),
+            grade,
+            stream,
+        )
+    }) {
+        Ok(pqs) => pqs,
+        Err(e) => return Err(format!("Failed to load paper questions: {:?}", e).into()),
+    };
+
+    if paper_qs.is_empty() {
+        return Err("No paper_questions found for per-question marking".into());
+    }
+
+    eprintln!("[AI-PQ] loaded {} paper questions", paper_qs.len());
+    tracing::info!(
+        question_count = paper_qs.len(),
+        "ai_pq: paper questions loaded"
+    );
+
+    // 2. Upsert marking_queue — phase 1 (DOWNLOADING)
+    let queue_id = match CONN.with(|cell| {
+        let mut conn = cell.borrow_mut();
+        question_bank::upsert_marking_queue(
+            &mut conn,
+            school,
+            exam,
+            subject,
+            paper.map(|p| p as i16),
+            grade,
+            stream,
+            1, // DOWNLOADING phase
+            total_students as i32,
+        )
+    }) {
+        Ok(id) => id,
+        Err(e) => return Err(format!("Failed to upsert marking queue: {:?}", e).into()),
+    };
+
+    // 3. Load question data (text, rubric, images) for each paper question
+    struct QuestionData {
+        id: i32,
+        text: String,
+        marks: i16,
+        rubric: Vec<(String, i16)>,
+        images_b64: Vec<(String, Option<String>)>,
+    }
+
+    let raw_data = match CONN.with(|cell| -> Result<Vec<_>> {
+        let mut conn = cell.borrow_mut();
+        let mut out = Vec::with_capacity(paper_qs.len());
+        for pq in &paper_qs {
+            let q = question_bank::get_question(&mut conn, pq.question)?;
+            let rubric = question_bank::get_rubric_criteria(&mut conn, pq.question)?;
+            let images = question_bank::get_question_images(&mut conn, pq.question)?;
+            out.push((q, rubric, images));
+        }
+        Ok(out)
+    }) {
+        Ok(data) => data,
+        Err(e) => return Err(format!("Failed to load question data: {:?}", e).into()),
+    };
+
+    // Download question images as b64 (if any exist)
+    let mut questions_data: Vec<QuestionData> = Vec::with_capacity(paper_qs.len());
+    for (q, rubric, images) in raw_data {
+        let rubric_pairs: Vec<(String, i16)> = rubric
+            .iter()
+            .map(|r| (r.criterion.clone(), r.marks))
+            .collect();
+
+        let mut imgs_b64 = Vec::new();
+        for img_row in &images {
+            let get_url = sign::url(&img_row.key, sign::GET_TTL, false);
+            match gemini.download_b64(&get_url).await {
+                Ok(b64) => imgs_b64.push((b64, img_row.caption.clone())),
+                Err(e) => {
+                    tracing::warn!(
+                        question = q.id,
+                        key = %img_row.key,
+                        error = %e,
+                        "ai_pq: question image download failed — skipping"
+                    );
+                }
+            }
+        }
+
+        questions_data.push(QuestionData {
+            id: q.id,
+            text: q.text,
+            marks: q.marks,
+            rubric: rubric_pairs,
+            images_b64: imgs_b64,
+        });
+    }
+
+    // 4. Ensure we have a context cache
+    CONN.with(|cell| {
+        let mut conn = cell.borrow_mut();
+        let _ = question_bank::update_marking_status(
+            &mut conn,
+            queue_id,
+            2,
+            "Creating cache...",
+            0,
+            None,
+        );
+    });
+
+    let cache_name = match prepared.cache_name {
+        Some(cn) => cn,
+        None => {
+            // Build scheme parts and create cache from scratch
+            let scheme_parts = gemini
+                .build_scheme_parts(&prepared.mark_req.scheme_get_urls)
+                .await?;
+            match create_cache_with_retry(gemini, &scheme_parts).await {
+                Some(cn) => cn,
+                None => {
+                    // Mark queue as failed
+                    CONN.with(|cell| {
+                        let mut conn = cell.borrow_mut();
+                        let _ = question_bank::update_marking_status(
+                            &mut conn,
+                            queue_id,
+                            6, // ERROR phase
+                            "Cache creation failed",
+                            0,
+                            Some("Failed to create Gemini context cache after 3 attempts"),
+                        );
+                    });
+                    return Err("Failed to create context cache for per-question marking".into());
+                }
+            }
+        }
+    };
+
+    // 5. MARKING phase
+    CONN.with(|cell| {
+        let mut conn = cell.borrow_mut();
+        let _ = question_bank::update_marking_status(&mut conn, queue_id, 3, "Marking...", 0, None);
+    });
+
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT));
+    let mut marked_count: i32 = 0;
+
+    for (adm, images) in &prepared.student_images {
+        // For each student, mark each question
+        for qd in &questions_data {
+            let permit = semaphore
+                .clone()
+                .acquire_owned()
+                .await
+                .map_err(|e| format!("semaphore error: {}", e))?;
+
+            match mark_single_question_with_retry(
+                gemini,
+                &cache_name,
+                images,
+                &qd.text,
+                qd.marks,
+                &qd.rubric,
+                &qd.images_b64,
+            )
+            .await
+            {
+                Ok(score) => {
+                    let _ = CONN.with(|cell| {
+                        let mut conn = cell.borrow_mut();
+                        question_bank::upsert_question_grade(
+                            &mut conn,
+                            school,
+                            exam,
+                            *adm,
+                            qd.id,
+                            score.score as f32,
+                            Some(&score.feedback),
+                        )
+                    });
+                    tracing::debug!(
+                        adm = adm,
+                        question = qd.id,
+                        score = score.score,
+                        out_of = qd.marks,
+                        "ai_pq: question graded"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        adm = adm,
+                        question = qd.id,
+                        error = %e,
+                        "ai_pq: per-question marking failed after retries"
+                    );
+                }
+            }
+            drop(permit);
+        }
+
+        marked_count += 1;
+        let progress = format!("{}/{} students marked", marked_count, total_students);
+        eprintln!("[AI-PQ] {}", progress);
+        let _ = CONN.with(|cell| {
+            let mut conn = cell.borrow_mut();
+            question_bank::update_marking_status(
+                &mut conn,
+                queue_id,
+                3,
+                &progress,
+                marked_count,
+                None,
+            )
+        });
+    }
+
+    // 6. AGGREGATING phase — sum per-question grades into paper total
+    CONN.with(|cell| {
+        let mut conn = cell.borrow_mut();
+        let _ = question_bank::update_marking_status(
+            &mut conn,
+            queue_id,
+            4,
+            "Aggregating scores...",
+            marked_count,
+            None,
+        );
+    });
+
+    let question_ids: Vec<i32> = paper_qs.iter().map(|pq| pq.question).collect();
+    let total_paper_marks: i16 = questions_data.iter().map(|qd| qd.marks).sum();
+
+    let mut student_scores: Vec<crate::ai::gemini::StudentScore> =
+        Vec::with_capacity(total_students);
+
+    for (adm, _) in &prepared.student_images {
+        let grades = match CONN.with(|cell| {
+            let mut conn = cell.borrow_mut();
+            question_bank::get_question_grades_for_student(
+                &mut conn,
+                school,
+                exam,
+                *adm,
+                &question_ids,
+            )
+        }) {
+            Ok(g) => g,
+            Err(e) => {
+                tracing::warn!(adm = adm, error = ?e, "ai_pq: failed to load question grades");
+                continue;
+            }
+        };
+
+        if grades.is_empty() {
+            continue;
+        }
+
+        let total_score: f64 = grades.iter().map(|g| g.score as f64).sum();
+
+        // Build a breakdown from the per-question grades
+        let breakdown: Vec<crate::ai::gemini::QuestionBreakdown> = grades
+            .iter()
+            .map(|g| {
+                let out_of = questions_data
+                    .iter()
+                    .find(|q| q.id == g.question)
+                    .map(|q| q.marks as f64)
+                    .unwrap_or(0.0);
+                crate::ai::gemini::QuestionBreakdown {
+                    question: g.question.to_string(),
+                    awarded: g.score as f64,
+                    out_of,
+                    note: g.feedback.clone().unwrap_or_default(),
+                }
+            })
+            .collect();
+
+        student_scores.push(crate::ai::gemini::StudentScore {
+            adm: *adm,
+            score: total_score,
+            total: total_paper_marks as i32,
+            breakdown,
+        });
+    }
+
+    // Write aggregated grades to the main grades table using existing logic
+    let grades_written = if !student_scores.is_empty() {
+        write_grades_to_db(school, exam, subject, paper, &student_scores)
+    } else {
+        eprintln!("[AI-PQ] no aggregated scores to write");
+        0
+    };
+
+    // 7. COMPLETE
+    CONN.with(|cell| {
+        let mut conn = cell.borrow_mut();
+        let _ = question_bank::update_marking_status(
+            &mut conn,
+            queue_id,
+            5,
+            "Complete",
+            marked_count,
+            None,
+        );
+    });
+
+    // Cleanup cache (fire-and-forget)
+    let gemini_cleanup = gemini.clone();
+    let cn = cache_name.clone();
+    tokio::spawn(async move {
+        gemini_cleanup.delete_context_cache(&cn).await;
+    });
+
+    eprintln!(
+        "[AI-PQ] complete: {}/{} students, {} grades written in {}ms",
+        marked_count,
+        total_students,
+        grades_written,
+        task_start.elapsed().as_millis()
+    );
+    tracing::info!(
+        school = %school,
+        exam = %exam,
+        students_marked = marked_count,
+        total_students = total_students,
+        grades_written = grades_written,
+        elapsed_ms = task_start.elapsed().as_millis(),
+        "ai_pq: per-question marking complete"
+    );
+
+    Ok(grades_written)
 }
 
 // ---------------------------------------------------------------------------

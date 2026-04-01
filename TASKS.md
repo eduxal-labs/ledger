@@ -985,7 +985,7 @@ Update `gemini.rs`:
 
 ---
 
-### Task S12: Rewrite marking for per-question marking architecture
+### Task S12: Rewrite marking for per-question marking architecture [x]
 **Files to modify:** `src/services/ai_marking.rs`, `src/ai/gemini.rs`
 **Depends on:** S06, S11
 **Parallel group:** P10
