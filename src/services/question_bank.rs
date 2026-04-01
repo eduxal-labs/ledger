@@ -440,37 +440,200 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
         Ok(ImageUploadUrlsResponse { urls })
     }
 
-    // ── generate_paper (stub — implemented in S08) ───────────────────────
+    // ── generate_paper ───────────────────────────────────────────────────
 
     async fn generate_paper(
         &self,
         _token: Token,
-        _req: GeneratePaperRequest,
+        req: GeneratePaperRequest,
     ) -> Result<GeneratePaperResponse> {
-        tracing::warn!("generate_paper: not yet implemented");
-        Err(Error::Internal)
+        let response = CONN.with(|cell| {
+            let conn = &mut *cell.borrow_mut();
+
+            // Validate: sum of topic allocations == total_marks
+            let alloc_sum: i32 = req.topic_allocations.iter().map(|ta| ta.marks).sum();
+            if alloc_sum != req.total_marks {
+                tracing::warn!(
+                    "generate_paper: allocation marks ({}) != total marks ({})",
+                    alloc_sum,
+                    req.total_marks
+                );
+                return Err(Error::InvalidPermissions);
+            }
+
+            // For each topic allocation, select random questions
+            let mut all_questions: Vec<(i32, i16)> = Vec::new();
+            let mut position: i16 = 0;
+
+            for alloc in &req.topic_allocations {
+                let selected = question_bank::select_random_questions(
+                    conn,
+                    alloc.topic_id,
+                    alloc.marks as i16,
+                    &[],
+                )?;
+
+                let selected_marks: i32 = selected.iter().map(|q| q.marks as i32).sum();
+                if selected_marks < alloc.marks {
+                    tracing::warn!(
+                        "generate_paper: not enough questions for topic {}: need {} marks, found {}",
+                        alloc.topic_id,
+                        alloc.marks,
+                        selected_marks
+                    );
+                    return Err(Error::NothingToUpdate);
+                }
+
+                for q in &selected {
+                    all_questions.push((q.id, position));
+                    position += 1;
+                }
+            }
+
+            // Delete any existing paper_questions for this paper
+            question_bank::delete_paper_questions(
+                conn,
+                &req.school,
+                &req.exam,
+                req.subject,
+                req.paper.map(|p| p as i16),
+                req.grade as i16,
+                req.stream.map(|s| s as i16),
+            )?;
+
+            // Insert new paper_questions
+            question_bank::insert_paper_questions(
+                conn,
+                &req.school,
+                &req.exam,
+                req.subject,
+                req.paper.map(|p| p as i16),
+                req.grade as i16,
+                req.stream.map(|s| s as i16),
+                &all_questions,
+            )?;
+
+            // Build response with full question data
+            let mut paper_questions = Vec::new();
+            for (qid, pos) in &all_questions {
+                let question = load_full_question(conn, *qid, true)?;
+                paper_questions.push(PaperQuestion {
+                    position: *pos as i32,
+                    question: Some(question),
+                });
+            }
+
+            Ok(GeneratePaperResponse {
+                questions: paper_questions,
+            })
+        })?;
+
+        Ok(response)
     }
 
-    // ── regenerate_question (stub — implemented in S08) ──────────────────
+    // ── regenerate_question ──────────────────────────────────────────────
 
     async fn regenerate_question(
         &self,
         _token: Token,
-        _req: RegenerateQuestionRequest,
+        req: RegenerateQuestionRequest,
     ) -> Result<RegenerateQuestionResponse> {
-        tracing::warn!("regenerate_question: not yet implemented");
-        Err(Error::Internal)
+        let response = CONN.with(|cell| {
+            let conn = &mut *cell.borrow_mut();
+
+            // Load current paper questions to build exclude list
+            let current_pqs = question_bank::get_paper_questions(
+                conn,
+                &req.school,
+                &req.exam,
+                req.subject,
+                req.paper.map(|p| p as i16),
+                req.grade as i16,
+                req.stream.map(|s| s as i16),
+            )?;
+
+            let mut exclude: Vec<i32> = current_pqs.iter().map(|pq| pq.question).collect();
+            // Also exclude any explicitly provided IDs
+            exclude.extend_from_slice(&req.exclude_ids);
+
+            // Select a new random question for this topic + marks
+            let candidates = question_bank::select_random_questions(
+                conn,
+                req.topic_id,
+                req.marks as i16,
+                &exclude,
+            )?;
+
+            let replacement = candidates.first().ok_or_else(|| {
+                tracing::warn!("regenerate_question: no alternative questions available");
+                Error::NothingToUpdate
+            })?;
+
+            // Replace at the given position
+            question_bank::replace_paper_question_at_position(
+                conn,
+                &req.school,
+                &req.exam,
+                req.subject,
+                req.paper.map(|p| p as i16),
+                req.grade as i16,
+                req.stream.map(|s| s as i16),
+                req.position as i16,
+                replacement.id,
+            )?;
+
+            let question = load_full_question(conn, replacement.id, true)?;
+
+            Ok::<_, Error>(RegenerateQuestionResponse {
+                replacement: Some(PaperQuestion {
+                    position: req.position,
+                    question: Some(question),
+                }),
+            })
+        })?;
+
+        Ok(response)
     }
 
-    // ── edit_paper_question (stub — implemented in S08) ──────────────────
+    // ── edit_paper_question ──────────────────────────────────────────────
 
     async fn edit_paper_question(
         &self,
         _token: Token,
-        _req: EditPaperQuestionRequest,
+        req: EditPaperQuestionRequest,
     ) -> Result<EditPaperQuestionResponse> {
-        tracing::warn!("edit_paper_question: not yet implemented");
-        Err(Error::Internal)
+        let question = CONN.with(|cell| {
+            let conn = &mut *cell.borrow_mut();
+            conn.transaction(|conn| {
+                let text = req.text.as_deref();
+                let marks = req.marks.map(|m| m as i16);
+                let example_answer: Option<Option<&str>> = if req.example_answer.is_some() {
+                    Some(req.example_answer.as_deref())
+                } else {
+                    None
+                };
+
+                // Update the question itself (persists to DB, improving the question bank)
+                question_bank::update_question(conn, req.question_id, text, marks, example_answer)?;
+
+                // Replace rubric if provided
+                if !req.rubric.is_empty() {
+                    let tuples = rubric_tuples(&req.rubric);
+                    let refs: Vec<(i16, &str, i16)> = tuples
+                        .iter()
+                        .map(|(p, c, m)| (*p, c.as_str(), *m))
+                        .collect();
+                    question_bank::replace_rubric_criteria(conn, req.question_id, &refs)?;
+                }
+
+                // Load and return updated question
+                load_full_question(conn, req.question_id, true)
+            })
+        })?;
+
+        Ok(EditPaperQuestionResponse {
+            question: Some(question),
+        })
     }
 
     // ── finalize_paper (stub — implemented in S09) ───────────────────────

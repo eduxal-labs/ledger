@@ -830,7 +830,7 @@ Add `pub mod question_bank;` to `src/services/mod.rs`.
 
 ---
 
-### Task S08: Implement paper generation RPCs (`generate_paper`, `regenerate_question`, `edit_paper_question`)
+### Task S08: Implement paper generation RPCs (`generate_paper`, `regenerate_question`, `edit_paper_question`) [x]
 **Files to modify:** `src/services/question_bank.rs`
 **Depends on:** S07
 **Parallel group:** P7
@@ -1085,7 +1085,7 @@ Replace the `mark_and_write` function with a new flow:
 
 ---
 
-### Task S13: Implement `get_marking_status` RPC
+### Task S13: Implement `get_marking_status` RPC [x]
 **Files to modify:** `src/services/question_bank.rs` (or `src/services/ai_marking.rs` — pick one)
 **Depends on:** S12
 **Parallel group:** P11
@@ -1144,7 +1144,7 @@ Server::builder()
 
 ## Phase 7: Integration & Testing
 
-### Task S15: Add `get_question_grades` RPC implementation
+### Task S15: Add `get_question_grades` RPC implementation [x]
 **Files to modify:** `src/services/question_bank.rs`
 **Depends on:** S07, S06
 **Parallel group:** P7 (can parallel with S08)
