@@ -502,7 +502,7 @@ Run `diesel migration run` to verify.
 
 ## Phase 3: Row Structs & CRUD
 
-### Task S05: Add QueryableByName row structs for new tables
+### Task S05: Add QueryableByName row structs for new tables [x]
 **Files to modify:** `src/db/database/tables/rows.rs`
 **Depends on:** S04
 **Parallel group:** P4
