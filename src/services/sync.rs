@@ -858,6 +858,95 @@ async fn send_school_backfill(
     Ok(())
 }
 
+/// Send delete deltas for all school-scoped data belonging to schools the
+/// user just lost membership to.
+///
+/// Iterates `SNAPSHOT_TABLE_ORDER` in **reverse** (children before parents) so
+/// the client can delete rows without FK issues.  Skips the Users table
+/// entirely — co-member user rows may be shared with other schools the user
+/// is still a member of; orphaned user rows are harmless on the client.
+async fn send_school_purge(
+    tx: &mpsc::Sender<Result<SyncDelta>>,
+    removed_schools: &HashSet<Id>,
+    cursor: u64,
+) -> std::result::Result<(), ()> {
+    use crate::db::database::tables::snapshot::snapshot_table;
+
+    info!(
+        count = removed_schools.len(),
+        "[SYNC] WATCH → school purge: sending delete deltas for {} removed school(s)",
+        removed_schools.len()
+    );
+
+    let mut rows_sent: usize = 0;
+
+    // Reverse order: children before parents to avoid FK issues on the client.
+    for &table_num in SNAPSHOT_TABLE_ORDER.iter().rev() {
+        let table_enum = match LogTable::from_i32(table_num) {
+            Some(t) => t,
+            None => continue,
+        };
+
+        // Skip Users — co-member rows may be shared with other schools.
+        // Skip Plans, SubjectCatalog, Topics — globally visible, not school-scoped.
+        match table_enum {
+            LogTable::Users
+            | LogTable::Plans
+            | LogTable::Subscriptions
+            | LogTable::Discounts
+            | LogTable::SubjectCatalog
+            | LogTable::Topics => continue,
+            _ => {}
+        }
+
+        let rows = CONN.with(|cell| snapshot_table(&mut *cell.borrow_mut(), table_num));
+
+        let rows = match rows {
+            Ok(r) => r,
+            Err(e) => {
+                warn!(
+                    table = table_num,
+                    error = %e,
+                    "[SYNC] WATCH → school purge: snapshot query failed, skipping table"
+                );
+                continue;
+            }
+        };
+
+        for row in &rows {
+            let belongs = row
+                .school_id
+                .as_ref()
+                .map(|sid| removed_schools.contains(sid))
+                .unwrap_or(false);
+
+            if !belongs {
+                continue;
+            }
+
+            let delta = SyncDelta {
+                seq: cursor as i64,
+                table: table_num,
+                operation: OP_DELETE,
+                row_key: row.row_key.clone(),
+                data: None,
+                file_urls: vec![],
+            };
+
+            if tx.send(Ok(delta)).await.is_err() {
+                return Err(());
+            }
+            rows_sent += 1;
+        }
+    }
+
+    info!(
+        rows = rows_sent,
+        "[SYNC] WATCH → school purge complete, {} delete deltas sent", rows_sent
+    );
+    Ok(())
+}
+
 /// Send a full data snapshot to a user whose access level was upgraded while
 /// their watch stream was already open.
 ///
@@ -1112,6 +1201,11 @@ async fn watch_loop(
             false
         };
 
+        // Track schools removed from the user's membership in this iteration.
+        // Declared outside the filter-rebuild block so the delete-sidecar loop
+        // can bypass the (now-stale) filter for rows in these schools.
+        let mut removed_schools: HashSet<Id> = HashSet::new();
+
         // If any record in this batch touches a membership/scope table OR the
         // user's own level was upgraded, rebuild the filter NOW — before
         // populating table_min_ts — so that tables which become visible in this
@@ -1130,8 +1224,15 @@ async fn watch_loop(
             );
             let schools_before = filter.school_ids();
 
-            if let Ok(f) = SyncFilter::build(&current_user) {
-                filter = f;
+            match SyncFilter::build(&current_user) {
+                Ok(f) => filter = f,
+                Err(e) => {
+                    warn!(
+                        user_id = %current_user.id,
+                        error = %e,
+                        "[SYNC] WATCH → SyncFilter::build failed, keeping previous filter"
+                    );
+                }
             }
 
             if level_upgraded {
@@ -1162,10 +1263,28 @@ async fn watch_loop(
                     "[SYNC] WATCH → level upgrade backfill complete, bookmark sent seq={}", cursor
                 );
             } else {
-                // Membership-only change: backfill newly-joined schools.
+                // Membership-only change: detect added and removed schools.
                 let schools_after = filter.school_ids();
                 let new_schools: HashSet<Id> =
                     schools_after.difference(&schools_before).copied().collect();
+                removed_schools = schools_before.difference(&schools_after).copied().collect();
+
+                // Purge all school-scoped data for schools the user lost
+                // access to.  Iterate children-before-parents so the client
+                // can delete without FK violations.
+                if !removed_schools.is_empty() {
+                    info!(
+                        user_id = %current_user.id,
+                        count = removed_schools.len(),
+                        "[SYNC] WATCH → school membership(s) removed, purging school data"
+                    );
+                    if send_school_purge(tx, &removed_schools, cursor)
+                        .await
+                        .is_err()
+                    {
+                        return Err(());
+                    }
+                }
 
                 if !new_schools.is_empty() {
                     info!(
@@ -1276,15 +1395,25 @@ async fn watch_loop(
                 None => continue,
             };
 
-            if !filter.table_visible(table_enum) {
-                continue;
-            }
-
             // For deletes we don't have school_id — but we can extract
             // it from the row_key for tables that embed it.
             let school_id = table_enum.school_from_key(&delete.key);
-            if !filter.row_visible(table_enum, &delete.key, school_id.as_ref()) {
-                continue;
+
+            // If the deleted row belongs to a school the user just lost
+            // access to, always send the delete delta — the rebuilt filter
+            // would reject it because the school is no longer in the set.
+            let in_removed = !removed_schools.is_empty()
+                && school_id
+                    .as_ref()
+                    .map_or(false, |sid| removed_schools.contains(sid));
+
+            if !in_removed {
+                if !filter.table_visible(table_enum) {
+                    continue;
+                }
+                if !filter.row_visible(table_enum, &delete.key, school_id.as_ref()) {
+                    continue;
+                }
             }
 
             let delta = SyncDelta {
