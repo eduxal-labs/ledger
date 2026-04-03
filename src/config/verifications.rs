@@ -89,7 +89,7 @@ impl Processor {
         {
             let limit = verification.created + LIMIT;
             let current = Utc::now();
-            if current >= limit {
+            if current < limit {
                 return Err(Error::SlowDown);
             }
         }
