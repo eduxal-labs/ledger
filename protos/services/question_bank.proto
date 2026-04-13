@@ -122,6 +122,7 @@ message ImageUploadSpec {
   int32 position = 2;
   int32 context = 3;
   optional string caption = 4;
+  string filename = 5;
 }
 
 message ImageUploadUrlsResponse {

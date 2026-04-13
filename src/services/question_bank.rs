@@ -437,7 +437,8 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
             let mut result = Vec::with_capacity(req.images.len());
 
             for spec in &req.images {
-                let key = format!("questions/{}/{}.webp", spec.question_id, spec.position);
+                let ext = spec.filename.rsplit('.').next().unwrap_or("webp");
+                let key = format!("questions/{}/{}.{}", spec.question_id, spec.position, ext);
                 let put_url = sign::url(&key, sign::PUT_TTL, true);
 
                 // Insert the image row in the DB
