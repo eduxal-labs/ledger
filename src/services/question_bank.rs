@@ -197,17 +197,17 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
         // Question catalog writes are global/system-wide and must not derive or require a school.
         // Validate inputs
         if req.text.trim().is_empty() {
-            return Err(Error::InvalidId); // no dedicated "invalid text" variant; reuse closest
+            return Err(Error::InvalidQuestionText);
         }
         if req.marks <= 0 {
-            return Err(Error::InvalidId);
+            return Err(Error::InvalidQuestionMarks);
         }
 
         // Validate rubric marks sum
         if !req.rubric.is_empty() {
             let rubric_sum: i32 = req.rubric.iter().map(|r| r.marks).sum();
             if rubric_sum != req.marks {
-                return Err(Error::InvalidPermissions); // marks mismatch
+                return Err(Error::InvalidRubricMarks);
             }
         }
 
@@ -308,7 +308,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
         // Subject/topic/question catalog imports are global/system-wide and must not derive or require a school.
         let parsed: BulkImportJson = serde_json::from_str(&req.json_content).map_err(|e| {
             error!("bulk_import: JSON parse error: {e}");
-            Error::InvalidId
+            Error::InvalidBulkImportJson
         })?;
 
         // Map only explicit curriculum values; reject malformed imports instead of coercing.

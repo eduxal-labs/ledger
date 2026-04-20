@@ -58,6 +58,14 @@ pub enum Error {
     InvalidAction,
     #[error("invalid permissions")]
     InvalidPermissions,
+    #[error("invalid question text")]
+    InvalidQuestionText,
+    #[error("invalid question marks")]
+    InvalidQuestionMarks,
+    #[error("invalid rubric marks")]
+    InvalidRubricMarks,
+    #[error("invalid bulk import json")]
+    InvalidBulkImportJson,
     #[error("invalid curriculum: expected \"844\" or \"cbc\"")]
     InvalidCurriculum,
     #[error("school not found")]
@@ -155,10 +163,16 @@ impl From<Error> for Status {
             Error::InvalidResource => Status::invalid_argument("invalid resource"),
             Error::InvalidAction => Status::invalid_argument("invalid action"),
             Error::InvalidPermissions => Status::invalid_argument("invalid permissions"),
+            Error::InvalidQuestionText => Status::invalid_argument("invalid question text"),
+            Error::InvalidQuestionMarks => Status::invalid_argument("invalid question marks"),
+            Error::InvalidRubricMarks => Status::invalid_argument("invalid rubric marks"),
+            Error::InvalidBulkImportJson => Status::invalid_argument("invalid bulk import json"),
             Error::InvalidCurriculum => {
                 Status::invalid_argument("invalid curriculum: expected \"844\" or \"cbc\"")
             }
             Error::SchoolNotFound => Status::not_found("school not found"),
+            Error::SubjectNotFound => Status::not_found("subject not found"),
+            Error::TopicNotFound => Status::not_found("topic not found"),
             Error::InvalidCounty => Status::invalid_argument("invalid county"),
             Error::Forbidden => Status::permission_denied("permission denied"),
             Error::Conflict => Status::already_exists("record already exists"),
