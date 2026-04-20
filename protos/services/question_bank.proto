@@ -116,6 +116,7 @@ message BulkImportResponse {
   int32 questions_created = 1;
   repeated ImportError errors = 2;
   repeated int32 question_ids = 3;
+  int32 duplicates_skipped = 4;
 }
 
 message ImportError {

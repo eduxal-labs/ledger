@@ -5,7 +5,7 @@ use crate::db::database::tables::rows::{
     MarkingQueueRow, QuestionImageRow, QuestionRow, RubricCriterionRow,
 };
 use crate::proto::services::question_bank::*;
-use crate::types::error::{Error, Result};
+use crate::types::error::{Error, OnConflict, Result};
 use crate::types::token::Token;
 use diesel::sql_query;
 use diesel::sql_types::{Integer, SmallInt, Text};
@@ -221,7 +221,8 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                     req.marks as i16,
                     req.example_answer.as_deref(),
                     &user_id,
-                )?;
+                )
+                .on_conflict(Error::QuestionAlreadyExists)?;
 
                 if !req.rubric.is_empty() {
                     let tuples = rubric_tuples(&req.rubric);
@@ -369,6 +370,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                 })?;
 
                 let mut created_count: i32 = 0;
+                let mut duplicates_skipped: i32 = 0;
                 let mut errors: Vec<ImportError> = Vec::new();
                 let mut question_ids: Vec<i32> = Vec::new();
 
@@ -397,7 +399,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                         }
                     }
 
-                    match question_bank::insert_question(
+                    match question_bank::find_or_insert_question(
                         conn,
                         topic_row.id,
                         &q.text,
@@ -405,7 +407,14 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                         q.example_answer.as_deref(),
                         &user_id,
                     ) {
-                        Ok(qid) => {
+                        Ok((qid, is_new)) => {
+                            if !is_new {
+                                // Question already exists in the catalog — record its id but
+                                // do not count it as created and skip rubric re-insertion.
+                                duplicates_skipped += 1;
+                                question_ids.push(qid);
+                                continue;
+                            }
                             if !q.rubric.is_empty() {
                                 let tuples: Vec<(i16, &str, i16)> = q
                                     .rubric
@@ -439,6 +448,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
 
                 Ok::<_, Error>(BulkImportResponse {
                     questions_created: created_count,
+                    duplicates_skipped,
                     errors,
                     question_ids,
                 })

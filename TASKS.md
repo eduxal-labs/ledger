@@ -335,5 +335,5 @@ Update the `BulkImportResponse` construction to include `duplicates_skipped`:
 After editing, verify the code compiles with `cargo check` from the `ledger/` directory.
 
 **Update after completion:**
-- [ ] Mark this task `[x]`
+- [x] Mark this task `[x]`
 - [ ] Orchestrator: git commit after this task
