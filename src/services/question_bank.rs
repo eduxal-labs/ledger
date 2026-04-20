@@ -321,21 +321,41 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
         let result = CONN.with(|cell| {
             let conn = &mut *cell.borrow_mut();
             conn.transaction(|conn| {
-                // Look up subject by (name, curriculum)
+                // Upsert subject: create if not exists, then fetch id
+                sql_query(
+                    "INSERT OR IGNORE INTO subjects (name, curriculum, created, updated) VALUES (?, ?, strftime('%s','now'), strftime('%s','now'))"
+                )
+                .bind::<Text, _>(&parsed.subject)
+                .bind::<SmallInt, _>(curriculum_int)
+                .execute(conn)
+                .map_err(|e| {
+                    error!("bulk_import: subject upsert failed: {e}");
+                    Error::Internal
+                })?;
+
                 let subject_row: SubjectIdRow =
                     sql_query("SELECT id FROM subjects WHERE name = ? AND curriculum = ? LIMIT 1")
                         .bind::<Text, _>(&parsed.subject)
                         .bind::<SmallInt, _>(curriculum_int)
                         .get_result(conn)
-                        .map_err(|_| {
-                            error!(
-                                "bulk_import: subject not found: {} / {}",
-                                parsed.subject, parsed.curriculum
-                            );
-                            Error::SubjectNotFound
+                        .map_err(|e| {
+                            error!("bulk_import: subject select after upsert failed: {e}");
+                            Error::Internal
                         })?;
 
-                // Look up topic by (name, subject, grade)
+                // Upsert topic: create if not exists, then fetch id
+                sql_query(
+                    "INSERT OR IGNORE INTO topics (subject, grade, name, created, updated) VALUES (?, ?, ?, strftime('%s','now'), strftime('%s','now'))"
+                )
+                .bind::<Integer, _>(subject_row.id)
+                .bind::<Integer, _>(parsed.grade)
+                .bind::<Text, _>(&parsed.topic)
+                .execute(conn)
+                .map_err(|e| {
+                    error!("bulk_import: topic upsert failed: {e}");
+                    Error::Internal
+                })?;
+
                 let topic_row: TopicIdRow = sql_query(
                     "SELECT id FROM topics WHERE name = ? AND subject = ? AND grade = ? LIMIT 1",
                 )
@@ -343,12 +363,9 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                 .bind::<Integer, _>(subject_row.id)
                 .bind::<Integer, _>(parsed.grade)
                 .get_result(conn)
-                .map_err(|_| {
-                    error!(
-                        "bulk_import: topic not found: {} / subject={} / grade={}",
-                        parsed.topic, subject_row.id, parsed.grade
-                    );
-                    Error::TopicNotFound
+                .map_err(|e| {
+                    error!("bulk_import: topic select after upsert failed: {e}");
+                    Error::Internal
                 })?;
 
                 let mut created_count: i32 = 0;
