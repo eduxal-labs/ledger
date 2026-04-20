@@ -194,6 +194,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
     ) -> Result<CreateQuestionResponse> {
         let user_id = token.user.to_string();
 
+        // Question catalog writes are global/system-wide and must not derive or require a school.
         // Validate inputs
         if req.text.trim().is_empty() {
             return Err(Error::InvalidId); // no dedicated "invalid text" variant; reuse closest
@@ -304,6 +305,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
     ) -> Result<BulkImportResponse> {
         let user_id = token.user.to_string();
 
+        // Subject/topic/question catalog imports are global/system-wide and must not derive or require a school.
         let parsed: BulkImportJson = serde_json::from_str(&req.json_content).map_err(|e| {
             error!("bulk_import: JSON parse error: {e}");
             Error::InvalidId
@@ -818,6 +820,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
         _token: Token,
         req: ListQuestionsRequest,
     ) -> Result<ListQuestionsResponse> {
+        // Question catalog reads are global/system-wide and must not derive or require a school.
         let limit = if req.limit <= 0 { 50 } else { req.limit };
         let offset = if req.offset < 0 { 0 } else { req.offset };
         let min_marks = req.min_marks.map(|m| m as i16);

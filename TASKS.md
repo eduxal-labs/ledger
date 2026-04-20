@@ -121,7 +121,7 @@ Required updates:
 Do not change request shapes or add a `school` field.
 
 **Update after completion:**
-- [ ] Mark this task `[x]`
+- [x] Mark this task `[x]`
 - [ ] Orchestrator: git commit after this task
 
 ---

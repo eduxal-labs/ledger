@@ -55,6 +55,9 @@ message QuestionImage {
 
 // === CreateQuestion ===
 
+// Global catalog operation.
+// Creates a question in the shared system-wide question bank and is not school-scoped.
+// School-scoped fields belong only to paper assembly / grading / marking requests.
 message CreateQuestionRequest {
   int32 topic_id = 1;
   string text = 2;
@@ -74,6 +77,9 @@ message CreateQuestionResponse {
 
 // === UpdateQuestion ===
 
+// Global catalog operation.
+// Updates a question in the shared system-wide question bank and is not school-scoped.
+// School-scoped fields belong only to paper assembly / grading / marking requests.
 message UpdateQuestionRequest {
   int32 question_id = 1;
   optional string text = 2;
@@ -88,6 +94,9 @@ message UpdateQuestionResponse {
 
 // === DeleteQuestion ===
 
+// Global catalog operation.
+// Deletes a question from the shared system-wide question bank and is not school-scoped.
+// School-scoped fields belong only to paper assembly / grading / marking requests.
 message DeleteQuestionRequest {
   int32 question_id = 1;
 }
@@ -96,6 +105,9 @@ message DeleteQuestionResponse {}
 
 // === BulkImport ===
 
+// Global catalog operation.
+// Imports questions into the shared system-wide question bank and is not school-scoped.
+// School-scoped fields belong only to paper assembly / grading / marking requests.
 message BulkImportRequest {
   string json_content = 1;
 }
@@ -138,6 +150,9 @@ message ImageUploadUrl {
 
 // === GeneratePaper ===
 
+// School-scoped paper assembly operation.
+// The `school` field is intentional here because paper generation is school-bound,
+// unlike global question-bank catalog CRUD/import/list requests.
 message GeneratePaperRequest {
   string school = 1;
   string exam = 2;
@@ -165,6 +180,9 @@ message PaperQuestion {
 
 // === RegenerateQuestion ===
 
+// School-scoped paper assembly operation.
+// The `school` field is intentional here because paper regeneration is school-bound,
+// unlike global question-bank catalog CRUD/import/list requests.
 message RegenerateQuestionRequest {
   string school = 1;
   string exam = 2;
@@ -198,6 +216,9 @@ message EditPaperQuestionResponse {
 
 // === FinalizePaper ===
 
+// School-scoped paper assembly operation.
+// The `school` field is intentional here because paper finalization is school-bound,
+// unlike global question-bank catalog CRUD/import/list requests.
 message FinalizePaperRequest {
   string school = 1;
   string exam = 2;
@@ -214,6 +235,9 @@ message FinalizePaperResponse {
 
 // === GetPaperPdf ===
 
+// School-scoped paper retrieval operation.
+// The `school` field is intentional here because paper PDF access is school-bound,
+// unlike global question-bank catalog CRUD/import/list requests.
 message GetPaperPdfRequest {
   string school = 1;
   string exam = 2;
@@ -230,6 +254,9 @@ message GetPaperPdfResponse {
 
 // === ListQuestions ===
 
+// Global catalog operation.
+// Lists questions from the shared system-wide question bank and is not school-scoped.
+// School-scoped fields belong only to paper assembly / grading / marking requests.
 message ListQuestionsRequest {
   int32 topic_id = 1;
   optional int32 min_marks = 2;
@@ -245,6 +272,9 @@ message ListQuestionsResponse {
 
 // === GetQuestion ===
 
+// Global catalog operation.
+// Fetches a question from the shared system-wide question bank and is not school-scoped.
+// School-scoped fields belong only to paper assembly / grading / marking requests.
 message GetQuestionRequest {
   int32 question_id = 1;
 }
@@ -255,6 +285,9 @@ message GetQuestionResponse {
 
 // === GetQuestionGrades ===
 
+// School-scoped grading/marking operation.
+// The `school` field is intentional here because question-grade lookup is school-bound,
+// unlike global question-bank catalog CRUD/import/list requests.
 message GetQuestionGradesRequest {
   string school = 1;
   string exam = 2;
@@ -290,6 +323,9 @@ enum MarkingPhase {
   FAILED = 6;
 }
 
+// School-scoped grading/marking operation.
+// The `school` field is intentional here because marking status is school-bound,
+// unlike global question-bank catalog CRUD/import/list requests.
 message MarkingStatusRequest {
   string school = 1;
   string exam = 2;
