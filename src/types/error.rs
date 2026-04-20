@@ -58,8 +58,14 @@ pub enum Error {
     InvalidAction,
     #[error("invalid permissions")]
     InvalidPermissions,
+    #[error("invalid curriculum: expected \"844\" or \"cbc\"")]
+    InvalidCurriculum,
     #[error("school not found")]
     SchoolNotFound,
+    #[error("subject not found")]
+    SubjectNotFound,
+    #[error("topic not found")]
+    TopicNotFound,
     #[error("invalid county")]
     InvalidCounty,
     #[error("forbidden")]
@@ -149,6 +155,9 @@ impl From<Error> for Status {
             Error::InvalidResource => Status::invalid_argument("invalid resource"),
             Error::InvalidAction => Status::invalid_argument("invalid action"),
             Error::InvalidPermissions => Status::invalid_argument("invalid permissions"),
+            Error::InvalidCurriculum => {
+                Status::invalid_argument("invalid curriculum: expected \"844\" or \"cbc\"")
+            }
             Error::SchoolNotFound => Status::not_found("school not found"),
             Error::InvalidCounty => Status::invalid_argument("invalid county"),
             Error::Forbidden => Status::permission_denied("permission denied"),

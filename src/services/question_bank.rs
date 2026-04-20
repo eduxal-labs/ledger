@@ -309,8 +309,12 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
             Error::InvalidId
         })?;
 
-        // Map curriculum string to integer: "844" → 1, everything else (cbc) → 0
-        let curriculum_int: i16 = if parsed.curriculum == "844" { 1 } else { 0 };
+        // Map only explicit curriculum values; reject malformed imports instead of coercing.
+        let curriculum_int: i16 = match parsed.curriculum.as_str() {
+            "844" => 1,
+            "cbc" => 0,
+            _ => return Err(Error::InvalidCurriculum),
+        };
 
         let result = CONN.with(|cell| {
             let conn = &mut *cell.borrow_mut();
@@ -326,7 +330,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                                 "bulk_import: subject not found: {} / {}",
                                 parsed.subject, parsed.curriculum
                             );
-                            Error::SchoolNotFound
+                            Error::SubjectNotFound
                         })?;
 
                 // Look up topic by (name, subject, grade)
@@ -342,7 +346,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                         "bulk_import: topic not found: {} / subject={} / grade={}",
                         parsed.topic, subject_row.id, parsed.grade
                     );
-                    Error::SchoolNotFound
+                    Error::TopicNotFound
                 })?;
 
                 let mut created_count: i32 = 0;
