@@ -68,6 +68,8 @@ pub enum Error {
     InvalidBulkImportJson,
     #[error("invalid curriculum: expected \"844\" or \"cbc\"")]
     InvalidCurriculum,
+    #[error("question already exists")]
+    QuestionAlreadyExists,
     #[error("school not found")]
     SchoolNotFound,
     #[error("subject not found")]
@@ -160,6 +162,7 @@ impl From<Error> for Status {
             Error::RoleNotFound => Status::not_found("role not found"),
             Error::RoleAlreadyExists => Status::already_exists("role already exists"),
             Error::UserAlreadyExists => Status::already_exists("user already exists"),
+            Error::QuestionAlreadyExists => Status::already_exists("question already exists"),
             Error::InvalidResource => Status::invalid_argument("invalid resource"),
             Error::InvalidAction => Status::invalid_argument("invalid action"),
             Error::InvalidPermissions => Status::invalid_argument("invalid permissions"),

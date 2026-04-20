@@ -97,7 +97,7 @@ DROP INDEX IF EXISTS idx_questions_topic_text;
 Run `diesel migration run` from the `ledger/` directory after creating the files to apply the migration. Then run `diesel print-schema > src/db/schema/schema.rs` to regenerate the schema (the unique index doesn't add new columns, but the schema file should stay in sync).
 
 **Update after completion:**
-- [ ] Mark this task `[x]`
+- [x] Mark this task `[x]`
 - [ ] Orchestrator: git commit after this task
 
 ---
@@ -125,7 +125,7 @@ In `impl From<Error> for Status` add the mapping (place it near the other `alrea
 Do not remove or rename any existing variants. Do not touch `Error::Conflict` — it remains the generic conflict used for DB-level unique violations before they are converted to domain-specific errors.
 
 **Update after completion:**
-- [ ] Mark this task `[x]`
+- [x] Mark this task `[x]`
 - [ ] Orchestrator: git commit after this task
 
 ---
@@ -193,7 +193,7 @@ pub fn find_or_insert_question(
 No other functions in the file need to change. `insert_question` stays as a plain INSERT — callers that want duplicate rejection (i.e. `create_question`) rely on the UNIQUE index raising `UniqueViolation` → `Error::Conflict`, which the service layer re-maps to `Error::QuestionAlreadyExists`.
 
 **Update after completion:**
-- [ ] Mark this task `[x]`
+- [x] Mark this task `[x]`
 - [ ] Orchestrator: git commit after this task
 
 ---

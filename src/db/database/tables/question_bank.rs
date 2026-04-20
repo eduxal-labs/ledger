@@ -59,6 +59,55 @@ pub fn insert_question(
     Ok(row.id)
 }
 
+/// Get-or-create a question by `(topic, text)`.
+///
+/// Returns `(id, is_new)`:
+/// - `is_new = true`  — question was just inserted
+/// - `is_new = false` — a question with the same (topic, text) already existed; the
+///                      existing row's id is returned and nothing is written
+///
+/// Intended for use inside a transaction (e.g. bulk import) where
+/// duplicate rows must be silently resolved rather than rejected.
+pub fn find_or_insert_question(
+    conn: &mut Conn,
+    topic: i32,
+    text: &str,
+    marks: i16,
+    example_answer: Option<&str>,
+    created_by: &str,
+) -> Result<(i32, bool)> {
+    // Check for an existing question with the same (topic, text)
+    let existing: Option<LastId> =
+        sql_query("SELECT id FROM questions WHERE topic = ? AND text = ? LIMIT 1")
+            .bind::<Integer, _>(topic)
+            .bind::<Text, _>(text)
+            .get_result(conn)
+            .optional()?;
+
+    if let Some(row) = existing {
+        return Ok((row.id, false));
+    }
+
+    // No duplicate — insert the new question
+    let now = chrono::Utc::now().timestamp();
+    sql_query(
+        "INSERT INTO questions \
+         (topic, text, marks, example_answer, created, updated, created_by) \
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind::<Integer, _>(topic)
+    .bind::<Text, _>(text)
+    .bind::<SmallInt, _>(marks)
+    .bind::<Nullable<Text>, _>(example_answer)
+    .bind::<BigInt, _>(now)
+    .bind::<BigInt, _>(now)
+    .bind::<Text, _>(created_by)
+    .execute(conn)?;
+
+    let row: LastId = sql_query("SELECT last_insert_rowid() AS id").get_result(conn)?;
+    Ok((row.id, true))
+}
+
 /// Update a question. Only updates fields that are `Some`. Always bumps `updated`.
 ///
 /// `example_answer` uses a tri-state:
