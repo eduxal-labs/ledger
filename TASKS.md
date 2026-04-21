@@ -319,7 +319,7 @@ Regenerate Dart stubs and deliver updated files to the client team.
 ---
 
 **Update after completion:**
-- [ ] Mark this task `[x]`
+- [x] Mark this task `[x]`
 - [ ] Commit: `git add -A && git commit -m "feat: generate and serve separate marking scheme PDF from rubric data"`
 
 ---

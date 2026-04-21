@@ -603,6 +603,542 @@ pub fn generate_paper_pdf(
     Ok(bytes)
 }
 
+/// Generate a marking scheme PDF from question rubric data.
+///
+/// Returns the PDF as a byte vector.
+///
+/// # Arguments
+/// * `school_name` — Name of the school (bold header)
+/// * `school_motto` — Optional school motto (italic, below name)
+/// * `exam_name` — Name of the exam
+/// * `subject_name` — Subject name
+/// * `paper_number` — Optional paper number
+/// * `grade` — Grade/form level
+/// * `time_allowed_minutes` — Optional exam duration in minutes
+/// * `custom_instructions` — Optional multi-line instructions string; falls back to 5 defaults
+/// * `questions` — Slice of (question_text, marks, rubric_criteria) tuples
+///   where rubric_criteria is a vec of (criterion_text, marks)
+pub fn generate_marking_scheme_pdf(
+    school_name: &str,
+    school_motto: Option<&str>,
+    exam_name: &str,
+    subject_name: &str,
+    paper_number: Option<i16>,
+    grade: i16,
+    time_allowed_minutes: Option<i16>,
+    custom_instructions: Option<&str>,
+    questions: &[(String, i16, Vec<(String, i16)>)],
+) -> Result<Vec<u8>, String> {
+    // A4 dimensions
+    let page_width = Mm(210.0);
+    let page_height = Mm(297.0);
+
+    // Margins and layout constants (in mm)
+    let left_margin_mm: f32 = 20.0;
+    let right_margin_mm: f32 = 190.0;
+    let top_start_mm: f32 = 277.0;
+    let bottom_margin_mm: f32 = 25.0;
+    let line_height_mm: f32 = 5.5;
+
+    // Approximate characters per line at 11pt Helvetica on A4 with 20mm margins
+    let max_chars_per_line: usize = 90;
+
+    // Font handles
+    let font_regular = PdfFontHandle::Builtin(BuiltinFont::Helvetica);
+    let font_bold = PdfFontHandle::Builtin(BuiltinFont::HelveticaBold);
+    let font_italic = PdfFontHandle::Builtin(BuiltinFont::HelveticaOblique);
+
+    // Collect all pages; build ops for each page
+    let mut pages: Vec<PdfPage> = Vec::new();
+    let mut ops: Vec<Op> = Vec::new();
+    let mut y = top_start_mm;
+    let mut page_num: usize = 0;
+
+    // Helper: flush current ops into a page (adds page-number footer) and start fresh.
+    let flush_page = |ops: &mut Vec<Op>, pages: &mut Vec<PdfPage>, page_num: usize| {
+        ops.push(Op::EndTextSection);
+
+        let page_num_str = format!("- {} -", page_num);
+        let footer_x = center_x(&page_num_str, 9.0, left_margin_mm, right_margin_mm);
+        ops.push(Op::StartTextSection);
+        ops.push(Op::SetFont {
+            font: font_regular.clone(),
+            size: Pt(9.0),
+        });
+        ops.push(Op::SetTextCursor {
+            pos: Point::new(Mm(footer_x), Mm(bottom_margin_mm - 5.0)),
+        });
+        ops.push(Op::ShowText {
+            items: vec![TextItem::Text(page_num_str)],
+        });
+        ops.push(Op::EndTextSection);
+
+        let page = PdfPage::new(page_width, page_height, std::mem::take(ops));
+        pages.push(page);
+    };
+
+    // Helper: create a LinePoint from mm coordinates
+    let lp = |x_mm: f32, y_mm: f32| -> LinePoint {
+        LinePoint {
+            p: Point::new(Mm(x_mm), Mm(y_mm)),
+            bezier: false,
+        }
+    };
+
+    // Start first page text section
+    ops.push(Op::StartTextSection);
+
+    // --- HEADER: School name (bold, centred, 16pt) ---
+    ops.push(Op::SetFont {
+        font: font_bold.clone(),
+        size: Pt(16.0),
+    });
+    let school_x = center_x(school_name, 16.0, left_margin_mm, right_margin_mm);
+    ops.push(Op::SetTextCursor {
+        pos: Point::new(Mm(school_x), Mm(y)),
+    });
+    ops.push(Op::ShowText {
+        items: vec![TextItem::Text(school_name.to_string())],
+    });
+    y -= 8.0;
+
+    // --- MOTTO (italic, centred, 10pt) if present ---
+    if let Some(motto) = school_motto {
+        if !motto.is_empty() {
+            ops.push(Op::EndTextSection);
+            ops.push(Op::StartTextSection);
+            ops.push(Op::SetFont {
+                font: font_italic.clone(),
+                size: Pt(10.0),
+            });
+            let motto_x = center_x(motto, 10.0, left_margin_mm, right_margin_mm);
+            ops.push(Op::SetTextCursor {
+                pos: Point::new(Mm(motto_x), Mm(y)),
+            });
+            ops.push(Op::ShowText {
+                items: vec![TextItem::Text(motto.to_string())],
+            });
+            y -= 7.0;
+        }
+    }
+
+    // --- Divider line ---
+    ops.push(Op::EndTextSection);
+    ops.push(Op::SetOutlineColor {
+        col: Color::Rgb(Rgb {
+            r: 0.3,
+            g: 0.3,
+            b: 0.3,
+            icc_profile: None,
+        }),
+    });
+    ops.push(Op::SetOutlineThickness { pt: Pt(0.5) });
+    ops.push(Op::DrawLine {
+        line: Line {
+            points: vec![lp(left_margin_mm, y), lp(right_margin_mm, y)],
+            is_closed: false,
+        },
+    });
+    y -= 6.0;
+
+    // --- Sub-header with MARKING SCHEME suffix (bold, 12pt) ---
+    let scheme_exam_name = format!("{} \u{2014} MARKING SCHEME", exam_name);
+    ops.push(Op::StartTextSection);
+    ops.push(Op::SetFont {
+        font: font_bold.clone(),
+        size: Pt(12.0),
+    });
+    let paper_str = paper_number
+        .map(|p| format!("  |  Paper {}", p))
+        .unwrap_or_default();
+    let sub_header = format!(
+        "{}  |  {}{}  |  Form {}",
+        scheme_exam_name, subject_name, paper_str, grade
+    );
+    ops.push(Op::SetTextCursor {
+        pos: Point::new(Mm(left_margin_mm), Mm(y)),
+    });
+    ops.push(Op::ShowText {
+        items: vec![TextItem::Text(sub_header)],
+    });
+    y -= 8.0;
+
+    // Compute total marks early so it can be shown in the header section
+    let total_marks: i16 = questions.iter().map(|(_, m, _)| m).sum();
+
+    // --- Time allowed (if set) ---
+    if let Some(mins) = time_allowed_minutes {
+        let time_str = if mins >= 60 {
+            let h = mins / 60;
+            let rem = mins % 60;
+            if rem == 0 {
+                if h == 1 {
+                    "Time: 1 hour".to_string()
+                } else {
+                    format!("Time: {} hours", h)
+                }
+            } else if h == 1 {
+                format!("Time: 1 hour {} minutes", rem)
+            } else {
+                format!("Time: {} hours {} minutes", h, rem)
+            }
+        } else {
+            format!("Time: {} minutes", mins)
+        };
+        ops.push(Op::EndTextSection);
+        ops.push(Op::StartTextSection);
+        ops.push(Op::SetFont {
+            font: font_regular.clone(),
+            size: Pt(11.0),
+        });
+        let time_x = center_x(&time_str, 11.0, left_margin_mm, right_margin_mm);
+        ops.push(Op::SetTextCursor {
+            pos: Point::new(Mm(time_x), Mm(y)),
+        });
+        ops.push(Op::ShowText {
+            items: vec![TextItem::Text(time_str)],
+        });
+        y -= 6.0;
+    }
+
+    // --- Total marks (always) ---
+    let total_str = format!("Total Marks: {}", total_marks);
+    ops.push(Op::EndTextSection);
+    ops.push(Op::StartTextSection);
+    ops.push(Op::SetFont {
+        font: font_regular.clone(),
+        size: Pt(11.0),
+    });
+    let total_hdr_x = center_x(&total_str, 11.0, left_margin_mm, right_margin_mm);
+    ops.push(Op::SetTextCursor {
+        pos: Point::new(Mm(total_hdr_x), Mm(y)),
+    });
+    ops.push(Op::ShowText {
+        items: vec![TextItem::Text(total_str)],
+    });
+    y -= 8.0;
+
+    // --- Instructions block ---
+    let effective_instructions: Vec<String> = if let Some(custom) = custom_instructions {
+        custom.lines().map(|l| l.to_string()).collect()
+    } else {
+        vec![
+            "Answer ALL questions in this paper.".to_string(),
+            "Show all your working clearly in the spaces provided.".to_string(),
+            "All answers must be written in the spaces provided.".to_string(),
+            "Check that all pages are present before starting.".to_string(),
+            "Candidates should check the paper for any missing pages.".to_string(),
+        ]
+    };
+    for instr in &effective_instructions {
+        ops.push(Op::EndTextSection);
+        ops.push(Op::StartTextSection);
+        ops.push(Op::SetFont {
+            font: font_italic.clone(),
+            size: Pt(10.0),
+        });
+        ops.push(Op::SetTextCursor {
+            pos: Point::new(Mm(left_margin_mm), Mm(y)),
+        });
+        ops.push(Op::ShowText {
+            items: vec![TextItem::Text(instr.clone())],
+        });
+        y -= 4.0;
+    }
+    y -= 3.0; // small extra gap before the rule
+
+    // --- Horizontal rule below instructions ---
+    ops.push(Op::EndTextSection);
+    ops.push(Op::DrawLine {
+        line: Line {
+            points: vec![lp(left_margin_mm, y + 3.0), lp(right_margin_mm, y + 3.0)],
+            is_closed: false,
+        },
+    });
+
+    // No candidate info box in the marking scheme — just a small gap
+    y -= 4.0;
+
+    ops.push(Op::StartTextSection);
+
+    // --- QUESTIONS with rubric criteria ---
+    for (i, (text, marks, rubric)) in questions.iter().enumerate() {
+        // Page check
+        if y < bottom_margin_mm {
+            page_num += 1;
+            flush_page(&mut ops, &mut pages, page_num);
+            ops.push(Op::StartTextSection);
+            y = top_start_mm;
+        }
+
+        // Question preview: first 120 chars, truncated with "..."
+        let question_preview = if text.chars().count() > 120 {
+            let truncated: String = text.chars().take(120).collect();
+            format!("{}...", truncated)
+        } else {
+            text.clone()
+        };
+
+        // Render question number in bold 11pt
+        ops.push(Op::EndTextSection);
+        ops.push(Op::StartTextSection);
+        ops.push(Op::SetFont {
+            font: font_bold.clone(),
+            size: Pt(11.0),
+        });
+        ops.push(Op::SetTextCursor {
+            pos: Point::new(Mm(left_margin_mm), Mm(y)),
+        });
+        ops.push(Op::ShowText {
+            items: vec![TextItem::Text(format!("{}.", i + 1))],
+        });
+
+        // Render question preview in italic 10pt, indented
+        let indent_mm = left_margin_mm + 10.0;
+        let available_chars = ((right_margin_mm - indent_mm) / (right_margin_mm - left_margin_mm)
+            * max_chars_per_line as f32) as usize;
+        let preview_lines = word_wrap(&question_preview, available_chars.max(40));
+        for line in &preview_lines {
+            if y < bottom_margin_mm {
+                page_num += 1;
+                flush_page(&mut ops, &mut pages, page_num);
+                ops.push(Op::StartTextSection);
+                y = top_start_mm;
+            }
+            ops.push(Op::EndTextSection);
+            ops.push(Op::StartTextSection);
+            ops.push(Op::SetFont {
+                font: font_italic.clone(),
+                size: Pt(10.0),
+            });
+            ops.push(Op::SetTextCursor {
+                pos: Point::new(Mm(indent_mm), Mm(y)),
+            });
+            ops.push(Op::ShowText {
+                items: vec![TextItem::Text(line.clone())],
+            });
+            y -= line_height_mm;
+        }
+        y -= 2.0; // gap before criteria
+
+        // Render rubric criteria
+        if rubric.is_empty() {
+            ops.push(Op::EndTextSection);
+            ops.push(Op::StartTextSection);
+            ops.push(Op::SetFont {
+                font: font_italic.clone(),
+                size: Pt(10.0),
+            });
+            ops.push(Op::SetTextCursor {
+                pos: Point::new(Mm(indent_mm), Mm(y)),
+            });
+            ops.push(Op::ShowText {
+                items: vec![TextItem::Text("(No marking criteria defined)".to_string())],
+            });
+            y -= line_height_mm;
+        } else {
+            for (criterion_text, criterion_marks) in rubric {
+                if y < bottom_margin_mm {
+                    page_num += 1;
+                    flush_page(&mut ops, &mut pages, page_num);
+                    ops.push(Op::StartTextSection);
+                    y = top_start_mm;
+                }
+
+                let bullet = format!("    \u{2022} {}", criterion_text);
+                let crit_lines = word_wrap(&bullet, available_chars.max(40));
+                // Save y before rendering so we can right-align marks at the first line's y
+                let first_line_y = y;
+                for line in &crit_lines {
+                    ops.push(Op::EndTextSection);
+                    ops.push(Op::StartTextSection);
+                    ops.push(Op::SetFont {
+                        font: font_regular.clone(),
+                        size: Pt(10.0),
+                    });
+                    ops.push(Op::SetTextCursor {
+                        pos: Point::new(Mm(indent_mm), Mm(y)),
+                    });
+                    ops.push(Op::ShowText {
+                        items: vec![TextItem::Text(line.clone())],
+                    });
+                    y -= line_height_mm;
+                }
+
+                // Right-aligned marks "[N mark(s)]" at the same y as the first criterion line
+                let crit_marks_str = if *criterion_marks == 1 {
+                    "[1 mark]".to_string()
+                } else {
+                    format!("[{} marks]", criterion_marks)
+                };
+                let crit_marks_width = crit_marks_str.len() as f32 * 10.0 * 0.5 * 0.3528;
+                let crit_marks_x = right_margin_mm - crit_marks_width;
+                ops.push(Op::EndTextSection);
+                ops.push(Op::StartTextSection);
+                ops.push(Op::SetFont {
+                    font: font_regular.clone(),
+                    size: Pt(10.0),
+                });
+                ops.push(Op::SetTextCursor {
+                    pos: Point::new(Mm(crit_marks_x), Mm(first_line_y)),
+                });
+                ops.push(Op::ShowText {
+                    items: vec![TextItem::Text(crit_marks_str)],
+                });
+
+                y -= 3.0; // 3mm gap between criteria
+            }
+        }
+
+        // Thin divider line (0.3pt, RGB 0.8/0.8/0.8)
+        ops.push(Op::EndTextSection);
+        ops.push(Op::SetOutlineColor {
+            col: Color::Rgb(Rgb {
+                r: 0.8,
+                g: 0.8,
+                b: 0.8,
+                icc_profile: None,
+            }),
+        });
+        ops.push(Op::SetOutlineThickness { pt: Pt(0.3) });
+        ops.push(Op::DrawLine {
+            line: Line {
+                points: vec![lp(left_margin_mm, y), lp(right_margin_mm, y)],
+                is_closed: false,
+            },
+        });
+        y -= 4.0;
+
+        // Total right-aligned: "Total: N mark(s)"
+        let q_total: i16 = *marks;
+        let q_total_str = if q_total == 1 {
+            "Total: 1 mark".to_string()
+        } else {
+            format!("Total: {} marks", q_total)
+        };
+        let q_total_width = q_total_str.len() as f32 * 10.0 * 0.5 * 0.3528;
+        let q_total_x = right_margin_mm - q_total_width;
+        ops.push(Op::StartTextSection);
+        ops.push(Op::SetFont {
+            font: font_bold.clone(),
+            size: Pt(10.0),
+        });
+        ops.push(Op::SetTextCursor {
+            pos: Point::new(Mm(q_total_x), Mm(y)),
+        });
+        ops.push(Op::ShowText {
+            items: vec![TextItem::Text(q_total_str)],
+        });
+        y -= line_height_mm;
+
+        // Inter-question gap: 8mm
+        y -= 8.0;
+    }
+
+    // --- Footer: Total marks ---
+    if y < bottom_margin_mm + 10.0 {
+        page_num += 1;
+        flush_page(&mut ops, &mut pages, page_num);
+        ops.push(Op::StartTextSection);
+        y = top_start_mm;
+    }
+
+    y -= 2.0;
+    ops.push(Op::EndTextSection);
+    ops.push(Op::SetOutlineColor {
+        col: Color::Rgb(Rgb {
+            r: 0.3,
+            g: 0.3,
+            b: 0.3,
+            icc_profile: None,
+        }),
+    });
+    ops.push(Op::SetOutlineThickness { pt: Pt(0.5) });
+    ops.push(Op::DrawLine {
+        line: Line {
+            points: vec![lp(left_margin_mm, y + 2.0), lp(right_margin_mm, y + 2.0)],
+            is_closed: false,
+        },
+    });
+    y -= 6.0;
+
+    ops.push(Op::StartTextSection);
+    ops.push(Op::SetFont {
+        font: font_bold.clone(),
+        size: Pt(11.0),
+    });
+    let total_footer_str = format!("Total: {} marks", total_marks);
+    let total_footer_x = right_margin_mm - (total_footer_str.len() as f32 * 2.5);
+    ops.push(Op::SetTextCursor {
+        pos: Point::new(Mm(total_footer_x.max(left_margin_mm)), Mm(y)),
+    });
+    ops.push(Op::ShowText {
+        items: vec![TextItem::Text(total_footer_str)],
+    });
+    y -= line_height_mm;
+
+    // "— END OF MARKING SCHEME —" centred, bold, 11pt, with 10.0 mm top margin
+    y -= 10.0;
+    let end_scheme_text = "\u{2014} END OF MARKING SCHEME \u{2014}";
+    let end_scheme_x = center_x(end_scheme_text, 11.0, left_margin_mm, right_margin_mm);
+    ops.push(Op::EndTextSection);
+    ops.push(Op::StartTextSection);
+    ops.push(Op::SetFont {
+        font: font_bold.clone(),
+        size: Pt(11.0),
+    });
+    ops.push(Op::SetTextCursor {
+        pos: Point::new(Mm(end_scheme_x), Mm(y)),
+    });
+    ops.push(Op::ShowText {
+        items: vec![TextItem::Text(end_scheme_text.to_string())],
+    });
+
+    // Flush the last page
+    page_num += 1;
+    flush_page(&mut ops, &mut pages, page_num);
+
+    // Add "Turn over" to all non-final pages
+    if pages.len() > 1 {
+        let last_idx = pages.len() - 1;
+        let turnover_text = "Turn over";
+        let text_width_mm = turnover_text.len() as f32 * 9.0 * 0.5 * 0.3528;
+        let turnover_x = right_margin_mm - text_width_mm;
+        for page in &mut pages[0..last_idx] {
+            page.ops.push(Op::StartTextSection);
+            page.ops.push(Op::SetFont {
+                font: font_regular.clone(),
+                size: Pt(9.0),
+            });
+            page.ops.push(Op::SetTextCursor {
+                pos: Point::new(Mm(turnover_x), Mm(bottom_margin_mm - 5.0)),
+            });
+            page.ops.push(Op::ShowText {
+                items: vec![TextItem::Text(turnover_text.to_string())],
+            });
+            page.ops.push(Op::EndTextSection);
+        }
+    }
+
+    // Build the document
+    let mut doc = PdfDocument::new("Marking Scheme");
+    doc.metadata.info.document_title = format!("{} - {} Marking Scheme", exam_name, subject_name);
+    doc.metadata.info.creator = "EduxaL Ledger".to_string();
+    doc.metadata.info.producer = "printpdf".to_string();
+    doc.pages = pages;
+
+    // Serialize to bytes
+    let mut warnings = Vec::new();
+    let opts = PdfSaveOptions::default();
+    let bytes = doc.save(&opts, &mut warnings);
+
+    if !warnings.is_empty() {
+        tracing::warn!("PDF generation warnings: {:?}", warnings);
+    }
+
+    Ok(bytes)
+}
+
 /// Approximate horizontal centering for a text string.
 ///
 /// Estimates the text width using an average character width ratio

@@ -719,7 +719,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
         _token: Token,
         req: FinalizePaperRequest,
     ) -> Result<FinalizePaperResponse> {
-        let (pdf_bytes, pdf_key) = CONN.with(|cell| {
+        let (pdf_bytes, pdf_key, scheme_bytes, scheme_key) = CONN.with(|cell| {
             let conn = &mut *cell.borrow_mut();
 
             // Load paper questions for this paper (ordered by position)
@@ -833,7 +833,38 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                 req.school, req.exam, req.subject, paper_suffix, req.grade, stream_suffix
             );
 
-            Ok((pdf_bytes, pdf_key))
+            // Generate marking scheme PDF
+            let scheme_bytes = crate::pdf::generate_marking_scheme_pdf(
+                school_name,
+                school_motto,
+                exam_name,
+                subject_name,
+                req.paper.map(|p| p as i16),
+                req.grade as i16,
+                time_allowed,
+                custom_instructions.as_deref(),
+                &questions_data,
+            )
+            .map_err(|e| {
+                error!("Marking scheme PDF generation failed: {}", e);
+                Error::Internal
+            })?;
+
+            // Build R2 key for the marking scheme
+            let stream_part = req
+                .stream
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "0".to_string());
+            let paper_part = req
+                .paper
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| "0".to_string());
+            let scheme_key = format!(
+                "marking_schemes/{}/{}/{}/{}/{}/{}.pdf",
+                req.school, req.exam, req.subject, paper_part, req.grade, stream_part
+            );
+
+            Ok((pdf_bytes, pdf_key, scheme_bytes, scheme_key))
         })?;
 
         // Upload PDF to R2 using presigned PUT URL
@@ -871,9 +902,44 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
         let get_url = sign::url(&pdf_key, sign::GET_TTL, false);
         let expiry = chrono::Utc::now().timestamp() + sign::GET_TTL as i64;
 
+        // Upload marking scheme to R2
+        let scheme_put_url = sign::presign(
+            env!("R2_ACCOUNT_ID"),
+            env!("R2_BUCKET"),
+            env!("R2_ACCESS_KEY_ID"),
+            env!("R2_SECRET_ACCESS_KEY"),
+            "PUT",
+            &scheme_key,
+            sign::PUT_TTL,
+            Some("application/pdf"),
+        );
+
+        let scheme_resp = client
+            .put(&scheme_put_url)
+            .header("Content-Type", "application/pdf")
+            .body(scheme_bytes)
+            .send()
+            .await
+            .map_err(|e| {
+                error!("Failed to upload marking scheme to R2: {}", e);
+                Error::Internal
+            })?;
+
+        if !scheme_resp.status().is_success() {
+            let status = scheme_resp.status();
+            let body = scheme_resp.text().await.unwrap_or_default();
+            error!(status = %status, body = %body, "R2 marking scheme upload failed");
+            return Err(Error::Internal);
+        }
+
+        let scheme_get_url = sign::url(&scheme_key, sign::GET_TTL, false);
+        let scheme_expiry = chrono::Utc::now().timestamp() + sign::GET_TTL as i64;
+
         Ok(FinalizePaperResponse {
             pdf_url: get_url,
             pdf_expiry: expiry,
+            marking_scheme_url: scheme_get_url,
+            marking_scheme_expiry: scheme_expiry,
         })
     }
 

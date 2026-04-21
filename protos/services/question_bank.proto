@@ -235,6 +235,8 @@ message FinalizePaperRequest {
 message FinalizePaperResponse {
   string pdf_url = 1;
   int64 pdf_expiry = 2;
+  string marking_scheme_url = 3;
+  int64 marking_scheme_expiry = 4;
 }
 
 // === GetPaperPdf ===
