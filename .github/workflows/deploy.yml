@@ -15,7 +15,11 @@
 #     WHATSAPP_TOKEN       — Meta WhatsApp Business API bearer token
 #     R2_ACCESS_KEY_ID     — Cloudflare R2 storage access key
 #     R2_SECRET_ACCESS_KEY — Cloudflare R2 storage secret key
-#     GEMINI_API_KEY       — Google Gemini AI API key
+#     GEMINI_API_KEY       — Google Gemini Vertex AI API key (GCP API key bound to a service account)
+#
+#   Variables (Settings → Secrets and variables → Actions → Variables):
+#     GEMINI_PROJECT_ID — GCP project ID that has the Vertex AI API enabled
+#     GEMINI_LOCATION   — Vertex AI region (e.g. us-central1) or "global"
 #
 #   Variables (Settings → Secrets and variables → Actions → Variables):
 #     VPS_HOST      — IP address (or hostname) of the VPS
@@ -81,6 +85,8 @@ jobs:
           R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
           R2_BUCKET: ${{ vars.R2_BUCKET }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_PROJECT_ID: ${{ vars.GEMINI_PROJECT_ID }}
+          GEMINI_LOCATION: ${{ vars.GEMINI_LOCATION }}
         run: |
           {
             echo "PASETO_PASSWORD=${PASETO_PASSWORD}"
@@ -90,6 +96,8 @@ jobs:
             echo "R2_ACCOUNT_ID=${R2_ACCOUNT_ID}"
             echo "R2_BUCKET=${R2_BUCKET}"
             echo "GEMINI_API_KEY=${GEMINI_API_KEY}"
+            echo "GEMINI_PROJECT_ID=${GEMINI_PROJECT_ID}"
+            echo "GEMINI_LOCATION=${GEMINI_LOCATION}"
           } > .env
 
       # -----------------------------------------------------------------------

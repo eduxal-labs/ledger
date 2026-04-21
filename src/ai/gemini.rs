@@ -4,8 +4,6 @@ use std::time::Instant;
 
 const MODEL: &str = "gemini-2.5-flash";
 const FALLBACK_MODEL: &str = "gemini-2.0-flash";
-const BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta/models";
-const BASE_URL_CACHE: &str = "https://generativelanguage.googleapis.com/v1beta/cachedContents";
 
 /// Max concurrent Gemini API requests when marking multiple students.
 const MAX_CONCURRENT: usize = 4;
@@ -13,7 +11,8 @@ const MAX_CONCURRENT: usize = 4;
 #[derive(Clone)]
 pub struct GeminiClient {
     http: reqwest::Client,
-    api_key: &'static str,
+    project_id: &'static str,
+    location: &'static str,
 }
 
 #[derive(Debug, Clone)]
@@ -257,10 +256,49 @@ Rules:
 
 impl GeminiClient {
     pub fn new() -> Self {
+        use reqwest::header::{HeaderMap, HeaderValue};
+        let mut default_headers = HeaderMap::new();
+        default_headers.insert(
+            "x-goog-api-key",
+            HeaderValue::from_static(env!("GEMINI_API_KEY")),
+        );
         Self {
-            http: reqwest::Client::new(),
-            api_key: env!("GEMINI_API_KEY"),
+            http: reqwest::Client::builder()
+                .default_headers(default_headers)
+                .build()
+                .expect("failed to build reqwest client"),
+            project_id: env!("GEMINI_PROJECT_ID"),
+            location: env!("GEMINI_LOCATION"),
         }
+    }
+
+    /// Vertex AI generateContent endpoint for the given model.
+    fn generate_content_url(&self, model: &str) -> String {
+        format!(
+            "https://aiplatform.googleapis.com/v1/projects/{}/locations/{}/publishers/google/models/{}:generateContent",
+            self.project_id, self.location, model
+        )
+    }
+
+    /// Vertex AI cachedContents collection endpoint.
+    fn cache_base_url(&self) -> String {
+        format!(
+            "https://aiplatform.googleapis.com/v1/projects/{}/locations/{}/cachedContents",
+            self.project_id, self.location
+        )
+    }
+
+    /// Vertex AI URL for a specific resource (cachedContent or batch job) by its full resource name.
+    fn vertex_resource_url(&self, resource_name: &str) -> String {
+        format!("https://aiplatform.googleapis.com/v1/{}", resource_name)
+    }
+
+    /// Full Vertex AI model resource name (used in cache creation body).
+    fn model_resource_name(&self, model: &str) -> String {
+        format!(
+            "projects/{}/locations/{}/publishers/google/models/{}",
+            self.project_id, self.location, model
+        )
     }
 
     /// Download an image from a URL and return it as a base64-encoded string.
@@ -346,10 +384,7 @@ Return ONLY valid JSON with exactly one result entry for this student:
         label: &str,
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let request_size = body.to_string().len();
-        let url = format!(
-            "{}/{}:generateContent?key={}",
-            BASE_URL, MODEL, self.api_key
-        );
+        let url = self.generate_content_url(MODEL);
 
         eprintln!("[GEMINI] {}: sending POST ({} bytes)", label, request_size);
         tracing::info!(
@@ -391,10 +426,7 @@ Return ONLY valid JSON with exactly one result entry for this student:
                 "gemini: HTTP 503 — retrying with fallback model"
             );
 
-            let fallback_url = format!(
-                "{}/{}:generateContent?key={}",
-                BASE_URL, FALLBACK_MODEL, self.api_key
-            );
+            let fallback_url = self.generate_content_url(FALLBACK_MODEL);
             let fallback_start = Instant::now();
             let response = self.http.post(&fallback_url).json(body).send().await?;
             let status = response.status();
@@ -759,10 +791,10 @@ Return ONLY valid JSON with exactly one result entry for this student:
         &self,
         scheme_parts: &[serde_json::Value],
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-        let url = format!("{}?key={}", BASE_URL_CACHE, self.api_key);
+        let url = self.cache_base_url();
 
         let body = serde_json::json!({
-            "model": format!("models/{}", MODEL),
+            "model": self.model_resource_name(MODEL),
             "systemInstruction": {
                 "parts": [{"text": SYSTEM_INSTRUCTION}]
             },
@@ -822,10 +854,7 @@ Return ONLY valid JSON with exactly one result entry for this student:
 
     /// Delete a Gemini context cache (best-effort, fire-and-forget).
     pub async fn delete_context_cache(&self, cache_name: &str) {
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/{}?key={}",
-            cache_name, self.api_key
-        );
+        let url = self.vertex_resource_url(cache_name);
 
         eprintln!("[GEMINI] deleting context cache: {}", cache_name);
         tracing::info!(cache_name = %cache_name, "gemini: deleting context cache");
@@ -871,10 +900,7 @@ Return ONLY valid JSON with exactly one result entry for this student:
         });
 
         let request_size = body.to_string().len();
-        let url = format!(
-            "{}/{}:generateContent?key={}",
-            BASE_URL, MODEL, self.api_key
-        );
+        let url = self.generate_content_url(MODEL);
 
         eprintln!(
             "[GEMINI] ADM {} (cached): sending POST ({} bytes)",
@@ -1081,10 +1107,7 @@ Return ONLY valid JSON with exactly one result entry for this student:
         parts.push(serde_json::json!({ "text": prompt }));
 
         // Send request using cached contents
-        let url = format!(
-            "{}/{}:generateContent?key={}",
-            BASE_URL, MODEL, self.api_key
-        );
+        let url = self.generate_content_url(MODEL);
 
         let body = serde_json::json!({
             "cachedContent": system_cache_name,
@@ -1236,74 +1259,29 @@ Return ONLY valid JSON with exactly one result entry for this student:
             }
         });
 
-        let url = format!(
-            "{}/{}:batchGenerateContent?key={}",
-            BASE_URL, MODEL, self.api_key
-        );
-
-        let request_size = body.to_string().len();
-        eprintln!(
-            "[GEMINI] creating batch job '{}' ({} students, {} bytes)",
-            display_name,
-            students.len(),
-            request_size
-        );
-        tracing::info!(
+        // Vertex AI does not have a batchGenerateContent endpoint. Its batch
+        // prediction API (BatchPredictionJob) requires GCS or BigQuery as
+        // input/output and does not support explicit context caching. Returning
+        // an error here causes mark_batch_with_fallback to transparently fall
+        // back to the concurrent real-time path (mark_paper / mark_student_cached).
+        tracing::warn!(
             display_name = %display_name,
             student_count = students.len(),
-            request_body_bytes = request_size,
-            "gemini: creating batch job"
+            "gemini: batch inference is not supported on Vertex AI \
+             (requires GCS/BigQuery input; explicit caching unsupported) — \
+             caller should fall back to real-time marking"
         );
-
-        let start = Instant::now();
-        let response = self.http.post(&url).json(&body).send().await?;
-        let status = response.status();
-        let text = response.text().await?;
-
         eprintln!(
-            "[GEMINI] batch create response: HTTP {} ({} bytes) in {}ms",
-            status.as_u16(),
-            text.len(),
-            start.elapsed().as_millis()
+            "[GEMINI] create_batch_job: Vertex AI batch inference is not supported \
+             (no batchGenerateContent endpoint; explicit caching unsupported). \
+             Falling back to real-time marking."
         );
-        tracing::info!(
-            http_status = status.as_u16(),
-            response_bytes = text.len(),
-            elapsed_ms = start.elapsed().as_millis(),
-            "gemini: batch create response"
-        );
-
-        if !status.is_success() {
-            eprintln!(
-                "[GEMINI] batch create FAILED: HTTP {} — {}",
-                status.as_u16(),
-                text
-            );
-            tracing::error!(
-                http_status = status.as_u16(),
-                response_body = %text,
-                "gemini: batch create failed"
-            );
-            return Err(format!(
-                "Gemini batch create returned status {} — body: {}",
-                status, text
-            )
-            .into());
-        }
-
-        let resp: BatchCreateResponse = serde_json::from_str(&text).map_err(|e| {
-            tracing::error!(
-                parse_error = %e,
-                raw_response = %text,
-                "gemini: failed to parse BatchCreateResponse"
-            );
-            e
-        })?;
-
-        eprintln!("[GEMINI] batch job created: {}", resp.name);
-        tracing::info!(batch_name = %resp.name, "gemini: batch job created");
-
-        Ok(resp.name)
+        Err(
+            "Vertex AI batch inference requires GCS/BigQuery input and does not \
+             support explicit context caching. Use mark_paper or mark_student_cached \
+             for concurrent real-time marking instead."
+                .into(),
+        )
     }
 
     /// Poll the status of a batch job. Returns the current status.
@@ -1312,10 +1290,7 @@ Return ONLY valid JSON with exactly one result entry for this student:
         &self,
         batch_name: &str,
     ) -> Result<BatchStatus, Box<dyn std::error::Error + Send + Sync>> {
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/{}?key={}",
-            batch_name, self.api_key
-        );
+        let url = self.vertex_resource_url(batch_name);
 
         let response = self.http.get(&url).send().await?;
         let status = response.status();
@@ -1470,10 +1445,7 @@ Return ONLY valid JSON with exactly one result entry for this student:
 
     /// Cancel an ongoing batch job (best-effort).
     pub async fn cancel_batch_job(&self, batch_name: &str) {
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/{}:cancel?key={}",
-            batch_name, self.api_key
-        );
+        let url = format!("{}:cancel", self.vertex_resource_url(batch_name));
 
         eprintln!("[GEMINI] cancelling batch job: {}", batch_name);
         tracing::info!(batch_name = %batch_name, "gemini: cancelling batch job");
@@ -1500,10 +1472,7 @@ Return ONLY valid JSON with exactly one result entry for this student:
 
     /// Delete a batch job (best-effort, fire-and-forget).
     pub async fn delete_batch_job(&self, batch_name: &str) {
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/{}?key={}",
-            batch_name, self.api_key
-        );
+        let url = self.vertex_resource_url(batch_name);
 
         eprintln!("[GEMINI] deleting batch job: {}", batch_name);
         tracing::info!(batch_name = %batch_name, "gemini: deleting batch job");
