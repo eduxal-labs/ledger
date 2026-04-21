@@ -396,3 +396,119 @@ After both tasks are marked `[x]`:
 - [ ] Confirm `mark_all_questions` exists in `gemini.rs` and is `pub`.
 - [ ] Confirm `AllQuestionInput` is `pub` and `Clone`.
 - [ ] Orchestrator: final git commit with message `refactor(ai): mark all questions per student in one API call`.
+---
+
+## Fix: Topic Grade Mismatch + Sync Gap
+
+### Background
+
+Two bugs cause the paper generation page to show "No topics found" for all subjects:
+
+**Bug 1 — Grade mismatch (root cause):**
+All topics in the server DB use grade `1–4` (relative "form year" index inserted during seeding). But the papers table stores grades using the client's absolute grade codes — for 8-4-4 curriculum, Form 1=41, Form 2=42, Form 3=43, Form 4=44. The client query `watchTopicsBySubjectAndGrade(subjectId: X, grade: 44)` finds no topics because no topic has `grade=44`. This affects every subject for every 8-4-4 school.
+
+**Bug 2 — Sync gap:**
+The client only has 2 topics (IDs 1–2: Math Form 3 Algebra + Trigonometry). The remaining 500+ topics were bulk-inserted directly into the server's SQLite database, bypassing the gRPC `createTopic` action handler. Direct SQL inserts create no changelog entries. Since the client's `last_seq=41544` (incremental mode), the watch loop only sends rows that appear in the changelog after that cursor — so the 500+ seeded topics are never sent. Only IDs 1–2 (which went through the proper gRPC handler) appear on the client.
+
+**Fix strategy:**
+1. A Diesel SQL migration corrects the grade codes: `grade + 40 WHERE grade BETWEEN 1 AND 4` (maps 1→41, 2→42, 3→43, 4→44).
+2. A startup changelog emit (added to `server.rs`) appends one resync record for the topics table with `created = 0`. This causes the watch loop's `snapshot_table_since(TBL_TOPICS, 0)` query to return ALL topic rows (since `WHERE updated >= 0` matches every timestamp), pushing them to all connected and reconnecting clients.
+
+---
+
+### Task L1: SQL migration — fix topic grades
+
+**Files to create:**
+- `migrations/2026-04-15-000000-0004_fix_topic_grades/up.sql`
+- `migrations/2026-04-15-000000-0004_fix_topic_grades/down.sql`
+
+Use a timestamp that sorts after the most recent migration (`2026-04-01-000000-0003`). A safe value is `2026-04-15-000000-0004`.
+
+**Depends on:** None
+**Parallel group:** P1
+
+**Specification:**
+
+Create `migrations/2026-04-15-000000-0004_fix_topic_grades/` directory and the two files:
+
+`up.sql`:
+```sql
+-- Convert topic grade numbering from relative year (1–4) to absolute
+-- 8-4-4 Form codes (41–44). All existing topics are secondary school
+-- subjects (Forms 1–4 of the Kenyan 8-4-4 curriculum). This aligns
+-- topic grades with the grade codes stored in the papers table.
+UPDATE topics
+SET grade   = grade + 40,
+    updated = unixepoch('now')
+WHERE grade BETWEEN 1 AND 4;
+```
+
+`down.sql`:
+```sql
+UPDATE topics
+SET grade   = grade - 40,
+    updated = unixepoch('now')
+WHERE grade BETWEEN 41 AND 44;
+```
+
+After creating these files, run: `diesel migration run`
+
+**Update after completion:**
+- [x] Mark this task `[x]`
+- [ ] Orchestrator: git commit after this task with message `db: fix topic grade numbering 1-4 → 41-44 for 8-4-4 secondary`
+
+---
+
+### Task L2: Startup changelog emit — resync topics and subjects
+
+**Files to modify:** `src/server.rs`
+
+**Depends on:** Task L1 (migration must run before server starts)
+**Parallel group:** P1 (code change can be written in parallel; takes effect after L1 runs)
+
+**Specification:**
+
+In `src/server.rs`, in the `start()` function, immediately after the line `let config = Arc::new(Configuration::default());` and **before** `Server::builder()`, add the following imports and code block.
+
+Add these imports at the top of `server.rs`:
+```rust
+use crate::db::changelog::{LOG, Record};
+use crate::types::id::Id;
+```
+
+Add this block immediately after `let config = Arc::new(Configuration::default());`:
+```rust
+// Emit resync changelog records for the global catalog tables (subjects=31, topics=32).
+//
+// Rationale: Topics and subjects that were bulk-inserted directly into SQLite
+// (bypassing the gRPC action handler) have no changelog entries, so clients
+// in incremental-sync mode (last_seq > 0) never receive them.  By appending
+// a record with created=0, the watch loop calls snapshot_table_since with
+// min_ts=0, which returns ALL rows regardless of their updated timestamp.
+//
+// This also ensures clients receive the corrected topic grade codes after the
+// 2026-04-15-000000-0004_fix_topic_grades migration updates them from 1–4 to 41–44.
+for table in [31u8, 32u8] { // 31 = SubjectCatalog, 32 = Topics
+    let record = Record {
+        user: Id::system().bytes(),
+        table,
+        op: 0,       // OP_INSERT (upsert semantics in the watch loop)
+        columns: 0,
+        created: 0,  // 0 forces min_ts=0 → snapshot_table_since returns ALL rows
+    };
+    if let Err(e) = LOG.with(|cell| cell.borrow_mut().append(&record)) {
+        eprintln!("[STARTUP] Warning: failed to emit resync for table {table}: {e}");
+    }
+}
+tracing::info!("[STARTUP] Emitted subject-catalog + topics resync changelog records");
+```
+
+**Why `created = 0` works:**
+The incremental sync loop computes `min_ts = min(record.created)` per table and calls `snapshot_table_since(table, min_ts)`. That function runs `WHERE updated >= $1 OR created >= $1`. With `$1 = 0`, every row qualifies regardless of its actual timestamp, so all topics are sent.
+
+**Note:** This code runs on every server startup, causing all connected clients to receive the full topics and subjects tables once per restart. This is intentional and harmless — the client's `_applyTopic` and `_applySubjectCatalog` delta writer methods use `insertOnConflictUpdate`, making the operation idempotent.
+
+**Update after completion:**
+- [ ] Mark this task `[x]`
+- [ ] Run `cargo build` and confirm zero errors
+- [ ] Orchestrator: git commit after this task with message `fix: emit topics+subjects resync on startup to close changelog sync gap`
