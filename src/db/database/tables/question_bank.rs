@@ -228,18 +228,18 @@ pub fn select_random_questions(
 
     let rows: Vec<QuestionRow> = sql_query(&sql).bind::<Integer, _>(topic).load(conn)?;
 
-    // Greedy fill: accumulate questions until we reach or exceed target_marks
+    // Greedy fill: pick questions in random order until cumulative marks >= target.
+    // Allows the last question to overshoot the target by its own mark value so
+    // that we never fail to fill a target just because no single small question
+    // fits the remainder.
     let mut selected = Vec::new();
-    let mut remaining = target_marks as i32;
+    let mut current_marks = 0i32;
     for row in rows {
-        if remaining <= 0 {
+        if current_marks >= target_marks as i32 {
             break;
         }
-        let m = row.marks as i32;
-        if m <= remaining {
-            remaining -= m;
-            selected.push(row);
-        }
+        current_marks += row.marks as i32;
+        selected.push(row);
     }
     Ok(selected)
 }

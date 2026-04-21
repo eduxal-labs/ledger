@@ -90,6 +90,8 @@ pub enum Error {
     SlowDown,
     #[error("nothing to update")]
     NothingToUpdate,
+    #[error("not enough questions")]
+    NotEnoughQuestions,
     #[error("internal server error")]
     Internal,
 }
@@ -183,6 +185,9 @@ impl From<Error> for Status {
             Error::DatabaseLocked => Status::unavailable("database is busy, try again"),
             Error::SlowDown => Status::resource_exhausted("please try again after a few minutes"),
             Error::NothingToUpdate => Status::failed_precondition("nothing to update"),
+            Error::NotEnoughQuestions => Status::failed_precondition(
+                "not enough questions in the bank for this topic and mark allocation",
+            ),
             Error::Internal => Status::internal("internal server error"),
         }
     }

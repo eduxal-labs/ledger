@@ -531,6 +531,14 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                     &[],
                 )?;
 
+                if selected.is_empty() {
+                    tracing::warn!(
+                        "generate_paper: no questions found for topic {} (need {} marks)",
+                        alloc.topic_id,
+                        alloc.marks,
+                    );
+                    return Err(Error::NotEnoughQuestions);
+                }
                 let selected_marks: i32 = selected.iter().map(|q| q.marks as i32).sum();
                 if selected_marks < alloc.marks {
                     tracing::warn!(
@@ -539,7 +547,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                         alloc.marks,
                         selected_marks
                     );
-                    return Err(Error::NothingToUpdate);
+                    return Err(Error::NotEnoughQuestions);
                 }
 
                 for q in &selected {
