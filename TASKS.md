@@ -509,6 +509,6 @@ The incremental sync loop computes `min_ts = min(record.created)` per table and 
 **Note:** This code runs on every server startup, causing all connected clients to receive the full topics and subjects tables once per restart. This is intentional and harmless — the client's `_applyTopic` and `_applySubjectCatalog` delta writer methods use `insertOnConflictUpdate`, making the operation idempotent.
 
 **Update after completion:**
-- [ ] Mark this task `[x]`
-- [ ] Run `cargo build` and confirm zero errors
-- [ ] Orchestrator: git commit after this task with message `fix: emit topics+subjects resync on startup to close changelog sync gap`
+- [x] Mark this task `[x]`
+- [x] Run `cargo build` and confirm zero errors
+- [x] Orchestrator: git commit after this task with message `fix: emit topics+subjects resync on startup to close changelog sync gap`
