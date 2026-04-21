@@ -16,8 +16,9 @@ service QuestionBank {
   rpc EditPaperQuestion(EditPaperQuestionRequest) returns (EditPaperQuestionResponse);
   rpc FinalizePaper(FinalizePaperRequest) returns (FinalizePaperResponse);
   rpc GetPaperPdf(GetPaperPdfRequest) returns (GetPaperPdfResponse);
+  rpc GetPaperQuestions(GetPaperQuestionsRequest) returns (GetPaperQuestionsResponse);
 
-  // === Read Operations ===
+  // === Read Operations (paper state restoration) ===
   rpc ListQuestions(ListQuestionsRequest) returns (ListQuestionsResponse);
   rpc GetQuestion(GetQuestionRequest) returns (GetQuestionResponse);
   rpc GetQuestionGrades(GetQuestionGradesRequest) returns (GetQuestionGradesResponse);
@@ -251,6 +252,23 @@ message GetPaperPdfRequest {
 message GetPaperPdfResponse {
   string pdf_url = 1;
   int64 pdf_expiry = 2;
+}
+
+// === GetPaperQuestions ===
+
+// Returns the currently assembled question list for a paper, ordered by position.
+// Returns an empty list if no paper has been generated yet for this identity.
+message GetPaperQuestionsRequest {
+  string school = 1;
+  string exam = 2;
+  int32 subject = 3;
+  optional int32 paper = 4;
+  int32 grade = 5;
+  optional int32 stream = 6;
+}
+
+message GetPaperQuestionsResponse {
+  repeated PaperQuestion questions = 1;
 }
 
 // === ListQuestions ===

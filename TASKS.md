@@ -441,6 +441,6 @@ async fn get_paper_questions(
 ---
 
 **Update after completion:**
-- [ ] Mark this task `[x]`
-- [ ] `git add -A && git commit -m "feat: add GetPaperQuestions RPC for wizard state restoration"`
+- [x] Mark this task `[x]`
+- [x] `git add -A && git commit -m "feat: add GetPaperQuestions RPC for wizard state restoration"`
 

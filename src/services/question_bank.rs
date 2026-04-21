@@ -989,6 +989,38 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
 
     // ── get_marking_status ───────────────────────────────────────────────
 
+    async fn get_paper_questions(
+        &self,
+        _token: Token,
+        req: GetPaperQuestionsRequest,
+    ) -> Result<GetPaperQuestionsResponse> {
+        let questions = CONN.with(|cell| {
+            let conn = &mut *cell.borrow_mut();
+
+            let rows = question_bank::get_full_paper_questions(
+                conn,
+                &req.school,
+                &req.exam,
+                req.subject,
+                req.paper.map(|p| p as i16),
+                req.grade as i16,
+                req.stream.map(|s| s as i16),
+            )?;
+
+            let paper_questions: Vec<PaperQuestion> = rows
+                .iter()
+                .map(|(pos, row, rubric, images)| PaperQuestion {
+                    position: *pos as i32,
+                    question: Some(build_question_proto(row, rubric, images, true)),
+                })
+                .collect();
+
+            Ok::<_, Error>(paper_questions)
+        })?;
+
+        Ok(GetPaperQuestionsResponse { questions })
+    }
+
     async fn get_marking_status(
         &self,
         _token: Token,

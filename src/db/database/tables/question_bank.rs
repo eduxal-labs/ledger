@@ -460,6 +460,35 @@ pub fn get_paper_questions(
     Ok(rows)
 }
 
+/// Load all paper questions for a paper with full question data (rubric + images),
+/// ordered by position. Returns proto-ready structs ready for the gRPC response.
+pub fn get_full_paper_questions(
+    conn: &mut Conn,
+    school: &str,
+    exam: &str,
+    subject: i32,
+    paper: Option<i16>,
+    grade: i16,
+    stream: Option<i16>,
+) -> Result<
+    Vec<(
+        i16,
+        QuestionRow,
+        Vec<RubricCriterionRow>,
+        Vec<QuestionImageRow>,
+    )>,
+> {
+    let pqs = get_paper_questions(conn, school, exam, subject, paper, grade, stream)?;
+    let mut result = Vec::with_capacity(pqs.len());
+    for pq in &pqs {
+        let row = get_question(conn, pq.question)?;
+        let rubric = get_rubric_criteria(conn, pq.question)?;
+        let images = get_question_images(conn, pq.question)?;
+        result.push((pq.position, row, rubric, images));
+    }
+    Ok(result)
+}
+
 /// Delete all paper questions matching the given paper identity.
 pub fn delete_paper_questions(
     conn: &mut Conn,
