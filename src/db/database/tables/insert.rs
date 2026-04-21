@@ -301,8 +301,8 @@ pub fn insert_exam(conn: &mut Conn, row: &ExamInsert) -> Result<()> {
 pub fn insert_paper(conn: &mut Conn, row: &PaperInsert) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     sql_query(
-        "INSERT INTO papers (school, exam, subject, paper, topic, invigilator, start, \"end\", status, grade, stream, created, updated) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO papers (school, exam, subject, paper, topic, invigilator, start, \"end\", status, grade, stream, time_allowed_minutes, instructions, created, updated) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind::<Text, _>(&row.school)
     .bind::<Text, _>(&row.exam)
@@ -315,6 +315,8 @@ pub fn insert_paper(conn: &mut Conn, row: &PaperInsert) -> Result<()> {
     .bind::<SmallInt, _>(row.status as i16)
     .bind::<SmallInt, _>(row.grade as i16)
     .bind::<Nullable<SmallInt>, _>(row.stream.map(|v| v as i16))
+    .bind::<Nullable<SmallInt>, _>(row.time_allowed_minutes.map(|v| v as i16))
+    .bind::<Nullable<Text>, _>(row.instructions.as_deref())
     .bind::<BigInt, _>(now)
     .bind::<BigInt, _>(now)
     .execute(conn)?;

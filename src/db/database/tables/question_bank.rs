@@ -228,19 +228,41 @@ pub fn select_random_questions(
 
     let rows: Vec<QuestionRow> = sql_query(&sql).bind::<Integer, _>(topic).load(conn)?;
 
-    // Greedy fill: pick questions in random order until cumulative marks >= target.
-    // Allows the last question to overshoot the target by its own mark value so
-    // that we never fail to fill a target just because no single small question
-    // fits the remainder.
+    // Non-overshooting fill: pick questions in random order, skipping any that
+    // would push the total past the target. If we exhaust all fitting questions
+    // without reaching the target, fall back to the smallest overshooting question
+    // so we never silently under-fill when enough questions exist.
     let mut selected = Vec::new();
     let mut current_marks = 0i32;
+    let mut best_fallback: Option<QuestionRow> = None;
+
     for row in rows {
         if current_marks >= target_marks as i32 {
             break;
         }
-        current_marks += row.marks as i32;
-        selected.push(row);
+        let new_total = current_marks + row.marks as i32;
+        if new_total <= target_marks as i32 {
+            // Fits within remaining budget — add it
+            current_marks = new_total;
+            selected.push(row);
+        } else {
+            // Would overshoot — remember the smallest overshooting option as fallback
+            if best_fallback.is_none() || row.marks < best_fallback.as_ref().unwrap().marks {
+                best_fallback = Some(row);
+            }
+        }
     }
+
+    // If we haven't reached the target, add the smallest overshooting question
+    // as a last resort (this preserves the original contract: selected_marks >= target
+    // when enough questions exist).
+    if current_marks < target_marks as i32 {
+        if let Some(fb) = best_fallback {
+            current_marks += fb.marks as i32;
+            selected.push(fb);
+        }
+    }
+
     Ok(selected)
 }
 

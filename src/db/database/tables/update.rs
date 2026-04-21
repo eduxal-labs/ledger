@@ -477,6 +477,8 @@ pub fn update_paper(conn: &mut Conn, row_key: &str, row: &UpdatePaperPayload) ->
          start = COALESCE(?, start), \
          \"end\" = COALESCE(?, \"end\"), \
          status = COALESCE(?, status), \
+         time_allowed_minutes = COALESCE(?, time_allowed_minutes), \
+         instructions = COALESCE(?, instructions), \
          updated = ? \
          WHERE school = ? AND exam = ? AND subject = ? AND paper IS ? AND grade = ? AND stream IS ?",
     )
@@ -485,6 +487,8 @@ pub fn update_paper(conn: &mut Conn, row_key: &str, row: &UpdatePaperPayload) ->
     .bind::<Nullable<BigInt>, _>(row.start)
     .bind::<Nullable<BigInt>, _>(row.end)
     .bind::<Nullable<SmallInt>, _>(row.status.map(|v| v as i16))
+    .bind::<Nullable<SmallInt>, _>(row.time_allowed_minutes.map(|v| v as i16))
+    .bind::<Nullable<Text>, _>(row.instructions.as_deref())
     .bind::<BigInt, _>(now)
     .bind::<Text, _>(school)
     .bind::<Text, _>(exam)

@@ -1179,12 +1179,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
 
             match row {
                 Some(r) => Ok::<_, Error>(marking_row_to_response(&r)),
-                None => Ok::<_, Error>(MarkingStatusResponse {
-                    phase: 0, // QUEUED default when no entry exists
-                    progress: String::new(),
-                    error: None,
-                    estimated_completion: None,
-                }),
+                None => Err(Error::NotFound),
             }
         })?;
 

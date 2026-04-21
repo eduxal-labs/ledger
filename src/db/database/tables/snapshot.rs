@@ -391,7 +391,9 @@ fn query_exams(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> 
     })
 }
 
-const SQL_PAPERS: &str = "SELECT school, exam, subject, paper, topic, invigilator, start, \"end\", status, grade, stream, created, updated FROM papers";
+const SQL_PAPERS: &str = "SELECT school, exam, subject, paper, topic, \
+    invigilator, start, \"end\", status, grade, stream, created, updated, \
+    time_allowed_minutes, instructions FROM papers";
 
 fn query_papers(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
     load_rows::<PaperRow, _>(conn, SQL_PAPERS, true, since, "papers", |r| SnapshotRow {
