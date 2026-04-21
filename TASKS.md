@@ -85,7 +85,7 @@ the final page, render:
 ---
 
 **Update after completion:**
-- [ ] Mark this task `[x]`
+- [x] Mark this task `[x]`
 - [ ] Commit: `git add -A && git commit -m "fix: answer lines, spacing, font sizes, right-aligned marks, page footer in PDF renderer"`
 
 ---
@@ -197,7 +197,7 @@ Regenerate Dart stubs and deliver updated files to the client team.
 ---
 
 **Update after completion:**
-- [ ] Mark this task `[x]`
+- [x] Mark this task `[x]`
 - [ ] Commit: `git add -A && git commit -m "feat: add time_allowed_minutes and instructions to papers schema and proto"`
 
 ---

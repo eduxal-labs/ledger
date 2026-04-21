@@ -26,15 +26,14 @@ pub fn generate_paper_pdf(
     let page_width = Mm(210.0);
     let page_height = Mm(297.0);
 
-    // Margins and layout constants (in mm, converted to Pt for ops)
+    // Margins and layout constants (in mm)
     let left_margin_mm: f32 = 20.0;
     let right_margin_mm: f32 = 190.0;
     let top_start_mm: f32 = 277.0; // start y from bottom (A4 = 297mm, 20mm top margin)
     let bottom_margin_mm: f32 = 25.0;
     let line_height_mm: f32 = 5.5;
-    let paragraph_spacing_mm: f32 = 3.0;
 
-    // Approximate characters per line at 10pt Helvetica on A4 with 20mm margins
+    // Approximate characters per line at 11pt Helvetica on A4 with 20mm margins
     let max_chars_per_line: usize = 90;
 
     // Font handles
@@ -42,15 +41,34 @@ pub fn generate_paper_pdf(
     let font_bold = PdfFontHandle::Builtin(BuiltinFont::HelveticaBold);
     let font_italic = PdfFontHandle::Builtin(BuiltinFont::HelveticaOblique);
 
-    // We'll collect all pages; build ops for each page
+    // Collect all pages; build ops for each page
     let mut pages: Vec<PdfPage> = Vec::new();
     let mut ops: Vec<Op> = Vec::new();
     let mut y = top_start_mm;
+    let mut page_num: usize = 0;
 
-    // Helper: flush current ops into a page and start fresh
-    let flush_page = |ops: &mut Vec<Op>, pages: &mut Vec<PdfPage>| {
-        // End any open text section
+    // Helper: flush current ops into a page (adds page-number footer) and start fresh.
+    // Call `page_num += 1` before calling this.
+    let flush_page = |ops: &mut Vec<Op>, pages: &mut Vec<PdfPage>, page_num: usize| {
+        // Close any open text section
         ops.push(Op::EndTextSection);
+
+        // --- Page number footer: "- N -" centred below the bottom margin ---
+        let page_num_str = format!("- {} -", page_num);
+        let footer_x = center_x(&page_num_str, 9.0, left_margin_mm, right_margin_mm);
+        ops.push(Op::StartTextSection);
+        ops.push(Op::SetFont {
+            font: font_regular.clone(),
+            size: Pt(9.0),
+        });
+        ops.push(Op::SetTextCursor {
+            pos: Point::new(Mm(footer_x), Mm(bottom_margin_mm - 5.0)),
+        });
+        ops.push(Op::ShowText {
+            items: vec![TextItem::Text(page_num_str)],
+        });
+        ops.push(Op::EndTextSection);
+
         let page = PdfPage::new(page_width, page_height, std::mem::take(ops));
         pages.push(page);
     };
@@ -66,13 +84,12 @@ pub fn generate_paper_pdf(
     // Start first page text section
     ops.push(Op::StartTextSection);
 
-    // --- HEADER: School name (bold, centered, 16pt) ---
+    // --- HEADER: School name (bold, centred, 16pt) ---
     let school_name_size = Pt(16.0);
     ops.push(Op::SetFont {
         font: font_bold.clone(),
         size: school_name_size,
     });
-    // Approximate centering: A4 is 210mm, rough char width at 16pt ~4mm
     let school_x = center_x(school_name, 16.0, left_margin_mm, right_margin_mm);
     ops.push(Op::SetTextCursor {
         pos: Point::new(Mm(school_x), Mm(y)),
@@ -82,7 +99,7 @@ pub fn generate_paper_pdf(
     });
     y -= 8.0;
 
-    // --- MOTTO (italic, centered, 10pt) if present ---
+    // --- MOTTO (italic, centred, 10pt) if present ---
     if let Some(motto) = school_motto {
         if !motto.is_empty() {
             ops.push(Op::EndTextSection);
@@ -102,7 +119,7 @@ pub fn generate_paper_pdf(
         }
     }
 
-    // --- Divider line (drawn as a thin line) ---
+    // --- Divider line ---
     ops.push(Op::EndTextSection);
     ops.push(Op::SetOutlineColor {
         col: Color::Rgb(Rgb {
@@ -121,11 +138,11 @@ pub fn generate_paper_pdf(
     });
     y -= 6.0;
 
-    // --- Sub-header: Exam | Subject | Paper N | Form ---
+    // --- Sub-header: Exam | Subject | Paper N | Form (Fix 1: 12pt) ---
     ops.push(Op::StartTextSection);
     ops.push(Op::SetFont {
         font: font_bold.clone(),
-        size: Pt(11.0),
+        size: Pt(12.0), // Fix 1: was Pt(11.0)
     });
     let paper_str = paper_number
         .map(|p| format!("  |  Paper {}", p))
@@ -171,88 +188,147 @@ pub fn generate_paper_pdf(
     let total_marks: i16 = questions.iter().map(|(_, m, _)| m).sum();
 
     for (i, (text, marks, _rubric)) in questions.iter().enumerate() {
-        // Check if we need a new page
+        // Check if we need a new page before drawing this question's header
         if y < bottom_margin_mm {
-            flush_page(&mut ops, &mut pages);
+            page_num += 1;
+            flush_page(&mut ops, &mut pages, page_num);
             ops.push(Op::StartTextSection);
             y = top_start_mm;
         }
 
-        // Question header: "1. (X marks)"
-        let q_header = format!("{}.", i + 1);
-        let q_marks = format!("({} mark{})", marks, if *marks == 1 { "" } else { "s" });
+        // Fix 4: Compute right-aligned marks annotation width & position
+        let marks_text = if *marks == 1 {
+            "(1 mark)".to_string()
+        } else {
+            format!("({} marks)", marks)
+        };
+        let marks_text_width_mm = marks_text.len() as f64 * 11.0 * 0.5 * 0.3528;
+        let marks_x = right_margin_mm - marks_text_width_mm as f32;
 
-        // Set bold for question number
+        // Question number: bold, 11pt (Fix 1: was 10pt)
         ops.push(Op::EndTextSection);
         ops.push(Op::StartTextSection);
         ops.push(Op::SetFont {
             font: font_bold.clone(),
-            size: Pt(10.0),
+            size: Pt(11.0), // Fix 1: was Pt(10.0)
         });
         ops.push(Op::SetTextCursor {
             pos: Point::new(Mm(left_margin_mm), Mm(y)),
         });
         ops.push(Op::ShowText {
-            items: vec![TextItem::Text(q_header)],
+            items: vec![TextItem::Text(format!("{}.", i + 1))],
+        });
+
+        // Fix 4: Right-aligned marks annotation in the same text section as question number
+        ops.push(Op::SetFont {
+            font: font_regular.clone(),
+            size: Pt(11.0),
+        });
+        ops.push(Op::SetTextCursor {
+            pos: Point::new(Mm(marks_x), Mm(y)),
+        });
+        ops.push(Op::ShowText {
+            items: vec![TextItem::Text(marks_text)],
         });
 
         // Question text in regular font, indented
         let indent_mm = left_margin_mm + 10.0;
-        let text_with_marks = format!("{} {}", text, q_marks);
+        // Fix 4: Use text directly — no inline "(X marks)" suffix
         let available_chars = ((right_margin_mm - indent_mm) / (right_margin_mm - left_margin_mm)
             * max_chars_per_line as f32) as usize;
-        let lines = word_wrap(&text_with_marks, available_chars.max(40));
+        let lines = word_wrap(text, available_chars.max(40));
 
-        for (li, line) in lines.iter().enumerate() {
+        for line in lines.iter() {
             if y < bottom_margin_mm {
-                flush_page(&mut ops, &mut pages);
+                page_num += 1;
+                flush_page(&mut ops, &mut pages, page_num);
                 ops.push(Op::StartTextSection);
                 y = top_start_mm;
             }
 
-            if li == 0 {
-                // First line: position next to question number
-                ops.push(Op::EndTextSection);
-                ops.push(Op::StartTextSection);
-                ops.push(Op::SetFont {
-                    font: font_regular.clone(),
-                    size: Pt(10.0),
-                });
-                ops.push(Op::SetTextCursor {
-                    pos: Point::new(Mm(indent_mm), Mm(y)),
-                });
-            } else {
-                // Continuation lines
-                ops.push(Op::EndTextSection);
-                ops.push(Op::StartTextSection);
-                ops.push(Op::SetFont {
-                    font: font_regular.clone(),
-                    size: Pt(10.0),
-                });
-                ops.push(Op::SetTextCursor {
-                    pos: Point::new(Mm(indent_mm), Mm(y)),
-                });
-            }
-
+            // Fix 1: 11pt for question text body (was 10pt)
+            ops.push(Op::EndTextSection);
+            ops.push(Op::StartTextSection);
+            ops.push(Op::SetFont {
+                font: font_regular.clone(),
+                size: Pt(11.0), // Fix 1: was Pt(10.0)
+            });
+            ops.push(Op::SetTextCursor {
+                pos: Point::new(Mm(indent_mm), Mm(y)),
+            });
             ops.push(Op::ShowText {
                 items: vec![TextItem::Text(line.clone())],
             });
             y -= line_height_mm;
         }
 
-        // Extra spacing between questions
-        y -= paragraph_spacing_mm;
+        // Fix 3: Close text section before drawing graphical answer lines
+        ops.push(Op::EndTextSection);
+
+        // Fix 3 + Fix 2: 4.0 mm gap between last text line and first answer line
+        y -= 4.0;
+
+        // Fix 3: Draw ruled answer lines (light grey, full-width)
+        let num_answer_lines = ((*marks as usize) * 2).max(3);
+        ops.push(Op::SetOutlineColor {
+            col: Color::Rgb(Rgb {
+                r: 0.75,
+                g: 0.75,
+                b: 0.75,
+                icc_profile: None,
+            }),
+        });
+        ops.push(Op::SetOutlineThickness { pt: Pt(0.3) });
+
+        for _ in 0..num_answer_lines {
+            // Check page space before drawing this line (need 7.0 mm)
+            if y < bottom_margin_mm + 7.0 {
+                page_num += 1;
+                flush_page(&mut ops, &mut pages, page_num);
+                y = top_start_mm;
+                // Restore answer-line style after flush
+                ops.push(Op::SetOutlineColor {
+                    col: Color::Rgb(Rgb {
+                        r: 0.75,
+                        g: 0.75,
+                        b: 0.75,
+                        icc_profile: None,
+                    }),
+                });
+                ops.push(Op::SetOutlineThickness { pt: Pt(0.3) });
+            }
+            y -= 7.0;
+            ops.push(Op::DrawLine {
+                line: Line {
+                    points: vec![lp(left_margin_mm, y), lp(right_margin_mm, y)],
+                    is_closed: false,
+                },
+            });
+        }
+
+        // Fix 2: Inter-question gap — 12.0 mm (was paragraph_spacing_mm = 3.0 mm)
+        y -= 12.0;
     }
 
     // --- Footer: Total marks ---
     if y < bottom_margin_mm + 10.0 {
-        flush_page(&mut ops, &mut pages);
+        page_num += 1;
+        flush_page(&mut ops, &mut pages, page_num);
         ops.push(Op::StartTextSection);
         y = top_start_mm;
     }
 
     y -= 2.0;
     ops.push(Op::EndTextSection);
+    ops.push(Op::SetOutlineColor {
+        col: Color::Rgb(Rgb {
+            r: 0.3,
+            g: 0.3,
+            b: 0.3,
+            icc_profile: None,
+        }),
+    });
+    ops.push(Op::SetOutlineThickness { pt: Pt(0.5) });
     ops.push(Op::DrawLine {
         line: Line {
             points: vec![lp(left_margin_mm, y + 2.0), lp(right_margin_mm, y + 2.0)],
@@ -274,9 +350,50 @@ pub fn generate_paper_pdf(
     ops.push(Op::ShowText {
         items: vec![TextItem::Text(total_str)],
     });
+    y -= line_height_mm;
+
+    // Fix 5: "— END OF PAPER —" centred, bold, 11pt, with 10.0 mm top margin
+    y -= 10.0;
+    let end_text = "\u{2014} END OF PAPER \u{2014}";
+    let end_x = center_x(end_text, 11.0, left_margin_mm, right_margin_mm);
+    ops.push(Op::EndTextSection);
+    ops.push(Op::StartTextSection);
+    ops.push(Op::SetFont {
+        font: font_bold.clone(),
+        size: Pt(11.0),
+    });
+    ops.push(Op::SetTextCursor {
+        pos: Point::new(Mm(end_x), Mm(y)),
+    });
+    ops.push(Op::ShowText {
+        items: vec![TextItem::Text(end_text.to_string())],
+    });
 
     // Flush the last page
-    flush_page(&mut ops, &mut pages);
+    page_num += 1;
+    flush_page(&mut ops, &mut pages, page_num);
+
+    // Fix 5: Add "Turn over" to all non-final pages
+    if pages.len() > 1 {
+        let last_idx = pages.len() - 1;
+        let turnover_text = "Turn over";
+        let text_width_mm = turnover_text.len() as f32 * 9.0 * 0.5 * 0.3528;
+        let turnover_x = right_margin_mm - text_width_mm;
+        for page in &mut pages[0..last_idx] {
+            page.ops.push(Op::StartTextSection);
+            page.ops.push(Op::SetFont {
+                font: font_regular.clone(),
+                size: Pt(9.0),
+            });
+            page.ops.push(Op::SetTextCursor {
+                pos: Point::new(Mm(turnover_x), Mm(bottom_margin_mm - 5.0)),
+            });
+            page.ops.push(Op::ShowText {
+                items: vec![TextItem::Text(turnover_text.to_string())],
+            });
+            page.ops.push(Op::EndTextSection);
+        }
+    }
 
     // Build the document
     let mut doc = PdfDocument::new("Exam Paper");
@@ -300,7 +417,7 @@ pub fn generate_paper_pdf(
 /// Approximate horizontal centering for a text string.
 ///
 /// Estimates the text width using an average character width ratio
-/// and returns the x position (in mm) to start the text so it appears centered.
+/// and returns the x position (in mm) to start the text so it appears centred.
 fn center_x(text: &str, font_size_pt: f32, left_mm: f32, right_mm: f32) -> f32 {
     let page_center = (left_mm + right_mm) / 2.0;
     // Approximate character width: ~0.5 * font_size in pt, converted to mm (1pt = 0.3528mm)

@@ -279,6 +279,8 @@ diesel::table! {
         stream -> Nullable<SmallInt>,
         created -> BigInt,
         updated -> BigInt,
+        time_allowed_minutes -> Nullable<SmallInt>,
+        instructions -> Nullable<Text>,
     }
 }
 

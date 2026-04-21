@@ -832,6 +832,10 @@ pub struct PaperRow {
     pub created: i64,
     #[diesel(sql_type = BigInt)]
     pub updated: i64,
+    #[diesel(sql_type = Nullable<SmallInt>)]
+    pub time_allowed_minutes: Option<i16>,
+    #[diesel(sql_type = Nullable<Text>)]
+    pub instructions: Option<String>,
 }
 
 impl PaperRow {
@@ -865,6 +869,8 @@ impl From<&PaperRow> for PaperInsert {
             status: row.status as i32,
             grade: row.grade as i32,
             stream: row.stream.map(|v| v as i32),
+            time_allowed_minutes: row.time_allowed_minutes.map(|v| v as i32),
+            instructions: row.instructions.clone(),
         }
     }
 }

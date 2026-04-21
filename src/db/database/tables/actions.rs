@@ -2714,6 +2714,8 @@ fn handle_create_paper(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> 
         status: 0, // default status
         grade: p.grade,
         stream: p.stream,
+        time_allowed_minutes: p.time_allowed_minutes,
+        instructions: p.instructions.clone(),
     };
     insert::insert_paper(conn, &paper_insert)?;
     append_log(log_user, TBL_PAPERS as u8, OP_INSERT, 0)?;
