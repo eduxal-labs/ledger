@@ -129,6 +129,14 @@ struct SubjectNameRow {
     pub name: String,
 }
 
+#[derive(diesel::QueryableByName)]
+struct PaperInfoRow {
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::SmallInt>)]
+    pub time_allowed_minutes: Option<i16>,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+    pub instructions: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // Bulk import: helper structs for JSON parsing
 // ---------------------------------------------------------------------------
@@ -777,6 +785,29 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                 .map(|s| s.name.as_str())
                 .unwrap_or("Subject");
 
+            // Load paper time_allowed and custom instructions
+            let paper_info: Option<PaperInfoRow> = sql_query(
+                "SELECT time_allowed_minutes, instructions FROM papers \
+                 WHERE school = ? AND exam = ? AND subject = ? \
+                 AND COALESCE(paper, -1) = COALESCE(?, -1) \
+                 AND grade = ? \
+                 AND COALESCE(stream, -1) = COALESCE(?, -1)",
+            )
+            .bind::<Text, _>(&req.school)
+            .bind::<Text, _>(&req.exam)
+            .bind::<Integer, _>(req.subject)
+            .bind::<diesel::sql_types::Nullable<SmallInt>, _>(req.paper.map(|p| p as i16))
+            .bind::<SmallInt, _>(req.grade as i16)
+            .bind::<diesel::sql_types::Nullable<SmallInt>, _>(req.stream.map(|s| s as i16))
+            .get_result(conn)
+            .optional()?;
+
+            let time_allowed = paper_info.as_ref().and_then(|p| p.time_allowed_minutes);
+            let custom_instructions = paper_info
+                .as_ref()
+                .and_then(|p| p.instructions.as_deref())
+                .map(|s| s.to_string());
+
             // Generate PDF
             let pdf_bytes = crate::pdf::generate_paper_pdf(
                 school_name,
@@ -785,6 +816,8 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                 subject_name,
                 req.paper.map(|p| p as i16),
                 req.grade as i16,
+                time_allowed,
+                custom_instructions.as_deref(),
                 &questions_data,
             )
             .map_err(|e| {

@@ -11,6 +11,8 @@ use printpdf::*;
 /// * `subject_name` — Subject name
 /// * `paper_number` — Optional paper number
 /// * `grade` — Grade/form level
+/// * `time_allowed_minutes` — Optional exam duration in minutes (rendered below sub-header)
+/// * `custom_instructions` — Optional multi-line instructions string; falls back to 5 default lines
 /// * `questions` — Slice of (question_text, marks, rubric_criteria) tuples
 ///   where rubric_criteria is a vec of (criterion_text, marks)
 pub fn generate_paper_pdf(
@@ -20,6 +22,8 @@ pub fn generate_paper_pdf(
     subject_name: &str,
     paper_number: Option<i16>,
     grade: i16,
+    time_allowed_minutes: Option<i16>,
+    custom_instructions: Option<&str>,
     questions: &[(String, i16, Vec<(String, i16)>)],
 ) -> Result<Vec<u8>, String> {
     // A4 dimensions
@@ -159,15 +163,76 @@ pub fn generate_paper_pdf(
     });
     y -= 8.0;
 
-    // --- Instructions (5-line italic block) ---
-    let instruction_lines = [
-        "Answer ALL questions in this paper.",
-        "Show all your working clearly in the spaces provided.",
-        "All answers must be written in the spaces provided.",
-        "Check that all pages are present before starting.",
-        "Candidates should check the paper for any missing pages.",
-    ];
-    for instr in &instruction_lines {
+    // Compute total marks early so it can be shown in the header section
+    let total_marks: i16 = questions.iter().map(|(_, m, _)| m).sum();
+
+    // --- Time allowed (if set) ---
+    if let Some(mins) = time_allowed_minutes {
+        let time_str = if mins >= 60 {
+            let h = mins / 60;
+            let rem = mins % 60;
+            if rem == 0 {
+                if h == 1 {
+                    format!("Time: 1 hour")
+                } else {
+                    format!("Time: {} hours", h)
+                }
+            } else {
+                if h == 1 {
+                    format!("Time: 1 hour {} minutes", rem)
+                } else {
+                    format!("Time: {} hours {} minutes", h, rem)
+                }
+            }
+        } else {
+            format!("Time: {} minutes", mins)
+        };
+        ops.push(Op::EndTextSection);
+        ops.push(Op::StartTextSection);
+        ops.push(Op::SetFont {
+            font: font_regular.clone(),
+            size: Pt(11.0),
+        });
+        let time_x = center_x(&time_str, 11.0, left_margin_mm, right_margin_mm);
+        ops.push(Op::SetTextCursor {
+            pos: Point::new(Mm(time_x), Mm(y)),
+        });
+        ops.push(Op::ShowText {
+            items: vec![TextItem::Text(time_str)],
+        });
+        y -= 6.0;
+    }
+
+    // --- Total marks (always) ---
+    let total_str = format!("Total Marks: {}", total_marks);
+    ops.push(Op::EndTextSection);
+    ops.push(Op::StartTextSection);
+    ops.push(Op::SetFont {
+        font: font_regular.clone(),
+        size: Pt(11.0),
+    });
+    let total_hdr_x = center_x(&total_str, 11.0, left_margin_mm, right_margin_mm);
+    ops.push(Op::SetTextCursor {
+        pos: Point::new(Mm(total_hdr_x), Mm(y)),
+    });
+    ops.push(Op::ShowText {
+        items: vec![TextItem::Text(total_str.clone())],
+    });
+    y -= 8.0;
+
+    // --- Instructions block ---
+    let effective_instructions: Vec<String> = if let Some(custom) = custom_instructions {
+        custom.lines().map(|l| l.to_string()).collect()
+    } else {
+        vec![
+            "Answer ALL questions in this paper.".to_string(),
+            "Show all your working clearly in the spaces provided.".to_string(),
+            "All answers must be written in the spaces provided.".to_string(),
+            "Check that all pages are present before starting.".to_string(),
+            "Candidates should check the paper for any missing pages.".to_string(),
+        ]
+    };
+    for instr in &effective_instructions {
         ops.push(Op::EndTextSection);
         ops.push(Op::StartTextSection);
         ops.push(Op::SetFont {
@@ -178,7 +243,7 @@ pub fn generate_paper_pdf(
             pos: Point::new(Mm(left_margin_mm), Mm(y)),
         });
         ops.push(Op::ShowText {
-            items: vec![TextItem::Text(instr.to_string())],
+            items: vec![TextItem::Text(instr.clone())],
         });
         y -= 4.0;
     }
@@ -310,7 +375,6 @@ pub fn generate_paper_pdf(
     ops.push(Op::StartTextSection);
 
     // --- QUESTIONS ---
-    let total_marks: i16 = questions.iter().map(|(_, m, _)| m).sum();
 
     for (i, (text, marks, _rubric)) in questions.iter().enumerate() {
         // Check if we need a new page before drawing this question's header
@@ -640,6 +704,8 @@ mod tests {
             "Mathematics",
             Some(1),
             10,
+            None,
+            None,
             &questions,
         );
 
@@ -654,8 +720,17 @@ mod tests {
     fn test_generate_paper_pdf_no_motto() {
         let questions = vec![("Define osmosis.".to_string(), 3_i16, vec![])];
 
-        let result =
-            generate_paper_pdf("Test School", None, "CAT 1", "Biology", None, 9, &questions);
+        let result = generate_paper_pdf(
+            "Test School",
+            None,
+            "CAT 1",
+            "Biology",
+            None,
+            9,
+            None,
+            None,
+            &questions,
+        );
 
         assert!(result.is_ok());
         let bytes = result.unwrap();
@@ -685,6 +760,8 @@ mod tests {
             "History",
             Some(2),
             12,
+            None,
+            None,
             &questions,
         );
 

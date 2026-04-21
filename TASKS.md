@@ -255,7 +255,7 @@ or in its place if time_allowed is None.
 ---
 
 **Update after completion:**
-- [ ] Mark this task `[x]`
+- [x] Mark this task `[x]`
 - [ ] Commit: `git add -A && git commit -m "feat: time allowed, total marks, and custom instructions in PDF header"`
 
 ---
