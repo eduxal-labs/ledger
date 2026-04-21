@@ -92,6 +92,12 @@ pub trait QuestionBank: Sync + Send + 'static + Sized {
         request: GetPaperQuestionsRequest,
     ) -> impl Future<Output = Result<GetPaperQuestionsResponse>> + Send;
 
+    fn set_paper_question_section(
+        &self,
+        token: Token,
+        request: SetPaperQuestionSectionRequest,
+    ) -> impl Future<Output = Result<SetPaperQuestionSectionResponse>> + Send;
+
     // === Read Operations ===
 
     fn list_questions(
@@ -219,6 +225,16 @@ impl<T: QuestionBank> question_bank_server::QuestionBank for T {
     ) -> std::result::Result<Response<GetPaperQuestionsResponse>, Status> {
         let token = extract_token(&request)?;
         let response = QuestionBank::get_paper_questions(self, token, request.into_inner()).await?;
+        Ok(Response::new(response))
+    }
+
+    async fn set_paper_question_section(
+        &self,
+        request: Request<SetPaperQuestionSectionRequest>,
+    ) -> std::result::Result<Response<SetPaperQuestionSectionResponse>, Status> {
+        let token = extract_token(&request)?;
+        let response =
+            QuestionBank::set_paper_question_section(self, token, request.into_inner()).await?;
         Ok(Response::new(response))
     }
 

@@ -585,6 +585,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                 let question = load_full_question(conn, *qid, true)?;
                 paper_questions.push(PaperQuestion {
                     position: *pos as i32,
+                    section: None,
                     question: Some(question),
                 });
             }
@@ -653,6 +654,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
             Ok::<_, Error>(RegenerateQuestionResponse {
                 replacement: Some(PaperQuestion {
                     position: req.position,
+                    section: None,
                     question: Some(question),
                 }),
             })
@@ -1009,8 +1011,9 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
 
             let paper_questions: Vec<PaperQuestion> = rows
                 .iter()
-                .map(|(pos, row, rubric, images)| PaperQuestion {
+                .map(|(pos, section, row, rubric, images)| PaperQuestion {
                     position: *pos as i32,
+                    section: section.clone(),
                     question: Some(build_question_proto(row, rubric, images, true)),
                 })
                 .collect();
@@ -1019,6 +1022,40 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
         })?;
 
         Ok(GetPaperQuestionsResponse { questions })
+    }
+
+    async fn set_paper_question_section(
+        &self,
+        _token: Token,
+        req: SetPaperQuestionSectionRequest,
+    ) -> Result<SetPaperQuestionSectionResponse> {
+        // Validate section value
+        if let Some(ref s) = req.section {
+            if !matches!(s.as_str(), "A" | "B" | "C" | "D") {
+                return Err(Error::InvalidPermissions); // maps to invalid_argument
+            }
+        }
+
+        let found = CONN.with(|cell| {
+            let conn = &mut *cell.borrow_mut();
+            question_bank::set_paper_question_section(
+                conn,
+                &req.school,
+                &req.exam,
+                req.subject,
+                req.paper.map(|p| p as i16),
+                req.grade as i16,
+                req.stream.map(|s| s as i16),
+                req.position as i16,
+                req.section.as_deref(),
+            )
+        })?;
+
+        if !found {
+            return Err(Error::NotFound);
+        }
+
+        Ok(SetPaperQuestionSectionResponse {})
     }
 
     async fn get_marking_status(

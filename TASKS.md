@@ -138,7 +138,7 @@ ensure it still renders after the full 5-line block.
 ---
 
 **Update after completion:**
-- [ ] Mark this task `[x]`
+- [x] Mark this task `[x]`
 - [ ] Commit: `git add -A && git commit -m "feat: candidate info box and expanded instructions block in PDF header"`
 
 ---
@@ -386,7 +386,7 @@ Regenerate Dart stubs and deliver updated files to the client team.
 ---
 
 **Update after completion:**
-- [ ] Mark this task `[x]`
+- [x] Mark this task `[x]`
 - [ ] Commit: `git add -A && git commit -m "feat: section column on paper_questions, SetPaperQuestionSection RPC"`
 
 ---

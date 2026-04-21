@@ -92,6 +92,8 @@ pub enum Error {
     NothingToUpdate,
     #[error("not enough questions")]
     NotEnoughQuestions,
+    #[error("not found")]
+    NotFound,
     #[error("internal server error")]
     Internal,
 }
@@ -188,6 +190,7 @@ impl From<Error> for Status {
             Error::NotEnoughQuestions => Status::failed_precondition(
                 "not enough questions in the bank for this topic and mark allocation",
             ),
+            Error::NotFound => Status::not_found("not found"),
             Error::Internal => Status::internal("internal server error"),
         }
     }

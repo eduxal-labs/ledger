@@ -17,6 +17,7 @@ service QuestionBank {
   rpc FinalizePaper(FinalizePaperRequest) returns (FinalizePaperResponse);
   rpc GetPaperPdf(GetPaperPdfRequest) returns (GetPaperPdfResponse);
   rpc GetPaperQuestions(GetPaperQuestionsRequest) returns (GetPaperQuestionsResponse);
+  rpc SetPaperQuestionSection(SetPaperQuestionSectionRequest) returns (SetPaperQuestionSectionResponse);
 
   // === Read Operations (paper state restoration) ===
   rpc ListQuestions(ListQuestionsRequest) returns (ListQuestionsResponse);
@@ -178,6 +179,7 @@ message GeneratePaperResponse {
 message PaperQuestion {
   int32 position = 1;
   Question question = 2;
+  optional string section = 3;
 }
 
 // === RegenerateQuestion ===
@@ -270,6 +272,21 @@ message GetPaperQuestionsRequest {
 message GetPaperQuestionsResponse {
   repeated PaperQuestion questions = 1;
 }
+
+// === SetPaperQuestionSection ===
+
+message SetPaperQuestionSectionRequest {
+  string school = 1;
+  string exam = 2;
+  int32 subject = 3;
+  optional int32 paper = 4;
+  int32 grade = 5;
+  optional int32 stream = 6;
+  int32 position = 7;
+  optional string section = 8;
+}
+
+message SetPaperQuestionSectionResponse {}
 
 // === ListQuestions ===
 

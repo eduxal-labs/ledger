@@ -473,6 +473,7 @@ pub fn get_full_paper_questions(
 ) -> Result<
     Vec<(
         i16,
+        Option<String>,
         QuestionRow,
         Vec<RubricCriterionRow>,
         Vec<QuestionImageRow>,
@@ -484,9 +485,42 @@ pub fn get_full_paper_questions(
         let row = get_question(conn, pq.question)?;
         let rubric = get_rubric_criteria(conn, pq.question)?;
         let images = get_question_images(conn, pq.question)?;
-        result.push((pq.position, row, rubric, images));
+        result.push((pq.position, pq.section.clone(), row, rubric, images));
     }
     Ok(result)
+}
+
+/// Update the section label for a specific paper question by position.
+/// Returns true if a row was updated, false if not found.
+pub fn set_paper_question_section(
+    conn: &mut Conn,
+    school: &str,
+    exam: &str,
+    subject: i32,
+    paper: Option<i16>,
+    grade: i16,
+    stream: Option<i16>,
+    position: i16,
+    section: Option<&str>,
+) -> Result<bool> {
+    let affected = sql_query(
+        "UPDATE paper_questions SET section = ? \
+         WHERE school = ? AND exam = ? AND subject = ? \
+         AND COALESCE(paper, -1) = COALESCE(?, -1) \
+         AND grade = ? \
+         AND COALESCE(stream, -1) = COALESCE(?, -1) \
+         AND position = ?",
+    )
+    .bind::<Nullable<Text>, _>(section)
+    .bind::<Text, _>(school)
+    .bind::<Text, _>(exam)
+    .bind::<Integer, _>(subject)
+    .bind::<Nullable<SmallInt>, _>(paper)
+    .bind::<SmallInt, _>(grade)
+    .bind::<Nullable<SmallInt>, _>(stream)
+    .bind::<SmallInt, _>(position)
+    .execute(conn)?;
+    Ok(affected > 0)
 }
 
 /// Delete all paper questions matching the given paper identity.

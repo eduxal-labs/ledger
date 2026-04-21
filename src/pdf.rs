@@ -159,20 +159,30 @@ pub fn generate_paper_pdf(
     });
     y -= 8.0;
 
-    // --- Instructions ---
-    ops.push(Op::EndTextSection);
-    ops.push(Op::StartTextSection);
-    ops.push(Op::SetFont {
-        font: font_italic.clone(),
-        size: Pt(10.0),
-    });
-    ops.push(Op::SetTextCursor {
-        pos: Point::new(Mm(left_margin_mm), Mm(y)),
-    });
-    ops.push(Op::ShowText {
-        items: vec![TextItem::Text("Answer ALL questions.".to_string())],
-    });
-    y -= 10.0;
+    // --- Instructions (5-line italic block) ---
+    let instruction_lines = [
+        "Answer ALL questions in this paper.",
+        "Show all your working clearly in the spaces provided.",
+        "All answers must be written in the spaces provided.",
+        "Check that all pages are present before starting.",
+        "Candidates should check the paper for any missing pages.",
+    ];
+    for instr in &instruction_lines {
+        ops.push(Op::EndTextSection);
+        ops.push(Op::StartTextSection);
+        ops.push(Op::SetFont {
+            font: font_italic.clone(),
+            size: Pt(10.0),
+        });
+        ops.push(Op::SetTextCursor {
+            pos: Point::new(Mm(left_margin_mm), Mm(y)),
+        });
+        ops.push(Op::ShowText {
+            items: vec![TextItem::Text(instr.to_string())],
+        });
+        y -= 4.0;
+    }
+    y -= 3.0; // small extra gap before the rule
 
     // --- Horizontal rule below instructions ---
     ops.push(Op::EndTextSection);
@@ -182,6 +192,121 @@ pub fn generate_paper_pdf(
             is_closed: false,
         },
     });
+
+    // --- Candidate information box ---
+    let box_top = y;
+    let num_rows = 5;
+    let row_height = 9.0_f32;
+    let inner_padding = 4.0_f32;
+    let box_inner_height = num_rows as f32 * row_height;
+    let box_height = box_inner_height + 2.0 * inner_padding;
+    let box_bottom = box_top - box_height;
+
+    // Draw border rectangle (0.5pt, RGB 0.3/0.3/0.3)
+    ops.push(Op::SetOutlineColor {
+        col: Color::Rgb(Rgb {
+            r: 0.3,
+            g: 0.3,
+            b: 0.3,
+            icc_profile: None,
+        }),
+    });
+    ops.push(Op::SetOutlineThickness { pt: Pt(0.5) });
+    // Top border
+    ops.push(Op::DrawLine {
+        line: Line {
+            points: vec![lp(left_margin_mm, box_top), lp(right_margin_mm, box_top)],
+            is_closed: false,
+        },
+    });
+    // Bottom border
+    ops.push(Op::DrawLine {
+        line: Line {
+            points: vec![
+                lp(left_margin_mm, box_bottom),
+                lp(right_margin_mm, box_bottom),
+            ],
+            is_closed: false,
+        },
+    });
+    // Left border
+    ops.push(Op::DrawLine {
+        line: Line {
+            points: vec![lp(left_margin_mm, box_top), lp(left_margin_mm, box_bottom)],
+            is_closed: false,
+        },
+    });
+    // Right border
+    ops.push(Op::DrawLine {
+        line: Line {
+            points: vec![
+                lp(right_margin_mm, box_top),
+                lp(right_margin_mm, box_bottom),
+            ],
+            is_closed: false,
+        },
+    });
+
+    // Draw rows with labels and fill lines
+    let row_labels: &[(&str, Option<f32>)] = &[
+        ("Name:", None),
+        ("Adm. No.:", Some(60.0)),
+        ("Class / Stream:", Some(60.0)),
+        ("Signature:", Some(60.0)),
+        ("Date:", Some(40.0)),
+    ];
+
+    let mut row_y = box_top - inner_padding - row_height / 2.0 + 2.0;
+
+    for (label, fill_len_opt) in row_labels {
+        let label_x = left_margin_mm + inner_padding;
+        let right_inner = right_margin_mm - inner_padding;
+
+        // Estimate label text width
+        let label_text_width = label.len() as f32 * 10.0 * 0.5 * 0.3528;
+        let fill_start_x = label_x + label_text_width + 2.0;
+        let fill_end_x = match fill_len_opt {
+            None => right_inner,
+            Some(len) => (fill_start_x + len).min(right_inner),
+        };
+
+        // Draw label text
+        ops.push(Op::StartTextSection);
+        ops.push(Op::SetFont {
+            font: font_regular.clone(),
+            size: Pt(10.0),
+        });
+        ops.push(Op::SetTextCursor {
+            pos: Point::new(Mm(label_x), Mm(row_y)),
+        });
+        ops.push(Op::ShowText {
+            items: vec![TextItem::Text(label.to_string())],
+        });
+        ops.push(Op::EndTextSection);
+
+        // Draw fill line 1.0 mm below baseline
+        let fill_y = row_y - 1.0;
+        ops.push(Op::SetOutlineColor {
+            col: Color::Rgb(Rgb {
+                r: 0.6,
+                g: 0.6,
+                b: 0.6,
+                icc_profile: None,
+            }),
+        });
+        ops.push(Op::SetOutlineThickness { pt: Pt(0.4) });
+        ops.push(Op::DrawLine {
+            line: Line {
+                points: vec![lp(fill_start_x, fill_y), lp(fill_end_x, fill_y)],
+                is_closed: false,
+            },
+        });
+
+        row_y -= row_height;
+    }
+
+    y = box_bottom - 6.0; // 6mm gap after the box
+
     ops.push(Op::StartTextSection);
 
     // --- QUESTIONS ---

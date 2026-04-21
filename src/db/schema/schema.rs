@@ -261,6 +261,7 @@ diesel::table! {
         stream -> Nullable<SmallInt>,
         question -> Integer,
         position -> SmallInt,
+        section -> Nullable<Text>,
     }
 }
 

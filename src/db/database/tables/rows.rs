@@ -1849,6 +1849,8 @@ pub struct PaperQuestionRow {
     pub question: i32,
     #[diesel(sql_type = SmallInt)]
     pub position: i16,
+    #[diesel(sql_type = Nullable<Text>)]
+    pub section: Option<String>,
 }
 
 #[derive(QueryableByName)]
