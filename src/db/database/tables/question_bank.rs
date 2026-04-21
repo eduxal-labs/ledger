@@ -258,7 +258,6 @@ pub fn select_random_questions(
     // when enough questions exist).
     if current_marks < target_marks as i32 {
         if let Some(fb) = best_fallback {
-            current_marks += fb.marks as i32;
             selected.push(fb);
         }
     }
