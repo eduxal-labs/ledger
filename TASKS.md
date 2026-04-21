@@ -265,8 +265,8 @@ use diesel::OptionalExtension;
 ---
 
 **Update after completion:**
-- [ ] Mark this task `[x]`
-- [ ] `git add -A && git commit -m "fix: graceful fallback in finalize_paper when school/exam not yet synced"`
+- [x] Mark this task `[x]`
+- [x] `git add -A && git commit -m "fix: graceful fallback in finalize_paper when school/exam not yet synced"`
 
 ---
 

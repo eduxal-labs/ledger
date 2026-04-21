@@ -9,7 +9,7 @@ use crate::types::error::{Error, OnConflict, Result};
 use crate::types::token::Token;
 use diesel::sql_query;
 use diesel::sql_types::{Integer, SmallInt, Text};
-use diesel::{Connection, RunQueryDsl};
+use diesel::{Connection, OptionalExtension, RunQueryDsl};
 use std::sync::Arc;
 use tracing::error;
 
@@ -743,27 +743,44 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
             }
 
             // Load school name + motto
-            let school_info: SchoolInfoRow =
+            let school_info: Option<SchoolInfoRow> =
                 sql_query("SELECT name, motto FROM schools WHERE id = ?")
                     .bind::<Text, _>(&req.school)
-                    .get_result(conn)?;
+                    .get_result(conn)
+                    .optional()?;
+            let school_name = school_info
+                .as_ref()
+                .map(|s| s.name.as_str())
+                .unwrap_or("School");
+            let school_motto = school_info.as_ref().and_then(|s| s.motto.as_deref());
 
             // Load exam name
-            let exam_info: ExamNameRow = sql_query("SELECT name FROM exams WHERE id = ?")
+            let exam_info: Option<ExamNameRow> = sql_query("SELECT name FROM exams WHERE id = ?")
                 .bind::<Text, _>(&req.exam)
-                .get_result(conn)?;
+                .get_result(conn)
+                .optional()?;
+            let exam_name = exam_info
+                .as_ref()
+                .map(|e| e.name.as_str())
+                .unwrap_or("Exam");
 
             // Load subject name
-            let subject_info: SubjectNameRow = sql_query("SELECT name FROM subjects WHERE id = ?")
-                .bind::<Integer, _>(req.subject)
-                .get_result(conn)?;
+            let subject_info: Option<SubjectNameRow> =
+                sql_query("SELECT name FROM subjects WHERE id = ?")
+                    .bind::<Integer, _>(req.subject)
+                    .get_result(conn)
+                    .optional()?;
+            let subject_name = subject_info
+                .as_ref()
+                .map(|s| s.name.as_str())
+                .unwrap_or("Subject");
 
             // Generate PDF
             let pdf_bytes = crate::pdf::generate_paper_pdf(
-                &school_info.name,
-                school_info.motto.as_deref(),
-                &exam_info.name,
-                &subject_info.name,
+                school_name,
+                school_motto,
+                exam_name,
+                subject_name,
                 req.paper.map(|p| p as i16),
                 req.grade as i16,
                 &questions_data,
