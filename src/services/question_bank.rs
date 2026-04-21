@@ -1,8 +1,9 @@
 use crate::config::storage::sign;
+use crate::db::changelog::{LOG, Record};
 use crate::db::database::CONN;
 use crate::db::database::tables::question_bank;
 use crate::db::database::tables::rows::{
-    MarkingQueueRow, QuestionImageRow, QuestionRow, RubricCriterionRow,
+    MarkingQueueRow, PaperRow, QuestionImageRow, QuestionRow, RubricCriterionRow,
 };
 use crate::proto::services::question_bank::*;
 use crate::types::error::{Error, OnConflict, Result};
@@ -180,6 +181,20 @@ struct SubjectIdRow {
 struct TopicIdRow {
     #[diesel(sql_type = Integer)]
     pub id: i32,
+}
+
+#[derive(diesel::QueryableByName)]
+struct PaperStatusRow {
+    #[diesel(sql_type = SmallInt)]
+    pub status: i16,
+    #[diesel(sql_type = Text)]
+    pub invigilator: String,
+}
+
+#[derive(diesel::QueryableByName)]
+struct ExamTeacherRow {
+    #[diesel(sql_type = Text)]
+    pub teacher: String,
 }
 
 // =========================================================================
@@ -1123,6 +1138,326 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
         })?;
 
         Ok(GetPaperQuestionsResponse { questions })
+    }
+
+    async fn clear_paper_questions(
+        &self,
+        token: Token,
+        req: ClearPaperQuestionsRequest,
+    ) -> Result<ClearPaperQuestionsResponse> {
+        let caller_id = token.user.to_string();
+
+        // ── DB phase: permission check, status check, delete questions ──────
+        let (questions_deleted, pdf_key, scheme_key) = CONN.with(|cell| {
+            let conn = &mut *cell.borrow_mut();
+
+            // Fetch paper to get status and invigilator
+            let paper_row: Option<PaperStatusRow> = sql_query(
+                "SELECT status, invigilator FROM papers \
+                 WHERE school = ? AND exam = ? AND subject = ? \
+                 AND COALESCE(paper, -1) = COALESCE(?, -1) \
+                 AND grade = ? \
+                 AND COALESCE(stream, -1) = COALESCE(?, -1)",
+            )
+            .bind::<Text, _>(&req.school)
+            .bind::<Text, _>(&req.exam)
+            .bind::<Integer, _>(req.subject)
+            .bind::<diesel::sql_types::Nullable<SmallInt>, _>(req.paper.map(|p| p as i16))
+            .bind::<SmallInt, _>(req.grade as i16)
+            .bind::<diesel::sql_types::Nullable<SmallInt>, _>(req.stream.map(|s| s as i16))
+            .get_result(conn)
+            .optional()?;
+
+            let paper_row = paper_row.ok_or(Error::NotFound)?;
+
+            // Fetch exam to get teacher (for permission check)
+            let exam_row: Option<ExamTeacherRow> =
+                sql_query("SELECT teacher FROM exams WHERE id = ?")
+                    .bind::<Text, _>(&req.exam)
+                    .get_result(conn)
+                    .optional()?;
+
+            let teacher = exam_row.map(|r| r.teacher).unwrap_or_default();
+
+            // Permission: caller must be exam creator or paper invigilator
+            if paper_row.invigilator != caller_id && teacher != caller_id {
+                return Err(Error::Forbidden);
+            }
+
+            // Status check: paper must be Pending (status = 0)
+            if paper_row.status != 0 {
+                return Err(Error::NothingToUpdate);
+            }
+
+            // Delete paper_questions and capture count
+            let questions_deleted = question_bank::delete_paper_questions_count(
+                conn,
+                &req.school,
+                &req.exam,
+                req.subject,
+                req.paper.map(|p| p as i16),
+                req.grade as i16,
+                req.stream.map(|s| s as i16),
+            )?;
+
+            // Build S3 keys using the same format as finalize_paper
+            let paper_suffix = req.paper.map(|p| format!("_{}", p)).unwrap_or_default();
+            let stream_suffix = req.stream.map(|s| format!("_s{}", s)).unwrap_or_default();
+            let pdf_key = format!(
+                "schools/{}/exams/{}/papers/{}{}_{}{}/paper.pdf",
+                req.school, req.exam, req.subject, paper_suffix, req.grade, stream_suffix
+            );
+            let stream_part = req
+                .stream
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "0".to_string());
+            let paper_part = req
+                .paper
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| "0".to_string());
+            let scheme_key = format!(
+                "marking_schemes/{}/{}/{}/{}/{}/{}.pdf",
+                req.school, req.exam, req.subject, paper_part, req.grade, stream_part
+            );
+
+            Ok((questions_deleted, pdf_key, scheme_key))
+        })?;
+
+        // ── S3 phase: HEAD-then-DELETE for each PDF ──────────────────────────
+        let client = reqwest::Client::new();
+        let mut pdf_deleted = false;
+
+        // Check + delete question paper PDF
+        let head_url = sign::presign(
+            env!("R2_ACCOUNT_ID"),
+            env!("R2_BUCKET"),
+            env!("R2_ACCESS_KEY_ID"),
+            env!("R2_SECRET_ACCESS_KEY"),
+            "HEAD",
+            &pdf_key,
+            sign::PUT_TTL,
+            None,
+        );
+        if let Ok(resp) = client.head(&head_url).send().await {
+            if resp.status().is_success() {
+                let del_url = sign::presign(
+                    env!("R2_ACCOUNT_ID"),
+                    env!("R2_BUCKET"),
+                    env!("R2_ACCESS_KEY_ID"),
+                    env!("R2_SECRET_ACCESS_KEY"),
+                    "DELETE",
+                    &pdf_key,
+                    sign::PUT_TTL,
+                    None,
+                );
+                if let Ok(resp) = client.delete(&del_url).send().await {
+                    if resp.status().is_success() || resp.status().as_u16() == 204 {
+                        pdf_deleted = true;
+                    }
+                }
+            }
+        }
+
+        // Check + delete marking scheme PDF
+        let scheme_head_url = sign::presign(
+            env!("R2_ACCOUNT_ID"),
+            env!("R2_BUCKET"),
+            env!("R2_ACCESS_KEY_ID"),
+            env!("R2_SECRET_ACCESS_KEY"),
+            "HEAD",
+            &scheme_key,
+            sign::PUT_TTL,
+            None,
+        );
+        if let Ok(resp) = client.head(&scheme_head_url).send().await {
+            if resp.status().is_success() {
+                let scheme_del_url = sign::presign(
+                    env!("R2_ACCOUNT_ID"),
+                    env!("R2_BUCKET"),
+                    env!("R2_ACCESS_KEY_ID"),
+                    env!("R2_SECRET_ACCESS_KEY"),
+                    "DELETE",
+                    &scheme_key,
+                    sign::PUT_TTL,
+                    None,
+                );
+                if let Ok(resp) = client.delete(&scheme_del_url).send().await {
+                    if resp.status().is_success() || resp.status().as_u16() == 204 {
+                        pdf_deleted = true;
+                    }
+                }
+            }
+        }
+
+        Ok(ClearPaperQuestionsResponse {
+            questions_deleted: questions_deleted as i32,
+            pdf_deleted,
+        })
+    }
+
+    async fn copy_paper_to_streams(
+        &self,
+        token: Token,
+        req: CopyPaperToStreamsRequest,
+    ) -> Result<CopyPaperToStreamsResponse> {
+        let caller_id = token.user.to_string();
+
+        // ── Validate request ─────────────────────────────────────────────────
+        if req.target_streams.is_empty() || req.target_streams.len() > 10 {
+            return Err(Error::InvalidPermissions);
+        }
+        let source_stream = req.source_stream;
+        if req.target_streams.iter().any(|&s| Some(s) == source_stream) {
+            return Err(Error::InvalidPermissions);
+        }
+
+        // ── DB phase: permission, source fetch, copy questions, ensure papers ─
+        let targets: Vec<FinalizePaperRequest> = CONN.with(|cell| {
+            let conn = &mut *cell.borrow_mut();
+
+            // Fetch exam teacher for permission check
+            let exam_row: Option<ExamTeacherRow> =
+                sql_query("SELECT teacher FROM exams WHERE id = ?")
+                    .bind::<Text, _>(&req.exam)
+                    .get_result(conn)
+                    .optional()?;
+            let teacher = exam_row.map(|r| r.teacher).unwrap_or_default();
+
+            // Fetch source paper for invigilator (permission) + row data (to copy into new papers rows)
+            let source_paper: Option<PaperRow> = sql_query(
+                "SELECT school, exam, subject, paper, topic, invigilator, start, \"end\", status, \
+                 grade, stream, created, updated, time_allowed_minutes, instructions \
+                 FROM papers \
+                 WHERE school = ? AND exam = ? AND subject = ? \
+                 AND COALESCE(paper, -1) = COALESCE(?, -1) \
+                 AND grade = ? \
+                 AND COALESCE(stream, -1) = COALESCE(?, -1)",
+            )
+            .bind::<Text, _>(&req.school)
+            .bind::<Text, _>(&req.exam)
+            .bind::<Integer, _>(req.subject)
+            .bind::<diesel::sql_types::Nullable<SmallInt>, _>(req.paper.map(|p| p as i16))
+            .bind::<SmallInt, _>(req.grade as i16)
+            .bind::<diesel::sql_types::Nullable<SmallInt>, _>(source_stream.map(|s| s as i16))
+            .get_result(conn)
+            .optional()?;
+
+            let source_paper = source_paper.ok_or(Error::NotFound)?;
+
+            // Permission: caller must be exam creator or paper invigilator
+            if source_paper.invigilator != caller_id && teacher != caller_id {
+                return Err(Error::Forbidden);
+            }
+
+            // Fetch source paper questions (must be non-empty)
+            let source_qs = question_bank::get_paper_questions(
+                conn,
+                &req.school,
+                &req.exam,
+                req.subject,
+                req.paper.map(|p| p as i16),
+                req.grade as i16,
+                source_stream.map(|s| s as i16),
+            )?;
+
+            if source_qs.is_empty() {
+                return Err(Error::NothingToUpdate);
+            }
+
+            // Build the (question_id, position, section) triples to copy
+            let to_copy: Vec<(i32, i16, Option<String>)> = source_qs
+                .iter()
+                .map(|pq| (pq.question, pq.position, pq.section.clone()))
+                .collect();
+
+            let mut targets: Vec<FinalizePaperRequest> = Vec::new();
+
+            for &ts in &req.target_streams {
+                let target_stream_i16 = Some(ts as i16);
+
+                // Clear any existing questions for the target stream
+                question_bank::delete_paper_questions(
+                    conn,
+                    &req.school,
+                    &req.exam,
+                    req.subject,
+                    req.paper.map(|p| p as i16),
+                    req.grade as i16,
+                    target_stream_i16,
+                )?;
+
+                // Copy questions with sections to the target stream
+                question_bank::insert_paper_questions_with_sections(
+                    conn,
+                    &req.school,
+                    &req.exam,
+                    req.subject,
+                    req.paper.map(|p| p as i16),
+                    req.grade as i16,
+                    target_stream_i16,
+                    &to_copy,
+                )?;
+
+                // Ensure a papers row exists for the target stream
+                let inserted =
+                    question_bank::insert_paper_for_stream(conn, &source_paper, target_stream_i16)?;
+
+                // Write a changelog entry if we created a new papers row
+                if inserted {
+                    const TBL_PAPERS: u8 = 17;
+                    const OP_INSERT: u8 = 0;
+                    let record = Record::new(token.user, TBL_PAPERS, OP_INSERT, 0);
+                    if let Err(e) = LOG.with(|cell| cell.borrow_mut().append(&record).map(|_| ())) {
+                        error!("copy_paper_to_streams: failed to write changelog: {e}");
+                    }
+                }
+
+                targets.push(FinalizePaperRequest {
+                    school: req.school.clone(),
+                    exam: req.exam.clone(),
+                    subject: req.subject,
+                    paper: req.paper,
+                    grade: req.grade,
+                    stream: Some(ts),
+                });
+            }
+
+            Ok(targets)
+        })?;
+
+        // ── Async phase: run finalize_paper for each target stream ───────────
+        let mut results = Vec::new();
+
+        for finalize_req in targets {
+            let display_stream = finalize_req.stream.unwrap_or(0);
+            match self.finalize_paper(token, finalize_req).await {
+                Ok(resp) => results.push(StreamCopyResult {
+                    stream: display_stream,
+                    success: true,
+                    pdf_url: resp.pdf_url,
+                    pdf_expiry: resp.pdf_expiry,
+                    marking_scheme_url: resp.marking_scheme_url,
+                    marking_scheme_expiry: resp.marking_scheme_expiry,
+                    error: String::new(),
+                }),
+                Err(e) => {
+                    error!(
+                        "copy_paper_to_streams: finalize failed for stream {display_stream}: {e}"
+                    );
+                    results.push(StreamCopyResult {
+                        stream: display_stream,
+                        success: false,
+                        pdf_url: String::new(),
+                        pdf_expiry: 0,
+                        marking_scheme_url: String::new(),
+                        marking_scheme_expiry: 0,
+                        error: e.to_string(),
+                    });
+                }
+            }
+        }
+
+        Ok(CopyPaperToStreamsResponse { results })
     }
 
     async fn set_paper_question_section(

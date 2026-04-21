@@ -571,6 +571,100 @@ pub fn delete_paper_questions(
     Ok(())
 }
 
+/// Delete all paper questions matching the given paper identity.
+/// Returns the number of rows deleted.
+pub fn delete_paper_questions_count(
+    conn: &mut Conn,
+    school: &str,
+    exam: &str,
+    subject: i32,
+    paper: Option<i16>,
+    grade: i16,
+    stream: Option<i16>,
+) -> Result<usize> {
+    let count = sql_query(
+        "DELETE FROM paper_questions \
+         WHERE school = ? AND exam = ? AND subject = ? \
+         AND COALESCE(paper, -1) = COALESCE(?, -1) \
+         AND grade = ? \
+         AND COALESCE(stream, -1) = COALESCE(?, -1)",
+    )
+    .bind::<Text, _>(school)
+    .bind::<Text, _>(exam)
+    .bind::<Integer, _>(subject)
+    .bind::<Nullable<SmallInt>, _>(paper)
+    .bind::<SmallInt, _>(grade)
+    .bind::<Nullable<SmallInt>, _>(stream)
+    .execute(conn)?;
+    Ok(count)
+}
+
+/// Insert paper questions preserving their section labels.
+/// `questions` is a slice of (question_id, position, section).
+pub fn insert_paper_questions_with_sections(
+    conn: &mut Conn,
+    school: &str,
+    exam: &str,
+    subject: i32,
+    paper: Option<i16>,
+    grade: i16,
+    stream: Option<i16>,
+    questions: &[(i32, i16, Option<String>)],
+) -> Result<()> {
+    for (question_id, position, section) in questions {
+        sql_query(
+            "INSERT INTO paper_questions \
+             (school, exam, subject, paper, grade, stream, question, position, section) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind::<Text, _>(school)
+        .bind::<Text, _>(exam)
+        .bind::<Integer, _>(subject)
+        .bind::<Nullable<SmallInt>, _>(paper)
+        .bind::<SmallInt, _>(grade)
+        .bind::<Nullable<SmallInt>, _>(stream)
+        .bind::<Integer, _>(*question_id)
+        .bind::<SmallInt, _>(*position)
+        .bind::<Nullable<Text>, _>(section.as_deref())
+        .execute(conn)?;
+    }
+    Ok(())
+}
+
+/// Insert a papers row for a target stream, copying all fields from a source PaperRow.
+/// Uses INSERT OR IGNORE so that if the row already exists, it is silently skipped.
+/// Returns true if a new row was inserted, false if it already existed.
+pub fn insert_paper_for_stream(
+    conn: &mut Conn,
+    source: &PaperRow,
+    target_stream: Option<i16>,
+) -> Result<bool> {
+    let now = chrono::Utc::now().timestamp();
+    let affected = sql_query(
+        "INSERT OR IGNORE INTO papers \
+         (school, exam, subject, paper, topic, invigilator, start, \"end\", status, grade, stream, \
+          time_allowed_minutes, instructions, created, updated) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind::<Text, _>(&source.school)
+    .bind::<Text, _>(&source.exam)
+    .bind::<Integer, _>(source.subject)
+    .bind::<Nullable<SmallInt>, _>(source.paper)
+    .bind::<Nullable<Integer>, _>(source.topic)
+    .bind::<Text, _>(&source.invigilator)
+    .bind::<BigInt, _>(source.start)
+    .bind::<BigInt, _>(source.end)
+    .bind::<SmallInt, _>(0i16) // status = Pending
+    .bind::<SmallInt, _>(source.grade)
+    .bind::<Nullable<SmallInt>, _>(target_stream)
+    .bind::<Nullable<SmallInt>, _>(source.time_allowed_minutes)
+    .bind::<Nullable<Text>, _>(source.instructions.as_deref())
+    .bind::<BigInt, _>(now)
+    .bind::<BigInt, _>(now)
+    .execute(conn)?;
+    Ok(affected > 0)
+}
+
 /// Replace the question at a specific position in a paper.
 pub fn replace_paper_question_at_position(
     conn: &mut Conn,

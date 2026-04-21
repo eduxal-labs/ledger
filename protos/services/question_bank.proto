@@ -18,6 +18,11 @@ service QuestionBank {
   rpc GetPaperPdf(GetPaperPdfRequest) returns (GetPaperPdfResponse);
   rpc GetPaperQuestions(GetPaperQuestionsRequest) returns (GetPaperQuestionsResponse);
   rpc SetPaperQuestionSection(SetPaperQuestionSectionRequest) returns (SetPaperQuestionSectionResponse);
+  // Delete all generated questions and the generated PDF for a paper.
+  // The paper must be in Pending status. Returns FAILED_PRECONDITION otherwise.
+  rpc ClearPaperQuestions(ClearPaperQuestionsRequest) returns (ClearPaperQuestionsResponse);
+  // Copy a generated paper to additional streams in the same grade.
+  rpc CopyPaperToStreams(CopyPaperToStreamsRequest) returns (CopyPaperToStreamsResponse);
 
   // === Read Operations (paper state restoration) ===
   rpc ListQuestions(ListQuestionsRequest) returns (ListQuestionsResponse);
@@ -378,4 +383,46 @@ message MarkingStatusResponse {
   string progress = 2;
   optional string error = 3;
   optional int64 estimated_completion = 4;
+}
+
+// ─── ClearPaperQuestions ─────────────────────────────────────────────────────
+
+message ClearPaperQuestionsRequest {
+  string school = 1;
+  string exam = 2;
+  int32 subject = 3;
+  optional int32 paper = 4;
+  int32 grade = 5;
+  optional int32 stream = 6;
+}
+
+message ClearPaperQuestionsResponse {
+  int32 questions_deleted = 1;
+  bool pdf_deleted = 2;
+}
+
+// ─── CopyPaperToStreams ───────────────────────────────────────────────────────
+
+message CopyPaperToStreamsRequest {
+  string school = 1;
+  string exam = 2;
+  int32 subject = 3;
+  optional int32 paper = 4;
+  int32 grade = 5;
+  optional int32 source_stream = 6;
+  repeated int32 target_streams = 7;
+}
+
+message StreamCopyResult {
+  int32 stream = 1;
+  bool success = 2;
+  string pdf_url = 3;
+  int64 pdf_expiry = 4;
+  string marking_scheme_url = 5;
+  int64 marking_scheme_expiry = 6;
+  string error = 7;
+}
+
+message CopyPaperToStreamsResponse {
+  repeated StreamCopyResult results = 1;
 }
