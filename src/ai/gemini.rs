@@ -106,13 +106,6 @@ pub struct AllQuestionInput {
     pub images_b64: Vec<(String, Option<String>)>,
 }
 
-/// Response structure for per-question marking (parsed from Gemini JSON output).
-#[derive(Deserialize)]
-struct SingleQuestionResult {
-    score: f64,
-    feedback: String,
-}
-
 /// Top-level JSON wrapper for the all-questions API response.
 #[derive(Deserialize)]
 struct AllQuestionsApiResult {
@@ -145,11 +138,6 @@ pub enum BatchStatus {
 pub enum BatchStudentResult {
     Ok(StudentScore),
     Err { adm_key: String, error: String },
-}
-
-#[derive(Deserialize)]
-struct BatchCreateResponse {
-    name: String,
 }
 
 #[derive(Deserialize)]
@@ -1067,181 +1055,6 @@ Return ONLY valid JSON with exactly one result entry for this student:
         })
     }
 
-    /// Mark a single question for a single student.
-    ///
-    /// - `system_cache_name` — Gemini cache containing the system prompt
-    /// - `student_images_b64` — base64-encoded answer sheet images for this student
-    /// - `question_text` — the question text
-    /// - `question_marks` — total marks for this question
-    /// - `rubric_criteria` — (criterion text, marks) pairs
-    /// - `question_images_b64` — optional images for the question (b64, caption)
-    pub async fn mark_single_question(
-        &self,
-        system_cache_name: &str,
-        student_images_b64: &[String],
-        question_text: &str,
-        question_marks: i16,
-        rubric_criteria: &[(String, i16)],
-        question_images_b64: &[(String, Option<String>)],
-    ) -> std::result::Result<QuestionScore, Box<dyn std::error::Error + Send + Sync>> {
-        // Build the content parts
-        let mut parts: Vec<serde_json::Value> = Vec::new();
-
-        // Student answer sheet images
-        for img in student_images_b64 {
-            parts.push(serde_json::json!({
-                "inline_data": {
-                    "mime_type": "image/jpeg",
-                    "data": img
-                }
-            }));
-        }
-
-        // Question images (if any)
-        for (img, caption) in question_images_b64 {
-            parts.push(serde_json::json!({
-                "inline_data": {
-                    "mime_type": "image/jpeg",
-                    "data": img
-                }
-            }));
-            if let Some(cap) = caption {
-                parts.push(serde_json::json!({ "text": format!("Image caption: {}", cap) }));
-            }
-        }
-
-        // Build rubric text
-        let rubric_text: String = rubric_criteria
-            .iter()
-            .enumerate()
-            .map(|(i, (criterion, marks))| format!("{}. {} ({} marks)", i + 1, criterion, marks))
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        // The per-question prompt
-        let prompt = format!(
-            "You are marking ONE specific question on a student's answer sheet.\n\n\
-             QUESTION: {}\n\
-             TOTAL MARKS: {}\n\n\
-             RUBRIC CRITERIA:\n{}\n\n\
-             The student's answer sheets are shown above. \
-             Find the answer to THIS specific question and mark it according to the rubric criteria.\n\n\
-             Return ONLY valid JSON:\n\
-             {{\"score\": <number>, \"feedback\": \"<one paragraph justification>\"}}",
-            question_text, question_marks, rubric_text
-        );
-        parts.push(serde_json::json!({ "text": prompt }));
-
-        // Send request using cached contents
-        let url = self.generate_content_url(MODEL);
-
-        let body = serde_json::json!({
-            "cachedContent": system_cache_name,
-            "contents": [{
-                "role": "user",
-                "parts": parts
-            }],
-            "generationConfig": {
-                "temperature": 0.1,
-                "responseMimeType": "application/json"
-            }
-        });
-
-        let request_size = body.to_string().len();
-        eprintln!(
-            "[GEMINI] mark_single_question: sending POST ({} bytes, q_marks={})",
-            request_size, question_marks
-        );
-        tracing::info!(
-            question_marks = question_marks,
-            request_body_bytes = request_size,
-            "gemini: sending per-question marking request"
-        );
-
-        let start = Instant::now();
-        let resp = self.http.post(&url).json(&body).send().await?;
-        let status = resp.status();
-        let text = resp.text().await?;
-
-        eprintln!(
-            "[GEMINI] mark_single_question: response HTTP {} ({} bytes) in {}ms",
-            status.as_u16(),
-            text.len(),
-            start.elapsed().as_millis()
-        );
-        tracing::info!(
-            http_status = status.as_u16(),
-            response_bytes = text.len(),
-            elapsed_ms = start.elapsed().as_millis(),
-            "gemini: per-question marking response"
-        );
-
-        if !status.is_success() {
-            eprintln!(
-                "[GEMINI] mark_single_question: ERROR HTTP {} — {}",
-                status.as_u16(),
-                text
-            );
-            tracing::error!(
-                http_status = status.as_u16(),
-                response_body = %text,
-                "gemini: per-question marking API error"
-            );
-            return Err(format!("Gemini API error {}: {}", status, text).into());
-        }
-
-        // Parse response
-        let gemini_resp: GeminiResponse = serde_json::from_str(&text).map_err(|e| {
-            tracing::error!(
-                parse_error = %e,
-                raw_response = %text,
-                "gemini: failed to parse per-question GeminiResponse"
-            );
-            e
-        })?;
-
-        let result_text = gemini_resp
-            .candidates
-            .first()
-            .and_then(|c| {
-                c.content
-                    .parts
-                    .iter()
-                    .find(|p| !p.thought && p.text.is_some())
-            })
-            .and_then(|p| p.text.as_deref())
-            .ok_or("No text in Gemini per-question response")?;
-
-        tracing::debug!(result_json = %result_text, "gemini: raw per-question JSON");
-
-        let result: SingleQuestionResult = serde_json::from_str(result_text).map_err(|e| {
-            tracing::error!(
-                parse_error = %e,
-                raw_result = %result_text,
-                "gemini: failed to parse SingleQuestionResult"
-            );
-            e
-        })?;
-
-        eprintln!(
-            "[GEMINI] mark_single_question: score={}/{} in {}ms",
-            result.score,
-            question_marks,
-            start.elapsed().as_millis()
-        );
-        tracing::info!(
-            score = result.score,
-            question_marks = question_marks,
-            elapsed_ms = start.elapsed().as_millis(),
-            "gemini: per-question score"
-        );
-
-        Ok(QuestionScore {
-            score: result.score,
-            feedback: result.feedback,
-        })
-    }
-
     /// Mark ALL questions for a single student in one API call.
     ///
     /// Sends one `generateContent` request that includes:
@@ -1410,44 +1223,10 @@ Return ONLY valid JSON with exactly one result entry for this student:
     /// Returns the batch job name (e.g., "batches/123456").
     pub async fn create_batch_job(
         &self,
-        cache_name: &str,
+        _cache_name: &str,
         students: &[(i32, &[String])],
         display_name: &str,
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-        let mut requests = Vec::with_capacity(students.len());
-
-        for (adm, images) in students {
-            let parts = Self::build_student_parts(*adm, images);
-            let request = serde_json::json!({
-                "request": {
-                    "cachedContent": cache_name,
-                    "contents": [{"parts": parts, "role": "user"}],
-                    "generationConfig": {
-                        "responseMimeType": "application/json",
-                        "temperature": 0,
-                        "thinkingConfig": {
-                            "thinkingLevel": "low"
-                        }
-                    }
-                },
-                "metadata": {
-                    "key": format!("adm-{}", adm)
-                }
-            });
-            requests.push(request);
-        }
-
-        let body = serde_json::json!({
-            "batch": {
-                "display_name": display_name,
-                "input_config": {
-                    "requests": {
-                        "requests": requests
-                    }
-                }
-            }
-        });
-
         // Vertex AI does not have a batchGenerateContent endpoint. Its batch
         // prediction API (BatchPredictionJob) requires GCS or BigQuery as
         // input/output and does not support explicit context caching. Returning
