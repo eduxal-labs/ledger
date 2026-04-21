@@ -442,5 +442,5 @@ the pre-Task-07 output — no section headers are inserted.
 ---
 
 **Update after completion:**
-- [ ] Mark this task `[x]`
+- [x] Mark this task `[x]`
 - [ ] Commit: `git add -A && git commit -m "feat: section headers in PDF renderer"`

@@ -13,8 +13,9 @@ use printpdf::*;
 /// * `grade` — Grade/form level
 /// * `time_allowed_minutes` — Optional exam duration in minutes (rendered below sub-header)
 /// * `custom_instructions` — Optional multi-line instructions string; falls back to 5 default lines
-/// * `questions` — Slice of (question_text, marks, rubric_criteria) tuples
-///   where rubric_criteria is a vec of (criterion_text, marks)
+/// * `questions` — Slice of (question_text, marks, rubric_criteria, section) tuples
+///   where rubric_criteria is a vec of (criterion_text, marks) and section is an optional
+///   section letter string (e.g. "A", "B") used to render section headers
 pub fn generate_paper_pdf(
     school_name: &str,
     school_motto: Option<&str>,
@@ -24,7 +25,7 @@ pub fn generate_paper_pdf(
     grade: i16,
     time_allowed_minutes: Option<i16>,
     custom_instructions: Option<&str>,
-    questions: &[(String, i16, Vec<(String, i16)>)],
+    questions: &[(String, i16, Vec<(String, i16)>, Option<String>)],
 ) -> Result<Vec<u8>, String> {
     // A4 dimensions
     let page_width = Mm(210.0);
@@ -164,7 +165,7 @@ pub fn generate_paper_pdf(
     y -= 8.0;
 
     // Compute total marks early so it can be shown in the header section
-    let total_marks: i16 = questions.iter().map(|(_, m, _)| m).sum();
+    let total_marks: i16 = questions.iter().map(|(_, m, _, _)| m).sum();
 
     // --- Time allowed (if set) ---
     if let Some(mins) = time_allowed_minutes {
@@ -376,7 +377,128 @@ pub fn generate_paper_pdf(
 
     // --- QUESTIONS ---
 
-    for (i, (text, marks, _rubric)) in questions.iter().enumerate() {
+    let mut current_section: Option<&str> = None;
+    let mut section_question_index: usize = 0;
+
+    // Pre-compute section totals (section -> total marks)
+    let mut section_totals: std::collections::HashMap<String, i16> =
+        std::collections::HashMap::new();
+    for (_, marks, _, section_opt) in questions.iter() {
+        if let Some(sec) = section_opt {
+            *section_totals.entry(sec.clone()).or_insert(0) += marks;
+        }
+    }
+
+    // Check if ALL questions are unsectioned (fallback: number globally as before)
+    let all_unsectioned = questions.iter().all(|(_, _, _, sec)| sec.is_none());
+    let mut global_index: usize = 0; // used when all_unsectioned
+
+    for (text, marks, _rubric, section_opt) in questions.iter() {
+        // --- Section header (only when section changes and sections are in use) ---
+        let section_ref = section_opt.as_deref();
+        if !all_unsectioned && section_ref != current_section {
+            current_section = section_ref;
+            section_question_index = 0; // reset per-section counter
+
+            if let Some(sec_letter) = section_ref {
+                // 8mm gap before section header
+                y -= 8.0;
+
+                if y < bottom_margin_mm {
+                    page_num += 1;
+                    flush_page(&mut ops, &mut pages, page_num);
+                    ops.push(Op::StartTextSection);
+                    y = top_start_mm;
+                }
+
+                // "SECTION {letter}" — bold 13pt, centered
+                let sec_header = format!("SECTION {}", sec_letter);
+                ops.push(Op::EndTextSection);
+                ops.push(Op::StartTextSection);
+                ops.push(Op::SetFont {
+                    font: font_bold.clone(),
+                    size: Pt(13.0),
+                });
+                let sec_x = center_x(&sec_header, 13.0, left_margin_mm, right_margin_mm);
+                ops.push(Op::SetTextCursor {
+                    pos: Point::new(Mm(sec_x), Mm(y)),
+                });
+                ops.push(Op::ShowText {
+                    items: vec![TextItem::Text(sec_header.clone())],
+                });
+                y -= 6.0;
+
+                // "({total} marks)" — regular 11pt, centered
+                let sec_total = section_totals.get(sec_letter).copied().unwrap_or(0);
+                let sec_marks_str = if sec_total == 1 {
+                    "(1 mark)".to_string()
+                } else {
+                    format!("({} marks)", sec_total)
+                };
+                ops.push(Op::EndTextSection);
+                ops.push(Op::StartTextSection);
+                ops.push(Op::SetFont {
+                    font: font_regular.clone(),
+                    size: Pt(11.0),
+                });
+                let sec_marks_x = center_x(&sec_marks_str, 11.0, left_margin_mm, right_margin_mm);
+                ops.push(Op::SetTextCursor {
+                    pos: Point::new(Mm(sec_marks_x), Mm(y)),
+                });
+                ops.push(Op::ShowText {
+                    items: vec![TextItem::Text(sec_marks_str)],
+                });
+                y -= 6.0;
+
+                // "Answer ALL questions in this section." — italic 10pt, centered
+                let sec_instr = "Answer ALL questions in this section.";
+                ops.push(Op::EndTextSection);
+                ops.push(Op::StartTextSection);
+                ops.push(Op::SetFont {
+                    font: font_italic.clone(),
+                    size: Pt(10.0),
+                });
+                let sec_instr_x = center_x(sec_instr, 10.0, left_margin_mm, right_margin_mm);
+                ops.push(Op::SetTextCursor {
+                    pos: Point::new(Mm(sec_instr_x), Mm(y)),
+                });
+                ops.push(Op::ShowText {
+                    items: vec![TextItem::Text(sec_instr.to_string())],
+                });
+                y -= 5.0;
+
+                // Full-width horizontal rule: 0.5pt, RGB (0.4, 0.4, 0.4)
+                ops.push(Op::EndTextSection);
+                ops.push(Op::SetOutlineColor {
+                    col: Color::Rgb(Rgb {
+                        r: 0.4,
+                        g: 0.4,
+                        b: 0.4,
+                        icc_profile: None,
+                    }),
+                });
+                ops.push(Op::SetOutlineThickness { pt: Pt(0.5) });
+                ops.push(Op::DrawLine {
+                    line: Line {
+                        points: vec![lp(left_margin_mm, y), lp(right_margin_mm, y)],
+                        is_closed: false,
+                    },
+                });
+
+                // 6mm before first question
+                y -= 6.0;
+            }
+        }
+
+        // --- Question number ---
+        let display_num = if all_unsectioned {
+            global_index += 1;
+            global_index
+        } else {
+            section_question_index += 1;
+            section_question_index
+        };
+
         // Check if we need a new page before drawing this question's header
         if y < bottom_margin_mm {
             page_num += 1;
@@ -405,7 +527,7 @@ pub fn generate_paper_pdf(
             pos: Point::new(Mm(left_margin_mm), Mm(y)),
         });
         ops.push(Op::ShowText {
-            items: vec![TextItem::Text(format!("{}.", i + 1))],
+            items: vec![TextItem::Text(format!("{}.", display_num))],
         });
 
         // Fix 4: Right-aligned marks annotation in the same text section as question number
@@ -616,8 +738,9 @@ pub fn generate_paper_pdf(
 /// * `grade` — Grade/form level
 /// * `time_allowed_minutes` — Optional exam duration in minutes
 /// * `custom_instructions` — Optional multi-line instructions string; falls back to 5 defaults
-/// * `questions` — Slice of (question_text, marks, rubric_criteria) tuples
-///   where rubric_criteria is a vec of (criterion_text, marks)
+/// * `questions` — Slice of (question_text, marks, rubric_criteria, section) tuples
+///   where rubric_criteria is a vec of (criterion_text, marks) and section is an optional
+///   section letter string (ignored in the marking scheme renderer)
 pub fn generate_marking_scheme_pdf(
     school_name: &str,
     school_motto: Option<&str>,
@@ -627,7 +750,7 @@ pub fn generate_marking_scheme_pdf(
     grade: i16,
     time_allowed_minutes: Option<i16>,
     custom_instructions: Option<&str>,
-    questions: &[(String, i16, Vec<(String, i16)>)],
+    questions: &[(String, i16, Vec<(String, i16)>, Option<String>)],
 ) -> Result<Vec<u8>, String> {
     // A4 dimensions
     let page_width = Mm(210.0);
@@ -764,7 +887,7 @@ pub fn generate_marking_scheme_pdf(
     y -= 8.0;
 
     // Compute total marks early so it can be shown in the header section
-    let total_marks: i16 = questions.iter().map(|(_, m, _)| m).sum();
+    let total_marks: i16 = questions.iter().map(|(_, m, _, _)| m).sum();
 
     // --- Time allowed (if set) ---
     if let Some(mins) = time_allowed_minutes {
@@ -862,7 +985,7 @@ pub fn generate_marking_scheme_pdf(
     ops.push(Op::StartTextSection);
 
     // --- QUESTIONS with rubric criteria ---
-    for (i, (text, marks, rubric)) in questions.iter().enumerate() {
+    for (i, (text, marks, rubric, _section)) in questions.iter().enumerate() {
         // Page check
         if y < bottom_margin_mm {
             page_num += 1;
@@ -1222,6 +1345,7 @@ mod tests {
                 "What is 2 + 2?".to_string(),
                 2_i16,
                 vec![("Correct answer: 4".to_string(), 2_i16)],
+                None::<String>,
             ),
             (
                 "Explain the water cycle.".to_string(),
@@ -1230,6 +1354,7 @@ mod tests {
                     ("Evaporation".to_string(), 2_i16),
                     ("Condensation and precipitation".to_string(), 3_i16),
                 ],
+                None::<String>,
             ),
         ];
 
@@ -1254,7 +1379,7 @@ mod tests {
 
     #[test]
     fn test_generate_paper_pdf_no_motto() {
-        let questions = vec![("Define osmosis.".to_string(), 3_i16, vec![])];
+        let questions = vec![("Define osmosis.".to_string(), 3_i16, vec![], None::<String>)];
 
         let result = generate_paper_pdf(
             "Test School",
@@ -1276,7 +1401,7 @@ mod tests {
     #[test]
     fn test_generate_paper_pdf_many_questions_multi_page() {
         // Generate enough questions to force multiple pages
-        let questions: Vec<(String, i16, Vec<(String, i16)>)> = (0..60)
+        let questions: Vec<(String, i16, Vec<(String, i16)>, Option<String>)> = (0..60)
             .map(|i| {
                 (
                     format!(
@@ -1285,6 +1410,7 @@ mod tests {
                     ),
                     3_i16,
                     vec![("criterion".to_string(), 3_i16)],
+                    None::<String>,
                 )
             })
             .collect();

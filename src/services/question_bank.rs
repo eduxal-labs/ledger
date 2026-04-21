@@ -738,7 +738,8 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
             }
 
             // Load full question data for each paper question
-            let mut questions_data: Vec<(String, i16, Vec<(String, i16)>)> = Vec::new();
+            let mut questions_data: Vec<(String, i16, Vec<(String, i16)>, Option<String>)> =
+                Vec::new();
             for pq in &paper_qs {
                 let row = question_bank::get_question(conn, pq.question)?;
                 let rubric = question_bank::get_rubric_criteria(conn, pq.question)?;
@@ -749,6 +750,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                         .iter()
                         .map(|r| (r.criterion.clone(), r.marks))
                         .collect(),
+                    pq.section.clone(),
                 ));
             }
 
