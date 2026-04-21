@@ -94,9 +94,35 @@ pub struct QuestionScore {
     pub feedback: String,
 }
 
+/// Input descriptor for one question in the all-at-once marking call.
+#[derive(Clone)]
+pub struct AllQuestionInput {
+    pub question_id: i32,
+    pub text: String,
+    pub marks: i16,
+    /// (criterion text, marks for this criterion)
+    pub rubric: Vec<(String, i16)>,
+    /// (base64-encoded image data, optional caption)
+    pub images_b64: Vec<(String, Option<String>)>,
+}
+
 /// Response structure for per-question marking (parsed from Gemini JSON output).
 #[derive(Deserialize)]
 struct SingleQuestionResult {
+    score: f64,
+    feedback: String,
+}
+
+/// Top-level JSON wrapper for the all-questions API response.
+#[derive(Deserialize)]
+struct AllQuestionsApiResult {
+    results: Vec<AllQuestionsEntry>,
+}
+
+/// Per-question entry in the all-questions API response.
+#[derive(Deserialize)]
+struct AllQuestionsEntry {
+    question_id: i32,
     score: f64,
     feedback: String,
 }
@@ -1214,6 +1240,169 @@ Return ONLY valid JSON with exactly one result entry for this student:
             score: result.score,
             feedback: result.feedback,
         })
+    }
+
+    /// Mark ALL questions for a single student in one API call.
+    ///
+    /// Sends one `generateContent` request that includes:
+    /// - The student's answer sheet images
+    /// - Every question with its rubric criteria as structured text
+    /// - Any per-question images embedded inline
+    ///
+    /// Returns `Vec<(question_id, QuestionScore)>` with one entry per question.
+    pub async fn mark_all_questions(
+        &self,
+        cache_name: &str,
+        student_images_b64: &[String],
+        questions: &[AllQuestionInput],
+    ) -> std::result::Result<Vec<(i32, QuestionScore)>, Box<dyn std::error::Error + Send + Sync>>
+    {
+        let start = std::time::Instant::now();
+
+        // Step A — Build parts starting with student answer sheet images
+        let mut parts: Vec<serde_json::Value> = Vec::new();
+
+        for img in student_images_b64 {
+            parts.push(serde_json::json!({
+                "inline_data": { "mime_type": "image/jpeg", "data": img }
+            }));
+        }
+
+        // Step B — For each question, push a structured text block followed by any question images
+        for (i, q) in questions.iter().enumerate() {
+            let rubric_string = q
+                .rubric
+                .iter()
+                .enumerate()
+                .map(|(j, (criterion, marks))| {
+                    format!("{}. {} ({} marks)", j + 1, criterion, marks)
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            parts.push(serde_json::json!({
+                "text": format!(
+                    "QUESTION {} (ID: {}, Total: {} marks):\n{}\n\nRubric:\n{}\n---",
+                    i + 1,
+                    q.question_id,
+                    q.marks,
+                    q.text,
+                    rubric_string
+                )
+            }));
+
+            for (img_b64, caption) in &q.images_b64 {
+                parts.push(serde_json::json!({
+                    "inline_data": { "mime_type": "image/jpeg", "data": img_b64 }
+                }));
+                if let Some(cap) = caption {
+                    parts.push(serde_json::json!({
+                        "text": format!("Image caption: {}", cap)
+                    }));
+                }
+            }
+        }
+
+        // Step C — Push the final instruction text part
+        parts.push(serde_json::json!({
+            "text": "Mark every question listed above for this student. Find each question's answer in the student's answer sheets shown, then score it against its rubric criteria.\n\nReturn ONLY valid JSON:\n{\"results\": [\n  {\"question_id\": <integer>, \"score\": <number>, \"feedback\": \"<one-sentence justification>\"},\n  ...\n]}\n\nRules:\n- Every question_id listed above MUST appear exactly once in results.\n- score for each question MUST be >= 0 and MUST NOT exceed that question's total marks.\n- Partial credit is allowed and expected for partially correct answers."
+        }));
+
+        // Step D — Build the request body (cachedContent pattern)
+        let body = serde_json::json!({
+            "cachedContent": cache_name,
+            "contents": [{"role": "user", "parts": parts}],
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "temperature": 0,
+                "thinkingConfig": { "thinkingLevel": "low" }
+            }
+        });
+
+        let request_size = body.to_string().len();
+        eprintln!(
+            "[Gemini] mark_all_questions: request_size={} bytes, questions={}",
+            request_size,
+            questions.len()
+        );
+
+        // Step E — Send, log, and parse
+        let url = self.generate_content_url(MODEL);
+        let response = self.http.post(&url).json(&body).send().await?;
+
+        let status = response.status();
+        let text = response.text().await?;
+        let elapsed = start.elapsed().as_millis();
+        let response_size = text.len();
+
+        eprintln!(
+            "[Gemini] mark_all_questions: status={}, response_size={} bytes, elapsed={}ms",
+            status, response_size, elapsed
+        );
+
+        if !status.is_success() {
+            return Err(format!("Gemini API error {}: {}", status, text).into());
+        }
+
+        // Parse GeminiResponse → extract first non-thought text part
+        let gemini_resp: GeminiResponse = serde_json::from_str(&text)
+            .map_err(|e| format!("failed to parse GeminiResponse: {}: {}", e, text))?;
+
+        let extracted = gemini_resp
+            .candidates
+            .into_iter()
+            .next()
+            .and_then(|c| {
+                c.content
+                    .parts
+                    .into_iter()
+                    .find(|p| !p.thought && p.text.is_some())
+            })
+            .and_then(|p| p.text)
+            .ok_or("no text part found in Gemini response")?;
+
+        let result: AllQuestionsApiResult = serde_json::from_str(&extracted).map_err(|e| {
+            format!(
+                "failed to parse AllQuestionsApiResult: {}: {}",
+                e, extracted
+            )
+        })?;
+
+        // Log per-question scores
+        for entry in &result.results {
+            if let Some(q) = questions
+                .iter()
+                .find(|q| q.question_id == entry.question_id)
+            {
+                tracing::info!(
+                    question_id = entry.question_id,
+                    score = entry.score,
+                    marks = q.marks,
+                    "mark_all_questions: question scored"
+                );
+            }
+        }
+
+        let question_count = result.results.len();
+        tracing::info!(
+            question_count = question_count,
+            total_elapsed_ms = elapsed,
+            "mark_all_questions: completed"
+        );
+
+        Ok(result
+            .results
+            .into_iter()
+            .map(|e| {
+                (
+                    e.question_id,
+                    QuestionScore {
+                        score: e.score,
+                        feedback: e.feedback,
+                    },
+                )
+            })
+            .collect())
     }
 
     /// Submit a batch marking job for multiple students.

@@ -1,4 +1,4 @@
-use crate::ai::gemini::{GeminiClient, QuestionScore};
+use crate::ai::gemini::{AllQuestionInput, GeminiClient, QuestionScore};
 use crate::config::storage::sign;
 use crate::db::changelog::{LOG, Record};
 use crate::db::database::CONN;
@@ -517,16 +517,13 @@ async fn mark_student_with_retry(
     Err(last_err.unwrap())
 }
 
-/// Retry a per-question marking call up to 3 times with exponential backoff.
-async fn mark_single_question_with_retry(
+/// Retry an all-questions marking call up to 3 times with exponential backoff.
+async fn mark_all_questions_with_retry(
     gemini: &GeminiClient,
     cache_name: &str,
     student_images: &[String],
-    question_text: &str,
-    question_marks: i16,
-    rubric_criteria: &[(String, i16)],
-    question_images_b64: &[(String, Option<String>)],
-) -> std::result::Result<QuestionScore, Box<dyn std::error::Error + Send + Sync>> {
+    questions: &[AllQuestionInput],
+) -> std::result::Result<Vec<(i32, QuestionScore)>, Box<dyn std::error::Error + Send + Sync>> {
     let delays = [0u64, 2, 4];
     let mut last_err = None;
     for (attempt, &delay_secs) in delays.iter().enumerate() {
@@ -534,27 +531,20 @@ async fn mark_single_question_with_retry(
             tracing::warn!(
                 attempt = attempt + 1,
                 delay_secs = delay_secs,
-                "retrying per-question marking"
+                "retrying all-questions marking"
             );
             tokio::time::sleep(std::time::Duration::from_secs(delay_secs)).await;
         }
         match gemini
-            .mark_single_question(
-                cache_name,
-                student_images,
-                question_text,
-                question_marks,
-                rubric_criteria,
-                question_images_b64,
-            )
+            .mark_all_questions(cache_name, student_images, questions)
             .await
         {
-            Ok(score) => return Ok(score),
+            Ok(scores) => return Ok(scores),
             Err(e) => {
                 tracing::warn!(
                     attempt = attempt + 1,
                     error = %e,
-                    "per-question marking attempt failed"
+                    "all-questions marking attempt failed"
                 );
                 last_err = Some(e);
             }
@@ -1009,82 +999,95 @@ async fn mark_and_write_per_question(
         }
     };
 
-    // 5. MARKING phase
-    CONN.with(|cell| {
-        let mut conn = cell.borrow_mut();
-        let _ = question_bank::update_marking_status(&mut conn, queue_id, 3, "Marking...", 0, None);
-    });
+    // 5. MARKING phase — one API call per student, all questions at once
+
+    // Build AllQuestionInput slice once, shared across all students
+    let all_q_inputs: Vec<AllQuestionInput> = questions_data
+        .iter()
+        .map(|qd| AllQuestionInput {
+            question_id: qd.id,
+            text: qd.text.clone(),
+            marks: qd.marks,
+            rubric: qd.rubric.clone(),
+            images_b64: qd.images_b64.clone(),
+        })
+        .collect();
 
     let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT));
-    let mut marked_count: i32 = 0;
+    let mut handles = Vec::with_capacity(prepared.student_images.len());
 
     for (adm, images) in &prepared.student_images {
-        // For each student, mark each question
-        for qd in &questions_data {
-            let permit = semaphore
-                .clone()
-                .acquire_owned()
-                .await
-                .map_err(|e| format!("semaphore error: {}", e))?;
+        let client = gemini.clone();
+        let sem = Arc::clone(&semaphore);
+        let adm = *adm;
+        let images = images.clone();
+        let cn = cache_name.clone();
+        let qs = all_q_inputs.clone();
 
-            match mark_single_question_with_retry(
-                gemini,
-                &cache_name,
-                images,
-                &qd.text,
-                qd.marks,
-                &qd.rubric,
-                &qd.images_b64,
-            )
-            .await
-            {
-                Ok(score) => {
+        let handle = tokio::spawn(async move {
+            let _permit = sem.acquire().await.expect("semaphore closed");
+            mark_all_questions_with_retry(&client, &cn, &images, &qs).await
+        });
+        handles.push((adm, handle));
+    }
+
+    let mut marked_count: i32 = 0;
+
+    for (adm, handle) in handles {
+        match handle.await {
+            Ok(Ok(question_scores)) => {
+                for (question_id, score) in &question_scores {
                     let _ = CONN.with(|cell| {
                         let mut conn = cell.borrow_mut();
                         question_bank::upsert_question_grade(
                             &mut conn,
                             school,
                             exam,
-                            *adm,
-                            qd.id,
+                            adm,
+                            *question_id,
                             score.score as f32,
                             Some(&score.feedback),
                         )
                     });
                     tracing::debug!(
                         adm = adm,
-                        question = qd.id,
+                        question = question_id,
                         score = score.score,
-                        out_of = qd.marks,
                         "ai_pq: question graded"
                     );
                 }
-                Err(e) => {
-                    tracing::warn!(
-                        adm = adm,
-                        question = qd.id,
-                        error = %e,
-                        "ai_pq: per-question marking failed after retries"
-                    );
-                }
+                marked_count += 1;
+                let progress = format!("{}/{} students marked", marked_count, total_students);
+                eprintln!("[AI-PQ] {}", progress);
+                let _ = CONN.with(|cell| {
+                    let mut conn = cell.borrow_mut();
+                    question_bank::update_marking_status(
+                        &mut conn,
+                        queue_id,
+                        3,
+                        &progress,
+                        marked_count,
+                        None,
+                    )
+                });
             }
-            drop(permit);
+            Ok(Err(e)) => {
+                eprintln!("[AI-PQ] ADM {} failed after retries: {}", adm, e);
+                tracing::error!(
+                    adm = adm,
+                    error = %e,
+                    "ai_pq: all-questions marking failed after retries — student skipped"
+                );
+            }
+            Err(e) => {
+                eprintln!("[AI-PQ] ADM {} task panicked: {}", adm, e);
+                tracing::error!(
+                    adm = adm,
+                    error = %e,
+                    "ai_pq: all-questions task panicked — student skipped"
+                );
+            }
         }
-
-        marked_count += 1;
-        let progress = format!("{}/{} students marked", marked_count, total_students);
-        eprintln!("[AI-PQ] {}", progress);
-        let _ = CONN.with(|cell| {
-            let mut conn = cell.borrow_mut();
-            question_bank::update_marking_status(
-                &mut conn,
-                queue_id,
-                3,
-                &progress,
-                marked_count,
-                None,
-            )
-        });
     }
 
     // 6. AGGREGATING phase — sum per-question grades into paper total
