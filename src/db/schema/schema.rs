@@ -29,12 +29,9 @@ diesel::table! {
 }
 
 diesel::table! {
-    answer_pages (school, exam, student, subject, paper, page) {
-        school -> Text,
-        exam -> Text,
+    answer_pages (paper, student, page) {
+        paper -> Text,
         student -> Integer,
-        subject -> Integer,
-        paper -> Nullable<SmallInt>,
         page -> SmallInt,
         key -> Text,
         created -> BigInt,
@@ -107,20 +104,27 @@ diesel::table! {
 }
 
 diesel::table! {
-    exams (id) {
+    events (id) {
         id -> Text,
         school -> Text,
         name -> Text,
-        year -> Integer,
-        term -> SmallInt,
-        personalized -> Bool,
-        #[sql_name = "type"]
         type_ -> SmallInt,
-        start -> Integer,
-        end -> Integer,
-        teacher -> Text,
+        term -> SmallInt,
+        year -> Integer,
+        start_date -> Integer,
+        end_date -> Integer,
+        status -> SmallInt,
         created -> BigInt,
         updated -> BigInt,
+    }
+}
+
+diesel::table! {
+    exam_coverage (schedule, topic) {
+        schedule -> Text,
+        topic -> Integer,
+        confirmed_by -> Text,
+        confirmed_at -> BigInt,
     }
 }
 
@@ -142,14 +146,10 @@ diesel::table! {
 }
 
 diesel::table! {
-    grades (school, exam, student, subject, paper) {
-        school -> Text,
-        exam -> Text,
+    grades (paper, student) {
+        paper -> Text,
         student -> Integer,
-        subject -> Integer,
-        paper -> Nullable<SmallInt>,
         score -> Float,
-        total -> Integer,
         created -> BigInt,
         updated -> BigInt,
     }
@@ -202,12 +202,7 @@ diesel::table! {
 diesel::table! {
     marking_queue (id) {
         id -> Nullable<Integer>,
-        school -> Text,
-        exam -> Text,
-        subject -> Integer,
-        paper -> Nullable<SmallInt>,
-        grade -> SmallInt,
-        stream -> Nullable<SmallInt>,
+        paper -> Text,
         phase -> SmallInt,
         progress -> Text,
         error -> Nullable<Text>,
@@ -252,13 +247,9 @@ diesel::table! {
 }
 
 diesel::table! {
-    paper_questions (school, exam, subject, paper, grade, stream, question) {
-        school -> Text,
-        exam -> Text,
-        subject -> Integer,
-        paper -> Nullable<SmallInt>,
-        grade -> SmallInt,
-        stream -> Nullable<SmallInt>,
+    paper_questions (paper, student, question) {
+        paper -> Text,
+        student -> Nullable<Integer>,
         question -> Integer,
         position -> SmallInt,
         section -> Nullable<Text>,
@@ -266,22 +257,66 @@ diesel::table! {
 }
 
 diesel::table! {
-    papers (school, exam, subject, paper, grade, stream) {
-        school -> Text,
-        exam -> Text,
+    paper_schedules (id) {
+        id -> Text,
+        event -> Text,
         subject -> Integer,
-        paper -> Nullable<SmallInt>,
-        topic -> Nullable<Integer>,
-        invigilator -> Text,
-        start -> BigInt,
-        end -> BigInt,
-        status -> SmallInt,
         grade -> SmallInt,
         stream -> Nullable<SmallInt>,
+        date -> Integer,
+        start_time -> Integer,
+        end_time -> Integer,
+        duration_minutes -> SmallInt,
+        invigilator -> Nullable<Text>,
+        paper -> Nullable<Text>,
+        generation_status -> SmallInt,
+        reveal_at -> BigInt,
+        generate_at -> BigInt,
+        created -> BigInt,
+    }
+}
+
+diesel::table! {
+    paper_topics (paper, topic) {
+        paper -> Text,
+        topic -> Integer,
+        weight -> Float,
+    }
+}
+
+diesel::table! {
+    papers (id) {
+        id -> Text,
+        school -> Text,
+        event -> Nullable<Text>,
+        subject -> Integer,
+        grade -> SmallInt,
+        stream -> Nullable<SmallInt>,
+        type_ -> SmallInt,
+        teacher -> Text,
+        name -> Text,
+        total_marks -> SmallInt,
+        duration_minutes -> SmallInt,
+        date -> Integer,
+        status -> SmallInt,
+        pdf_key -> Nullable<Text>,
+        ms_key -> Nullable<Text>,
+        generation_mode -> SmallInt,
+        instructions -> Nullable<Text>,
         created -> BigInt,
         updated -> BigInt,
-        time_allowed_minutes -> Nullable<SmallInt>,
-        instructions -> Nullable<Text>,
+    }
+}
+
+diesel::table! {
+    part_rubric_criteria (question, part, position) {
+        question -> Integer,
+        part -> SmallInt,
+        position -> SmallInt,
+        criterion -> Text,
+        marks -> SmallInt,
+        max_marks -> Nullable<SmallInt>,
+        required -> Bool,
     }
 }
 
@@ -316,13 +351,13 @@ diesel::table! {
 }
 
 diesel::table! {
-    question_grades (school, exam, student, question) {
-        school -> Text,
-        exam -> Text,
+    question_grades (paper, student, question) {
+        paper -> Text,
         student -> Integer,
         question -> Integer,
         score -> Float,
         feedback -> Nullable<Text>,
+        awarded_criteria -> Nullable<Text>,
         created -> BigInt,
         updated -> BigInt,
     }
@@ -340,11 +375,37 @@ diesel::table! {
 }
 
 diesel::table! {
+    question_parts (question, position) {
+        question -> Integer,
+        position -> SmallInt,
+        label -> Text,
+        body -> Text,
+        body_format -> SmallInt,
+        marks -> SmallInt,
+        max_marks -> Nullable<SmallInt>,
+        answer_space_type -> SmallInt,
+        answer_lines -> Nullable<SmallInt>,
+        answer_box_height_mm -> Nullable<SmallInt>,
+        example_answer -> Nullable<Text>,
+        stimulus -> Nullable<Text>,
+    }
+}
+
+diesel::table! {
     questions (id) {
         id -> Nullable<Integer>,
         topic -> Integer,
-        text -> Text,
+        body -> Text,
+        body_format -> SmallInt,
+        stimulus -> Nullable<Text>,
+        type_ -> SmallInt,
+        difficulty -> SmallInt,
+        cognitive_level -> SmallInt,
         marks -> SmallInt,
+        max_marks -> Nullable<SmallInt>,
+        answer_space_type -> SmallInt,
+        answer_lines -> Nullable<SmallInt>,
+        answer_box_height_mm -> Nullable<SmallInt>,
         example_answer -> Nullable<Text>,
         created -> BigInt,
         updated -> BigInt,
@@ -370,15 +431,14 @@ diesel::table! {
         position -> SmallInt,
         criterion -> Text,
         marks -> SmallInt,
+        max_marks -> Nullable<SmallInt>,
+        required -> Bool,
     }
 }
 
 diesel::table! {
-    scheme_pages (school, exam, subject, paper, page) {
-        school -> Text,
-        exam -> Text,
-        subject -> Integer,
-        paper -> Nullable<SmallInt>,
+    scheme_pages (paper, page) {
+        paper -> Text,
         page -> SmallInt,
         key -> Text,
         created -> BigInt,
@@ -435,6 +495,15 @@ diesel::table! {
 }
 
 diesel::table! {
+    student_pdf_keys (paper, student) {
+        paper -> Text,
+        student -> Integer,
+        pdf_key -> Text,
+        generated_at -> BigInt,
+    }
+}
+
+diesel::table! {
     students (school, adm) {
         school -> Text,
         adm -> Integer,
@@ -484,6 +553,20 @@ diesel::table! {
         discount -> Float,
         status -> SmallInt,
         created -> BigInt,
+        updated -> BigInt,
+    }
+}
+
+diesel::table! {
+    taught_topics (school, subject, grade, stream, topic) {
+        school -> Text,
+        subject -> Integer,
+        grade -> SmallInt,
+        stream -> Nullable<SmallInt>,
+        topic -> Integer,
+        taught_by -> Text,
+        status -> SmallInt,
+        taught_date -> Nullable<Integer>,
         updated -> BigInt,
     }
 }
@@ -557,58 +640,61 @@ diesel::table! {
 diesel::joinable!(aiusage -> schools (school));
 diesel::joinable!(announcements -> schools (school));
 diesel::joinable!(announcements -> users (author));
-diesel::joinable!(answer_pages -> exams (exam));
-diesel::joinable!(answer_pages -> schools (school));
-diesel::joinable!(answer_pages -> subjects (subject));
+diesel::joinable!(answer_pages -> papers (paper));
 diesel::joinable!(attendance -> schools (school));
 diesel::joinable!(class_teachers -> schools (school));
 diesel::joinable!(departments -> schools (school));
 diesel::joinable!(discounts -> plans (plan));
 diesel::joinable!(discounts -> schools (school));
 diesel::joinable!(enrollments -> schools (school));
-diesel::joinable!(exams -> schools (school));
+diesel::joinable!(events -> schools (school));
+diesel::joinable!(exam_coverage -> paper_schedules (schedule));
+diesel::joinable!(exam_coverage -> topics (topic));
+diesel::joinable!(exam_coverage -> users (confirmed_by));
 diesel::joinable!(fees -> schools (school));
-diesel::joinable!(grades -> exams (exam));
-diesel::joinable!(grades -> schools (school));
-diesel::joinable!(grades -> subjects (subject));
+diesel::joinable!(grades -> papers (paper));
 diesel::joinable!(guardians -> schools (school));
 diesel::joinable!(guardians -> users (user));
 diesel::joinable!(invoices -> fees (fee));
 diesel::joinable!(invoices -> schools (school));
 diesel::joinable!(lessons -> schools (school));
-diesel::joinable!(marking_queue -> exams (exam));
-diesel::joinable!(marking_queue -> schools (school));
+diesel::joinable!(marking_queue -> papers (paper));
 diesel::joinable!(mastery -> schools (school));
 diesel::joinable!(mastery -> subjects (subject));
 diesel::joinable!(mastery -> topics (topic));
 diesel::joinable!(mpesa -> schools (school));
 diesel::joinable!(owners -> schools (school));
 diesel::joinable!(owners -> users (user));
+diesel::joinable!(paper_questions -> papers (paper));
 diesel::joinable!(paper_questions -> questions (question));
-diesel::joinable!(papers -> exams (exam));
+diesel::joinable!(paper_schedules -> events (event));
+diesel::joinable!(paper_schedules -> papers (paper));
+diesel::joinable!(paper_schedules -> subjects (subject));
+diesel::joinable!(paper_schedules -> users (invigilator));
+diesel::joinable!(paper_topics -> papers (paper));
+diesel::joinable!(paper_topics -> topics (topic));
+diesel::joinable!(papers -> events (event));
 diesel::joinable!(papers -> schools (school));
 diesel::joinable!(papers -> subjects (subject));
-diesel::joinable!(papers -> topics (topic));
 diesel::joinable!(payments -> invoices (invoice));
 diesel::joinable!(payments -> schools (school));
 diesel::joinable!(payments -> users (recorder));
-diesel::joinable!(question_grades -> exams (exam));
+diesel::joinable!(question_grades -> papers (paper));
 diesel::joinable!(question_grades -> questions (question));
-diesel::joinable!(question_grades -> schools (school));
 diesel::joinable!(question_images -> questions (question));
+diesel::joinable!(question_parts -> questions (question));
 diesel::joinable!(questions -> topics (topic));
 diesel::joinable!(questions -> users (created_by));
 diesel::joinable!(roles -> schools (school));
 diesel::joinable!(rubric_criteria -> questions (question));
-diesel::joinable!(scheme_pages -> exams (exam));
-diesel::joinable!(scheme_pages -> schools (school));
-diesel::joinable!(scheme_pages -> subjects (subject));
+diesel::joinable!(scheme_pages -> papers (paper));
 diesel::joinable!(scopes -> roles (role));
 diesel::joinable!(scopes -> schools (school));
 diesel::joinable!(scopes -> users (user));
 diesel::joinable!(staff -> schools (school));
 diesel::joinable!(staff -> users (user));
 diesel::joinable!(streams -> schools (school));
+diesel::joinable!(student_pdf_keys -> papers (paper));
 diesel::joinable!(students -> schools (school));
 diesel::joinable!(students -> users (user));
 diesel::joinable!(subject_teachers -> schools (school));
@@ -616,6 +702,9 @@ diesel::joinable!(subject_teachers -> subjects (subject));
 diesel::joinable!(subscriptions -> invoices (invoice));
 diesel::joinable!(subscriptions -> plans (plan));
 diesel::joinable!(subscriptions -> schools (school));
+diesel::joinable!(taught_topics -> schools (school));
+diesel::joinable!(taught_topics -> subjects (subject));
+diesel::joinable!(taught_topics -> topics (topic));
 diesel::joinable!(teachers -> schools (school));
 diesel::joinable!(teachers -> users (user));
 diesel::joinable!(terms -> schools (school));
@@ -631,7 +720,8 @@ diesel::allow_tables_to_appear_in_same_query!(
     departments,
     discounts,
     enrollments,
-    exams,
+    events,
+    exam_coverage,
     fees,
     grades,
     guardians,
@@ -642,11 +732,15 @@ diesel::allow_tables_to_appear_in_same_query!(
     mpesa,
     owners,
     paper_questions,
+    paper_schedules,
+    paper_topics,
     papers,
+    part_rubric_criteria,
     payments,
     plans,
     question_grades,
     question_images,
+    question_parts,
     questions,
     roles,
     rubric_criteria,
@@ -655,10 +749,12 @@ diesel::allow_tables_to_appear_in_same_query!(
     scopes,
     staff,
     streams,
+    student_pdf_keys,
     students,
     subject_teachers,
     subjects,
     subscriptions,
+    taught_topics,
     teachers,
     terms,
     timetable,

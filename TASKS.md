@@ -438,7 +438,7 @@ DROP TABLE IF EXISTS questions;
 
 ---
 
-### Task A2: Regenerate Diesel schema.rs
+### [x] Task A2: Regenerate Diesel schema.rs
 **Files to modify:** `src/db/schema/schema.rs`
 **Reference files:** `src/db/schema/schema.rs` (current)
 **Depends on:** Task A1
@@ -3058,8 +3058,8 @@ pub mod sync;
 
 ## Task Checklist (all tasks)
 
-- [ ] A1: Migration SQL
-- [ ] A2: Regenerate schema.rs
+- [x] A1: Migration SQL
+- [x] A2: Regenerate schema.rs
 - [ ] B1: Question domain types
 - [ ] B2: QuestionPart domain types
 - [ ] B3: Event domain types

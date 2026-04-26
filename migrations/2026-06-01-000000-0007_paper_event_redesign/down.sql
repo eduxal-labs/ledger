@@ -1,0 +1,19 @@
+-- 0007 down: remove all tables added in this migration
+DROP TABLE IF EXISTS student_pdf_keys;
+DROP TABLE IF EXISTS answer_pages;
+DROP TABLE IF EXISTS scheme_pages;
+DROP TABLE IF EXISTS grades;
+DROP TABLE IF EXISTS marking_queue;
+DROP TABLE IF EXISTS question_grades;
+DROP TABLE IF EXISTS paper_questions;
+DROP TABLE IF EXISTS paper_topics;
+DROP TABLE IF EXISTS exam_coverage;
+DROP TABLE IF EXISTS taught_topics;
+DROP TABLE IF EXISTS paper_schedules;
+DROP TABLE IF EXISTS papers;
+DROP TABLE IF EXISTS events;
+DROP TABLE IF EXISTS question_images;
+DROP TABLE IF EXISTS part_rubric_criteria;
+DROP TABLE IF EXISTS question_parts;
+DROP TABLE IF EXISTS rubric_criteria;
+DROP TABLE IF EXISTS questions;
