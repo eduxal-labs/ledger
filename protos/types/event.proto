@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package event;
+
+message Event {
+  /// The unique identifier for this event.
+  string id         = 1;
+  /// The school this event belongs to.
+  string school     = 2;
+  /// The name/title of the event.
+  string name       = 3;
+  /// The type of event (enum discriminant).
+  int32 type        = 4;
+  /// The school term this event falls in.
+  int32 term        = 5;
+  /// The academic year this event falls in.
+  int32 year        = 6;
+  /// The start date of the event (days since Unix epoch).
+  int32 start_date  = 7;
+  /// The end date of the event (days since Unix epoch).
+  int32 end_date    = 8;
+  /// The current status of the event (enum discriminant).
+  int32 status      = 9;
+  /// The time on which this record was created (Unix seconds).
+  int64 created     = 10;
+  /// The time on which this record was last updated (Unix seconds).
+  int64 updated     = 11;
+}

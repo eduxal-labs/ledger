@@ -1,25 +1,27 @@
-#![allow(dead_code)]
+#![allow(dead_code, unused_imports)]
 
-use super::rows::*;
-use crate::types::error::Result;
-use diesel::RunQueryDsl;
-use diesel::SqliteConnection as Conn;
+use diesel::prelude::*;
 use diesel::result::OptionalExtension;
 use diesel::sql_query;
 use diesel::sql_types::{BigInt, Float, Integer, Nullable, SmallInt, Text};
+use diesel::sqlite::SqliteConnection;
+
+use crate::db::database::tables::rows::{
+    MarkingQueueRow, PaperQuestionRow, QuestionGradeRow, QuestionImageRow, QuestionRow,
+    RubricCriterionRow,
+};
+use crate::db::schema::{
+    answer_pages, marking_queue, paper_questions, part_rubric_criteria, question_grades,
+    question_images, question_parts, questions, rubric_criteria, scheme_pages,
+};
+use crate::types::error::{Error, Result};
+use crate::types::question::{
+    AnswerSpaceType, BodyFormat, CognitiveLevel, PartRubricCriterion, Question, QuestionPart,
+    QuestionType, QuestionUpdate, RubricCriterion,
+};
 
 // ---------------------------------------------------------------------------
-// Helper for COUNT(*) queries
-// ---------------------------------------------------------------------------
-
-#[derive(diesel::QueryableByName)]
-struct CountRow {
-    #[diesel(sql_type = BigInt)]
-    pub count: i64,
-}
-
-// ---------------------------------------------------------------------------
-// Helper for last_insert_rowid()
+// Helpers
 // ---------------------------------------------------------------------------
 
 #[derive(diesel::QueryableByName)]
@@ -28,241 +30,175 @@ struct LastId {
     pub id: i32,
 }
 
+#[derive(diesel::QueryableByName)]
+struct PageKeyRow {
+    #[diesel(sql_type = SmallInt)]
+    pub page: i16,
+    #[diesel(sql_type = Text)]
+    pub key: String,
+}
+
+#[derive(diesel::QueryableByName)]
+struct StudentAdmRow {
+    #[diesel(sql_type = Integer)]
+    pub student: i32,
+}
+
 // =========================================================================
 // Questions
 // =========================================================================
 
-/// Insert a new question. Returns the new question's auto-increment ID.
+/// Insert a new question. Returns the auto-incremented id.
 pub fn insert_question(
-    conn: &mut Conn,
+    conn: &mut SqliteConnection,
     topic: i32,
-    text: &str,
+    body: &str,
+    body_format: BodyFormat,
+    stimulus: Option<&str>,
+    type_: QuestionType,
+    difficulty: i16,
+    cognitive_level: CognitiveLevel,
     marks: i16,
+    max_marks: Option<i16>,
+    answer_space_type: AnswerSpaceType,
+    answer_lines: Option<i16>,
+    answer_box_height_mm: Option<i16>,
     example_answer: Option<&str>,
     created_by: &str,
 ) -> Result<i32> {
     let now = chrono::Utc::now().timestamp();
-    sql_query(
-        "INSERT INTO questions (topic, text, marks, example_answer, created, updated, created_by) \
-         VALUES (?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind::<Integer, _>(topic)
-    .bind::<Text, _>(text)
-    .bind::<SmallInt, _>(marks)
-    .bind::<Nullable<Text>, _>(example_answer)
-    .bind::<BigInt, _>(now)
-    .bind::<BigInt, _>(now)
-    .bind::<Text, _>(created_by)
-    .execute(conn)?;
-
-    let row: LastId = sql_query("SELECT last_insert_rowid() AS id").get_result(conn)?;
+    let q = Question {
+        id: None,
+        topic,
+        body: body.to_owned(),
+        body_format,
+        stimulus: stimulus.map(|s| s.to_owned()),
+        type_,
+        difficulty,
+        cognitive_level,
+        marks,
+        max_marks,
+        answer_space_type,
+        answer_lines,
+        answer_box_height_mm,
+        example_answer: example_answer.map(|s| s.to_owned()),
+        created: now,
+        updated: now,
+        created_by: created_by.to_owned(),
+    };
+    diesel::insert_into(questions::table)
+        .values(&q)
+        .execute(conn)?;
+    let row: LastId = diesel::sql_query("SELECT last_insert_rowid() AS id").get_result(conn)?;
     Ok(row.id)
 }
 
-/// Get-or-create a question by `(topic, text)`.
-///
-/// Returns `(id, is_new)`:
-/// - `is_new = true`  — question was just inserted
-/// - `is_new = false` — a question with the same (topic, text) already existed; the
-///                      existing row's id is returned and nothing is written
-///
-/// Intended for use inside a transaction (e.g. bulk import) where
-/// duplicate rows must be silently resolved rather than rejected.
+/// Insert or find existing question (deduplicates on topic+body).
+/// Returns (id, was_created).
 pub fn find_or_insert_question(
-    conn: &mut Conn,
+    conn: &mut SqliteConnection,
     topic: i32,
-    text: &str,
+    body: &str,
+    body_format: BodyFormat,
+    stimulus: Option<&str>,
+    type_: QuestionType,
+    difficulty: i16,
+    cognitive_level: CognitiveLevel,
     marks: i16,
+    max_marks: Option<i16>,
+    answer_space_type: AnswerSpaceType,
+    answer_lines: Option<i16>,
+    answer_box_height_mm: Option<i16>,
     example_answer: Option<&str>,
     created_by: &str,
 ) -> Result<(i32, bool)> {
-    // Check for an existing question with the same (topic, text)
+    let now = chrono::Utc::now().timestamp();
+    let q = Question {
+        id: None,
+        topic,
+        body: body.to_owned(),
+        body_format,
+        stimulus: stimulus.map(|s| s.to_owned()),
+        type_,
+        difficulty,
+        cognitive_level,
+        marks,
+        max_marks,
+        answer_space_type,
+        answer_lines,
+        answer_box_height_mm,
+        example_answer: example_answer.map(|s| s.to_owned()),
+        created: now,
+        updated: now,
+        created_by: created_by.to_owned(),
+    };
+    let affected = diesel::insert_into(questions::table)
+        .values(&q)
+        .on_conflict_do_nothing()
+        .execute(conn)?;
+
+    // Query by (topic, body) to get the ID whether we just inserted or it already existed.
     let existing: Option<LastId> =
-        sql_query("SELECT id FROM questions WHERE topic = ? AND text = ? LIMIT 1")
+        sql_query("SELECT id FROM questions WHERE topic = ? AND body = ? LIMIT 1")
             .bind::<Integer, _>(topic)
-            .bind::<Text, _>(text)
+            .bind::<Text, _>(body)
             .get_result(conn)
             .optional()?;
 
-    if let Some(row) = existing {
-        return Ok((row.id, false));
+    match existing {
+        Some(row) => Ok((row.id, affected > 0)),
+        None => Err(Error::Internal),
     }
-
-    // No duplicate — insert the new question
-    let now = chrono::Utc::now().timestamp();
-    sql_query(
-        "INSERT INTO questions \
-         (topic, text, marks, example_answer, created, updated, created_by) \
-         VALUES (?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind::<Integer, _>(topic)
-    .bind::<Text, _>(text)
-    .bind::<SmallInt, _>(marks)
-    .bind::<Nullable<Text>, _>(example_answer)
-    .bind::<BigInt, _>(now)
-    .bind::<BigInt, _>(now)
-    .bind::<Text, _>(created_by)
-    .execute(conn)?;
-
-    let row: LastId = sql_query("SELECT last_insert_rowid() AS id").get_result(conn)?;
-    Ok((row.id, true))
 }
 
-/// Update a question. Only updates fields that are `Some`. Always bumps `updated`.
-///
-/// `example_answer` uses a tri-state:
-///   - `None`        → don't change
-///   - `Some(None)`  → set to NULL
-///   - `Some(Some(v))` → set to v
+/// Update a question. Only fields set to `Some` in `update` are changed.
+/// Always bumps the `updated` timestamp.
 pub fn update_question(
-    conn: &mut Conn,
+    conn: &mut SqliteConnection,
     id: i32,
-    text: Option<&str>,
-    marks: Option<i16>,
-    example_answer: Option<Option<&str>>,
+    mut update: QuestionUpdate,
 ) -> Result<()> {
-    let now = chrono::Utc::now().timestamp();
-    let ea_flag: i32 = if example_answer.is_some() { 1 } else { 0 };
-    let ea_val: Option<&str> = example_answer.flatten();
-
-    sql_query(
-        "UPDATE questions SET \
-         text = COALESCE(?, text), \
-         marks = COALESCE(?, marks), \
-         example_answer = CASE WHEN ? = 1 THEN ? ELSE example_answer END, \
-         updated = ? \
-         WHERE id = ?",
-    )
-    .bind::<Nullable<Text>, _>(text)
-    .bind::<Nullable<SmallInt>, _>(marks)
-    .bind::<Integer, _>(ea_flag)
-    .bind::<Nullable<Text>, _>(ea_val)
-    .bind::<BigInt, _>(now)
-    .bind::<Integer, _>(id)
-    .execute(conn)?;
-    Ok(())
-}
-
-/// Delete a question by ID. CASCADE handles children tables.
-pub fn delete_question(conn: &mut Conn, id: i32) -> Result<()> {
-    sql_query("DELETE FROM questions WHERE id = ?")
-        .bind::<Integer, _>(id)
+    if update.updated.is_none() {
+        update.updated = Some(chrono::Utc::now().timestamp());
+    }
+    diesel::update(questions::table.filter(questions::id.eq(Some(id))))
+        .set(&update)
         .execute(conn)?;
     Ok(())
 }
 
-/// Get a single question by ID.
-pub fn get_question(conn: &mut Conn, id: i32) -> Result<QuestionRow> {
-    let row: QuestionRow = sql_query("SELECT * FROM questions WHERE id = ?")
+/// Delete a question by ID. Returns true if a row was actually deleted.
+pub fn delete_question(conn: &mut SqliteConnection, id: i32) -> Result<bool> {
+    let affected = sql_query("DELETE FROM questions WHERE id = ?")
         .bind::<Integer, _>(id)
-        .get_result(conn)?;
-    Ok(row)
+        .execute(conn)?;
+    Ok(affected > 0)
 }
 
-/// List questions for a topic with optional marks range filter.
-/// Returns `(rows, total_count)`.
+/// Get a single question by ID.
+pub fn get_question(conn: &mut SqliteConnection, id: i32) -> Result<Option<Question>> {
+    let q: Option<Question> = sql_query("SELECT * FROM questions WHERE id = ?")
+        .bind::<Integer, _>(id)
+        .get_result(conn)
+        .optional()?;
+    Ok(q)
+}
+
+/// List questions for a topic with pagination.
 pub fn list_questions(
-    conn: &mut Conn,
-    topic: i32,
-    min_marks: Option<i16>,
-    max_marks: Option<i16>,
-    offset: i32,
-    limit: i32,
-) -> Result<(Vec<QuestionRow>, i64)> {
-    let count_row: CountRow = sql_query(
-        "SELECT COUNT(*) AS count FROM questions \
-         WHERE topic = ? \
-         AND marks >= COALESCE(?, marks) \
-         AND marks <= COALESCE(?, marks)",
-    )
-    .bind::<Integer, _>(topic)
-    .bind::<Nullable<SmallInt>, _>(min_marks)
-    .bind::<Nullable<SmallInt>, _>(max_marks)
-    .get_result(conn)?;
-
-    let rows: Vec<QuestionRow> = sql_query(
-        "SELECT * FROM questions \
-         WHERE topic = ? \
-         AND marks >= COALESCE(?, marks) \
-         AND marks <= COALESCE(?, marks) \
-         ORDER BY id \
-         LIMIT ? OFFSET ?",
-    )
-    .bind::<Integer, _>(topic)
-    .bind::<Nullable<SmallInt>, _>(min_marks)
-    .bind::<Nullable<SmallInt>, _>(max_marks)
-    .bind::<Integer, _>(limit)
-    .bind::<Integer, _>(offset)
-    .load(conn)?;
-
-    Ok((rows, count_row.count))
-}
-
-/// Count questions for a given topic.
-pub fn count_questions_by_topic(conn: &mut Conn, topic: i32) -> Result<i64> {
-    let row: CountRow = sql_query("SELECT COUNT(*) AS count FROM questions WHERE topic = ?")
-        .bind::<Integer, _>(topic)
-        .get_result(conn)?;
-    Ok(row.count)
-}
-
-/// Select random questions for a topic, greedily filling up to `target_marks`.
-/// Questions whose IDs appear in `exclude_ids` are skipped.
-pub fn select_random_questions(
-    conn: &mut Conn,
-    topic: i32,
-    target_marks: i16,
-    exclude_ids: &[i32],
-) -> Result<Vec<QuestionRow>> {
-    let exclude_clause = if exclude_ids.is_empty() {
-        String::new()
-    } else {
-        let ids: Vec<String> = exclude_ids.iter().map(|id| id.to_string()).collect();
-        format!(" AND id NOT IN ({})", ids.join(","))
-    };
-
-    let sql = format!(
-        "SELECT * FROM questions WHERE topic = ?{} ORDER BY RANDOM()",
-        exclude_clause
-    );
-
-    let rows: Vec<QuestionRow> = sql_query(&sql).bind::<Integer, _>(topic).load(conn)?;
-
-    // Non-overshooting fill: pick questions in random order, skipping any that
-    // would push the total past the target. If we exhaust all fitting questions
-    // without reaching the target, fall back to the smallest overshooting question
-    // so we never silently under-fill when enough questions exist.
-    let mut selected = Vec::new();
-    let mut current_marks = 0i32;
-    let mut best_fallback: Option<QuestionRow> = None;
-
-    for row in rows {
-        if current_marks >= target_marks as i32 {
-            break;
-        }
-        let new_total = current_marks + row.marks as i32;
-        if new_total <= target_marks as i32 {
-            // Fits within remaining budget — add it
-            current_marks = new_total;
-            selected.push(row);
-        } else {
-            // Would overshoot — remember the smallest overshooting option as fallback
-            if best_fallback.is_none() || row.marks < best_fallback.as_ref().unwrap().marks {
-                best_fallback = Some(row);
-            }
-        }
-    }
-
-    // If we haven't reached the target, add the smallest overshooting question
-    // as a last resort (this preserves the original contract: selected_marks >= target
-    // when enough questions exist).
-    if current_marks < target_marks as i32 {
-        if let Some(fb) = best_fallback {
-            selected.push(fb);
-        }
-    }
-
-    Ok(selected)
+    conn: &mut SqliteConnection,
+    topic_id: i32,
+    page: i64,
+    page_size: i64,
+) -> Result<Vec<Question>> {
+    let offset = page * page_size;
+    let rows: Vec<Question> =
+        sql_query("SELECT * FROM questions WHERE topic = ? ORDER BY id LIMIT ? OFFSET ?")
+            .bind::<Integer, _>(topic_id)
+            .bind::<BigInt, _>(page_size)
+            .bind::<BigInt, _>(offset)
+            .load(conn)?;
+    Ok(rows)
 }
 
 // =========================================================================
@@ -270,151 +206,103 @@ pub fn select_random_questions(
 // =========================================================================
 
 /// Bulk-insert rubric criteria for a question.
-/// Each tuple is `(position, criterion, marks)`.
+/// Each tuple is `(position, criterion, marks, max_marks, required)`.
 pub fn insert_rubric_criteria(
-    conn: &mut Conn,
-    question: i32,
-    criteria: &[(i16, &str, i16)],
+    conn: &mut SqliteConnection,
+    question_id: i32,
+    criteria: &[(i16, String, i16, Option<i16>, bool)],
 ) -> Result<()> {
-    for (position, criterion, marks) in criteria {
-        sql_query(
-            "INSERT INTO rubric_criteria (question, position, criterion, marks) \
-             VALUES (?, ?, ?, ?)",
-        )
-        .bind::<Integer, _>(question)
-        .bind::<SmallInt, _>(*position)
-        .bind::<Text, _>(*criterion)
-        .bind::<SmallInt, _>(*marks)
-        .execute(conn)?;
+    let rows: Vec<RubricCriterion> = criteria
+        .iter()
+        .map(|(pos, crit, marks, max_marks, required)| RubricCriterion {
+            question: question_id,
+            position: *pos,
+            criterion: crit.clone(),
+            marks: *marks,
+            max_marks: *max_marks,
+            required: *required,
+        })
+        .collect();
+    if !rows.is_empty() {
+        diesel::insert_into(rubric_criteria::table)
+            .values(&rows)
+            .execute(conn)?;
     }
     Ok(())
 }
 
-/// Replace all rubric criteria for a question: deletes existing, then inserts new.
-/// Each tuple is `(position, criterion, marks)`.
+/// Replace all rubric criteria for a question: delete existing, then insert new.
 pub fn replace_rubric_criteria(
-    conn: &mut Conn,
-    question: i32,
-    criteria: &[(i16, &str, i16)],
+    conn: &mut SqliteConnection,
+    question_id: i32,
+    criteria: &[(i16, String, i16, Option<i16>, bool)],
 ) -> Result<()> {
-    sql_query("DELETE FROM rubric_criteria WHERE question = ?")
-        .bind::<Integer, _>(question)
+    diesel::delete(rubric_criteria::table.filter(rubric_criteria::question.eq(question_id)))
         .execute(conn)?;
-    insert_rubric_criteria(conn, question, criteria)
+    insert_rubric_criteria(conn, question_id, criteria)
 }
 
 /// Get all rubric criteria for a question, ordered by position.
-pub fn get_rubric_criteria(conn: &mut Conn, question: i32) -> Result<Vec<RubricCriterionRow>> {
-    let rows: Vec<RubricCriterionRow> =
-        sql_query("SELECT * FROM rubric_criteria WHERE question = ? ORDER BY position")
-            .bind::<Integer, _>(question)
-            .load(conn)?;
+pub fn get_rubric_criteria(
+    conn: &mut SqliteConnection,
+    question_id: i32,
+) -> Result<Vec<RubricCriterion>> {
+    let rows: Vec<RubricCriterion> = rubric_criteria::table
+        .filter(rubric_criteria::question.eq(question_id))
+        .order(rubric_criteria::position)
+        .load(conn)?;
     Ok(rows)
 }
 
 // =========================================================================
-// Question Images
+// Question Parts
 // =========================================================================
 
-/// Insert a question image. Returns the new auto-increment ID.
-pub fn insert_question_image(
-    conn: &mut Conn,
-    question: i32,
-    position: i16,
-    context: i16,
-    key: &str,
-    caption: Option<&str>,
-) -> Result<i32> {
-    sql_query(
-        "INSERT INTO question_images (question, position, context, key, caption) \
-         VALUES (?, ?, ?, ?, ?)",
-    )
-    .bind::<Integer, _>(question)
-    .bind::<SmallInt, _>(position)
-    .bind::<SmallInt, _>(context)
-    .bind::<Text, _>(key)
-    .bind::<Nullable<Text>, _>(caption)
-    .execute(conn)?;
-
-    let row: LastId = sql_query("SELECT last_insert_rowid() AS id").get_result(conn)?;
-    Ok(row.id)
-}
-
-/// Get all images for a question, ordered by position.
-pub fn get_question_images(conn: &mut Conn, question: i32) -> Result<Vec<QuestionImageRow>> {
-    let rows: Vec<QuestionImageRow> =
-        sql_query("SELECT * FROM question_images WHERE question = ? ORDER BY position")
-            .bind::<Integer, _>(question)
-            .load(conn)?;
-    Ok(rows)
-}
-
-/// Delete all images for a question.
-pub fn delete_question_images(conn: &mut Conn, question: i32) -> Result<()> {
-    sql_query("DELETE FROM question_images WHERE question = ?")
-        .bind::<Integer, _>(question)
+/// Bulk-insert question parts. The `question` field on each part is overridden
+/// with `question_id` to ensure consistency.
+pub fn insert_question_parts(
+    conn: &mut SqliteConnection,
+    question_id: i32,
+    parts: &[QuestionPart],
+) -> Result<()> {
+    if parts.is_empty() {
+        return Ok(());
+    }
+    let rows: Vec<QuestionPart> = parts
+        .iter()
+        .map(|p| QuestionPart {
+            question: question_id,
+            ..p.clone()
+        })
+        .collect();
+    diesel::insert_into(question_parts::table)
+        .values(&rows)
         .execute(conn)?;
     Ok(())
 }
 
-// =========================================================================
-// Question Grades
-// =========================================================================
-
-/// Upsert a question grade (INSERT ... ON CONFLICT DO UPDATE).
-pub fn upsert_question_grade(
-    conn: &mut Conn,
-    school: &str,
-    exam: &str,
-    student: i32,
-    question: i32,
-    score: f32,
-    feedback: Option<&str>,
-) -> Result<()> {
-    let now = chrono::Utc::now().timestamp();
-    sql_query(
-        "INSERT INTO question_grades (school, exam, student, question, score, feedback, created, updated) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
-         ON CONFLICT(school, exam, student, question) DO UPDATE SET \
-         score = excluded.score, \
-         feedback = excluded.feedback, \
-         updated = excluded.updated",
-    )
-    .bind::<Text, _>(school)
-    .bind::<Text, _>(exam)
-    .bind::<Integer, _>(student)
-    .bind::<Integer, _>(question)
-    .bind::<Float, _>(score)
-    .bind::<Nullable<Text>, _>(feedback)
-    .bind::<BigInt, _>(now)
-    .bind::<BigInt, _>(now)
-    .execute(conn)?;
-    Ok(())
+/// Get all parts for a question, ordered by position.
+pub fn get_question_parts(
+    conn: &mut SqliteConnection,
+    question_id: i32,
+) -> Result<Vec<QuestionPart>> {
+    let rows: Vec<QuestionPart> = question_parts::table
+        .filter(question_parts::question.eq(question_id))
+        .order(question_parts::position)
+        .load(conn)?;
+    Ok(rows)
 }
 
-/// Get question grades for a specific student, filtered to a set of question IDs.
-pub fn get_question_grades_for_student(
-    conn: &mut Conn,
-    school: &str,
-    exam: &str,
-    student: i32,
-    question_ids: &[i32],
-) -> Result<Vec<QuestionGradeRow>> {
-    if question_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let ids: Vec<String> = question_ids.iter().map(|id| id.to_string()).collect();
-    let sql = format!(
-        "SELECT * FROM question_grades \
-         WHERE school = ? AND exam = ? AND student = ? AND question IN ({})",
-        ids.join(",")
-    );
-
-    let rows: Vec<QuestionGradeRow> = sql_query(&sql)
-        .bind::<Text, _>(school)
-        .bind::<Text, _>(exam)
-        .bind::<Integer, _>(student)
+/// Get rubric criteria for a specific question part.
+pub fn get_part_rubric_criteria(
+    conn: &mut SqliteConnection,
+    question_id: i32,
+    part_position: i16,
+) -> Result<Vec<PartRubricCriterion>> {
+    let rows: Vec<PartRubricCriterion> = part_rubric_criteria::table
+        .filter(part_rubric_criteria::question.eq(question_id))
+        .filter(part_rubric_criteria::part.eq(part_position))
+        .order(part_rubric_criteria::position)
         .load(conn)?;
     Ok(rows)
 }
@@ -425,26 +313,18 @@ pub fn get_question_grades_for_student(
 
 /// Bulk-insert paper questions. Each tuple is `(question_id, position)`.
 pub fn insert_paper_questions(
-    conn: &mut Conn,
-    school: &str,
-    exam: &str,
-    subject: i32,
-    paper: Option<i16>,
-    grade: i16,
-    stream: Option<i16>,
+    conn: &mut SqliteConnection,
+    paper_id: &str,
+    student: Option<i32>,
     questions: &[(i32, i16)],
 ) -> Result<()> {
     for (question_id, position) in questions {
         sql_query(
-            "INSERT INTO paper_questions (school, exam, subject, paper, grade, stream, question, position) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO paper_questions (paper, student, question, position) \
+             VALUES (?, ?, ?, ?)",
         )
-        .bind::<Text, _>(school)
-        .bind::<Text, _>(exam)
-        .bind::<Integer, _>(subject)
-        .bind::<Nullable<SmallInt>, _>(paper)
-        .bind::<SmallInt, _>(grade)
-        .bind::<Nullable<SmallInt>, _>(stream)
+        .bind::<Text, _>(paper_id)
+        .bind::<Nullable<Integer>, _>(student)
         .bind::<Integer, _>(*question_id)
         .bind::<SmallInt, _>(*position)
         .execute(conn)?;
@@ -452,372 +332,342 @@ pub fn insert_paper_questions(
     Ok(())
 }
 
-/// Get all paper questions, ordered by position.
-/// Uses `COALESCE(col, -1) = COALESCE(?, -1)` for nullable paper/stream columns.
+/// Get paper questions ordered by position.
+/// `student = None` → WHERE student IS NULL (template/class paper).
 pub fn get_paper_questions(
-    conn: &mut Conn,
-    school: &str,
-    exam: &str,
-    subject: i32,
-    paper: Option<i16>,
-    grade: i16,
-    stream: Option<i16>,
+    conn: &mut SqliteConnection,
+    paper_id: &str,
+    student: Option<i32>,
 ) -> Result<Vec<PaperQuestionRow>> {
-    let rows: Vec<PaperQuestionRow> = sql_query(
-        "SELECT * FROM paper_questions \
-         WHERE school = ? AND exam = ? AND subject = ? \
-         AND COALESCE(paper, -1) = COALESCE(?, -1) \
-         AND grade = ? \
-         AND COALESCE(stream, -1) = COALESCE(?, -1) \
-         ORDER BY position",
-    )
-    .bind::<Text, _>(school)
-    .bind::<Text, _>(exam)
-    .bind::<Integer, _>(subject)
-    .bind::<Nullable<SmallInt>, _>(paper)
-    .bind::<SmallInt, _>(grade)
-    .bind::<Nullable<SmallInt>, _>(stream)
-    .load(conn)?;
+    let rows: Vec<PaperQuestionRow> = if let Some(s) = student {
+        sql_query(
+            "SELECT * FROM paper_questions \
+             WHERE paper = ? AND student = ? \
+             ORDER BY position",
+        )
+        .bind::<Text, _>(paper_id)
+        .bind::<Integer, _>(s)
+        .load(conn)?
+    } else {
+        sql_query(
+            "SELECT * FROM paper_questions \
+             WHERE paper = ? AND student IS NULL \
+             ORDER BY position",
+        )
+        .bind::<Text, _>(paper_id)
+        .load(conn)?
+    };
     Ok(rows)
 }
 
-/// Load all paper questions for a paper with full question data (rubric + images),
-/// ordered by position. Returns proto-ready structs ready for the gRPC response.
-pub fn get_full_paper_questions(
-    conn: &mut Conn,
-    school: &str,
-    exam: &str,
-    subject: i32,
-    paper: Option<i16>,
-    grade: i16,
-    stream: Option<i16>,
-) -> Result<
-    Vec<(
-        i16,
-        Option<String>,
-        QuestionRow,
-        Vec<RubricCriterionRow>,
-        Vec<QuestionImageRow>,
-    )>,
-> {
-    let pqs = get_paper_questions(conn, school, exam, subject, paper, grade, stream)?;
-    let mut result = Vec::with_capacity(pqs.len());
-    for pq in &pqs {
-        let row = get_question(conn, pq.question)?;
-        let rubric = get_rubric_criteria(conn, pq.question)?;
-        let images = get_question_images(conn, pq.question)?;
-        result.push((pq.position, pq.section.clone(), row, rubric, images));
-    }
-    Ok(result)
-}
-
-/// Update the section label for a specific paper question by position.
-/// Returns true if a row was updated, false if not found.
-pub fn set_paper_question_section(
-    conn: &mut Conn,
-    school: &str,
-    exam: &str,
-    subject: i32,
-    paper: Option<i16>,
-    grade: i16,
-    stream: Option<i16>,
-    position: i16,
-    section: Option<&str>,
-) -> Result<bool> {
-    let affected = sql_query(
-        "UPDATE paper_questions SET section = ? \
-         WHERE school = ? AND exam = ? AND subject = ? \
-         AND COALESCE(paper, -1) = COALESCE(?, -1) \
-         AND grade = ? \
-         AND COALESCE(stream, -1) = COALESCE(?, -1) \
-         AND position = ?",
-    )
-    .bind::<Nullable<Text>, _>(section)
-    .bind::<Text, _>(school)
-    .bind::<Text, _>(exam)
-    .bind::<Integer, _>(subject)
-    .bind::<Nullable<SmallInt>, _>(paper)
-    .bind::<SmallInt, _>(grade)
-    .bind::<Nullable<SmallInt>, _>(stream)
-    .bind::<SmallInt, _>(position)
-    .execute(conn)?;
-    Ok(affected > 0)
-}
-
-/// Delete all paper questions matching the given paper identity.
-pub fn delete_paper_questions(
-    conn: &mut Conn,
-    school: &str,
-    exam: &str,
-    subject: i32,
-    paper: Option<i16>,
-    grade: i16,
-    stream: Option<i16>,
-) -> Result<()> {
-    sql_query(
-        "DELETE FROM paper_questions \
-         WHERE school = ? AND exam = ? AND subject = ? \
-         AND COALESCE(paper, -1) = COALESCE(?, -1) \
-         AND grade = ? \
-         AND COALESCE(stream, -1) = COALESCE(?, -1)",
-    )
-    .bind::<Text, _>(school)
-    .bind::<Text, _>(exam)
-    .bind::<Integer, _>(subject)
-    .bind::<Nullable<SmallInt>, _>(paper)
-    .bind::<SmallInt, _>(grade)
-    .bind::<Nullable<SmallInt>, _>(stream)
-    .execute(conn)?;
-    Ok(())
-}
-
-/// Delete all paper questions matching the given paper identity.
+/// Delete paper questions for the given (paper, student) combination.
 /// Returns the number of rows deleted.
-pub fn delete_paper_questions_count(
-    conn: &mut Conn,
-    school: &str,
-    exam: &str,
-    subject: i32,
-    paper: Option<i16>,
-    grade: i16,
-    stream: Option<i16>,
+pub fn delete_paper_questions(
+    conn: &mut SqliteConnection,
+    paper_id: &str,
+    student: Option<i32>,
 ) -> Result<usize> {
-    let count = sql_query(
-        "DELETE FROM paper_questions \
-         WHERE school = ? AND exam = ? AND subject = ? \
-         AND COALESCE(paper, -1) = COALESCE(?, -1) \
-         AND grade = ? \
-         AND COALESCE(stream, -1) = COALESCE(?, -1)",
-    )
-    .bind::<Text, _>(school)
-    .bind::<Text, _>(exam)
-    .bind::<Integer, _>(subject)
-    .bind::<Nullable<SmallInt>, _>(paper)
-    .bind::<SmallInt, _>(grade)
-    .bind::<Nullable<SmallInt>, _>(stream)
-    .execute(conn)?;
+    let count = if let Some(s) = student {
+        sql_query("DELETE FROM paper_questions WHERE paper = ? AND student = ?")
+            .bind::<Text, _>(paper_id)
+            .bind::<Integer, _>(s)
+            .execute(conn)?
+    } else {
+        sql_query("DELETE FROM paper_questions WHERE paper = ? AND student IS NULL")
+            .bind::<Text, _>(paper_id)
+            .execute(conn)?
+    };
     Ok(count)
 }
 
-/// Insert paper questions preserving their section labels.
-/// `questions` is a slice of (question_id, position, section).
-pub fn insert_paper_questions_with_sections(
-    conn: &mut Conn,
-    school: &str,
-    exam: &str,
-    subject: i32,
-    paper: Option<i16>,
-    grade: i16,
-    stream: Option<i16>,
-    questions: &[(i32, i16, Option<String>)],
-) -> Result<()> {
-    for (question_id, position, section) in questions {
-        sql_query(
-            "INSERT INTO paper_questions \
-             (school, exam, subject, paper, grade, stream, question, position, section) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind::<Text, _>(school)
-        .bind::<Text, _>(exam)
-        .bind::<Integer, _>(subject)
-        .bind::<Nullable<SmallInt>, _>(paper)
-        .bind::<SmallInt, _>(grade)
-        .bind::<Nullable<SmallInt>, _>(stream)
-        .bind::<Integer, _>(*question_id)
-        .bind::<SmallInt, _>(*position)
-        .bind::<Nullable<Text>, _>(section.as_deref())
-        .execute(conn)?;
-    }
-    Ok(())
-}
+// =========================================================================
+// Question Grades
+// =========================================================================
 
-/// Insert a papers row for a target stream, copying all fields from a source PaperRow.
-/// Uses INSERT OR IGNORE so that if the row already exists, it is silently skipped.
-/// Returns true if a new row was inserted, false if it already existed.
-pub fn insert_paper_for_stream(
-    conn: &mut Conn,
-    source: &PaperRow,
-    target_stream: Option<i16>,
-) -> Result<bool> {
+/// Upsert a question grade (INSERT OR REPLACE).
+pub fn upsert_question_grade(
+    conn: &mut SqliteConnection,
+    paper_id: &str,
+    student: i32,
+    question_id: i32,
+    score: f32,
+    feedback: Option<&str>,
+    awarded_criteria: Option<&str>,
+) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
-    let affected = sql_query(
-        "INSERT OR IGNORE INTO papers \
-         (school, exam, subject, paper, topic, invigilator, start, \"end\", status, grade, stream, \
-          time_allowed_minutes, instructions, created, updated) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind::<Text, _>(&source.school)
-    .bind::<Text, _>(&source.exam)
-    .bind::<Integer, _>(source.subject)
-    .bind::<Nullable<SmallInt>, _>(source.paper)
-    .bind::<Nullable<Integer>, _>(source.topic)
-    .bind::<Text, _>(&source.invigilator)
-    .bind::<BigInt, _>(source.start)
-    .bind::<BigInt, _>(source.end)
-    .bind::<SmallInt, _>(0i16) // status = Pending
-    .bind::<SmallInt, _>(source.grade)
-    .bind::<Nullable<SmallInt>, _>(target_stream)
-    .bind::<Nullable<SmallInt>, _>(source.time_allowed_minutes)
-    .bind::<Nullable<Text>, _>(source.instructions.as_deref())
-    .bind::<BigInt, _>(now)
-    .bind::<BigInt, _>(now)
-    .execute(conn)?;
-    Ok(affected > 0)
-}
-
-/// Replace the question at a specific position in a paper.
-pub fn replace_paper_question_at_position(
-    conn: &mut Conn,
-    school: &str,
-    exam: &str,
-    subject: i32,
-    paper: Option<i16>,
-    grade: i16,
-    stream: Option<i16>,
-    position: i16,
-    new_question_id: i32,
-) -> Result<()> {
     sql_query(
-        "UPDATE paper_questions SET question = ? \
-         WHERE school = ? AND exam = ? AND subject = ? \
-         AND COALESCE(paper, -1) = COALESCE(?, -1) \
-         AND grade = ? \
-         AND COALESCE(stream, -1) = COALESCE(?, -1) \
-         AND position = ?",
+        "INSERT OR REPLACE INTO question_grades \
+         (paper, student, question, score, feedback, awarded_criteria, created, updated) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
-    .bind::<Integer, _>(new_question_id)
-    .bind::<Text, _>(school)
-    .bind::<Text, _>(exam)
-    .bind::<Integer, _>(subject)
-    .bind::<Nullable<SmallInt>, _>(paper)
-    .bind::<SmallInt, _>(grade)
-    .bind::<Nullable<SmallInt>, _>(stream)
-    .bind::<SmallInt, _>(position)
+    .bind::<Text, _>(paper_id)
+    .bind::<Integer, _>(student)
+    .bind::<Integer, _>(question_id)
+    .bind::<Float, _>(score)
+    .bind::<Nullable<Text>, _>(feedback)
+    .bind::<Nullable<Text>, _>(awarded_criteria)
+    .bind::<BigInt, _>(now)
+    .bind::<BigInt, _>(now)
     .execute(conn)?;
     Ok(())
+}
+
+/// Get all question grades for a specific student on a paper.
+pub fn get_question_grades_for_student(
+    conn: &mut SqliteConnection,
+    paper_id: &str,
+    student: i32,
+) -> Result<Vec<QuestionGradeRow>> {
+    let rows: Vec<QuestionGradeRow> =
+        sql_query("SELECT * FROM question_grades WHERE paper = ? AND student = ?")
+            .bind::<Text, _>(paper_id)
+            .bind::<Integer, _>(student)
+            .load(conn)?;
+    Ok(rows)
+}
+
+/// Get all question grades for a paper across all students.
+pub fn get_question_grades_for_paper(
+    conn: &mut SqliteConnection,
+    paper_id: &str,
+) -> Result<Vec<QuestionGradeRow>> {
+    let rows: Vec<QuestionGradeRow> = sql_query("SELECT * FROM question_grades WHERE paper = ?")
+        .bind::<Text, _>(paper_id)
+        .load(conn)?;
+    Ok(rows)
 }
 
 // =========================================================================
 // Marking Queue
 // =========================================================================
 
-/// Upsert a marking queue entry. Returns the row ID.
-///
-/// Because the unique index includes nullable columns (paper, stream),
-/// we use a manual SELECT + INSERT/UPDATE instead of ON CONFLICT.
-pub fn upsert_marking_queue(
-    conn: &mut Conn,
-    school: &str,
-    exam: &str,
-    subject: i32,
-    paper: Option<i16>,
-    grade: i16,
-    stream: Option<i16>,
-    phase: i16,
-    total_students: i32,
-) -> Result<i32> {
-    let now = chrono::Utc::now().timestamp();
-
-    // Check for existing row using COALESCE sentinel for nullable columns
-    let existing: Option<MarkingQueueRow> = sql_query(
-        "SELECT * FROM marking_queue \
-         WHERE school = ? AND exam = ? AND subject = ? \
-         AND COALESCE(paper, -1) = COALESCE(?, -1) \
-         AND grade = ? \
-         AND COALESCE(stream, -1) = COALESCE(?, -1)",
-    )
-    .bind::<Text, _>(school)
-    .bind::<Text, _>(exam)
-    .bind::<Integer, _>(subject)
-    .bind::<Nullable<SmallInt>, _>(paper)
-    .bind::<SmallInt, _>(grade)
-    .bind::<Nullable<SmallInt>, _>(stream)
-    .get_result(conn)
-    .optional()?;
-
-    if let Some(row) = existing {
-        sql_query(
-            "UPDATE marking_queue SET phase = ?, total_students = ?, updated = ? \
-             WHERE id = ?",
-        )
-        .bind::<SmallInt, _>(phase)
-        .bind::<Integer, _>(total_students)
-        .bind::<BigInt, _>(now)
-        .bind::<Integer, _>(row.id)
-        .execute(conn)?;
-        Ok(row.id)
-    } else {
-        sql_query(
-            "INSERT INTO marking_queue \
-             (school, exam, subject, paper, grade, stream, phase, total_students, created, updated) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind::<Text, _>(school)
-        .bind::<Text, _>(exam)
-        .bind::<Integer, _>(subject)
-        .bind::<Nullable<SmallInt>, _>(paper)
-        .bind::<SmallInt, _>(grade)
-        .bind::<Nullable<SmallInt>, _>(stream)
-        .bind::<SmallInt, _>(phase)
-        .bind::<Integer, _>(total_students)
-        .bind::<BigInt, _>(now)
-        .bind::<BigInt, _>(now)
-        .execute(conn)?;
-
-        let last: LastId = sql_query("SELECT last_insert_rowid() AS id").get_result(conn)?;
-        Ok(last.id)
-    }
-}
-
-/// Update the marking status of a queue entry.
-pub fn update_marking_status(
-    conn: &mut Conn,
-    id: i32,
-    phase: i16,
-    progress: &str,
-    marked_students: i32,
-    error: Option<&str>,
-) -> Result<()> {
+/// Ensure a marking queue entry exists for the paper (INSERT OR IGNORE).
+pub fn upsert_marking_queue(conn: &mut SqliteConnection, paper_id: &str) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     sql_query(
-        "UPDATE marking_queue SET \
-         phase = ?, progress = ?, marked_students = ?, error = ?, updated = ? \
-         WHERE id = ?",
+        "INSERT OR IGNORE INTO marking_queue \
+         (paper, phase, progress, total_students, marked_students, created, updated) \
+         VALUES (?, 0, '', 0, 0, ?, ?)",
     )
-    .bind::<SmallInt, _>(phase)
-    .bind::<Text, _>(progress)
-    .bind::<Integer, _>(marked_students)
-    .bind::<Nullable<Text>, _>(error)
+    .bind::<Text, _>(paper_id)
     .bind::<BigInt, _>(now)
-    .bind::<Integer, _>(id)
+    .bind::<BigInt, _>(now)
     .execute(conn)?;
     Ok(())
 }
 
-/// Get the marking status for a specific paper identity. Returns `None` if not found.
-pub fn get_marking_status(
-    conn: &mut Conn,
-    school: &str,
-    exam: &str,
-    subject: i32,
-    paper: Option<i16>,
-    grade: i16,
-    stream: Option<i16>,
-) -> Result<Option<MarkingQueueRow>> {
-    let row: Option<MarkingQueueRow> = sql_query(
-        "SELECT * FROM marking_queue \
-         WHERE school = ? AND exam = ? AND subject = ? \
-         AND COALESCE(paper, -1) = COALESCE(?, -1) \
-         AND grade = ? \
-         AND COALESCE(stream, -1) = COALESCE(?, -1)",
+/// Update the marking progress for a paper.
+pub fn update_marking_status(
+    conn: &mut SqliteConnection,
+    paper_id: &str,
+    phase: i16,
+    progress: &str,
+    error: Option<&str>,
+    total: i32,
+    marked: i32,
+) -> Result<()> {
+    let now = chrono::Utc::now().timestamp();
+    sql_query(
+        "UPDATE marking_queue \
+         SET phase = ?, progress = ?, error = ?, \
+             total_students = ?, marked_students = ?, updated = ? \
+         WHERE paper = ?",
     )
-    .bind::<Text, _>(school)
-    .bind::<Text, _>(exam)
-    .bind::<Integer, _>(subject)
-    .bind::<Nullable<SmallInt>, _>(paper)
-    .bind::<SmallInt, _>(grade)
-    .bind::<Nullable<SmallInt>, _>(stream)
-    .get_result(conn)
-    .optional()?;
+    .bind::<SmallInt, _>(phase)
+    .bind::<Text, _>(progress)
+    .bind::<Nullable<Text>, _>(error)
+    .bind::<Integer, _>(total)
+    .bind::<Integer, _>(marked)
+    .bind::<BigInt, _>(now)
+    .bind::<Text, _>(paper_id)
+    .execute(conn)?;
+    Ok(())
+}
+
+/// Get the marking status row for a paper.
+pub fn get_marking_status(
+    conn: &mut SqliteConnection,
+    paper_id: &str,
+) -> Result<Option<MarkingQueueRow>> {
+    let row: Option<MarkingQueueRow> = sql_query("SELECT * FROM marking_queue WHERE paper = ?")
+        .bind::<Text, _>(paper_id)
+        .get_result(conn)
+        .optional()?;
     Ok(row)
+}
+
+// =========================================================================
+// Paper Generation
+// =========================================================================
+
+/// Select random questions for paper generation.
+///
+/// - `exclude_ids`: question IDs to skip unconditionally.
+/// - `exclude_recent_student`: `(student_adm, last_n)` — also exclude questions
+///   seen by this student in their last `last_n` paper-question rows ordered by
+///   paper date.
+pub fn select_questions_for_paper(
+    conn: &mut SqliteConnection,
+    topic_id: i32,
+    marks: i16,
+    exclude_ids: &[i32],
+    exclude_recent_student: Option<(i32, usize)>,
+) -> Result<Vec<QuestionRow>> {
+    let exclude_clause = if exclude_ids.is_empty() {
+        String::new()
+    } else {
+        let ids: Vec<String> = exclude_ids.iter().map(|id| id.to_string()).collect();
+        format!(" AND id NOT IN ({})", ids.join(","))
+    };
+
+    let student_clause = match exclude_recent_student {
+        Some((student_adm, last_n)) => format!(
+            " AND id NOT IN (\
+                SELECT pq.question FROM paper_questions pq \
+                JOIN papers p ON p.id = pq.paper \
+                WHERE pq.student = {} \
+                ORDER BY p.date DESC LIMIT {}\
+            )",
+            student_adm, last_n
+        ),
+        None => String::new(),
+    };
+
+    let sql = format!(
+        "SELECT * FROM questions WHERE topic = ? AND marks = ?{}{} \
+         ORDER BY RANDOM() LIMIT 30",
+        exclude_clause, student_clause
+    );
+
+    let rows: Vec<QuestionRow> = sql_query(&sql)
+        .bind::<Integer, _>(topic_id)
+        .bind::<SmallInt, _>(marks)
+        .load(conn)?;
+    Ok(rows)
+}
+
+// =========================================================================
+// Question Images
+// =========================================================================
+
+/// Insert a question image.
+pub fn insert_question_image(
+    conn: &mut SqliteConnection,
+    question_id: i32,
+    position: i16,
+    context: i16,
+    key: &str,
+    caption: Option<&str>,
+) -> Result<()> {
+    sql_query(
+        "INSERT INTO question_images (question, position, context, key, caption) \
+         VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind::<Integer, _>(question_id)
+    .bind::<SmallInt, _>(position)
+    .bind::<SmallInt, _>(context)
+    .bind::<Text, _>(key)
+    .bind::<Nullable<Text>, _>(caption)
+    .execute(conn)?;
+    Ok(())
+}
+
+/// Get all images for a question, ordered by position.
+pub fn get_question_images(
+    conn: &mut SqliteConnection,
+    question_id: i32,
+) -> Result<Vec<QuestionImageRow>> {
+    let rows: Vec<QuestionImageRow> =
+        sql_query("SELECT * FROM question_images WHERE question = ? ORDER BY position")
+            .bind::<Integer, _>(question_id)
+            .load(conn)?;
+    Ok(rows)
+}
+
+/// Delete all images for a question. Returns the number of deleted rows.
+pub fn delete_question_images(conn: &mut SqliteConnection, question_id: i32) -> Result<usize> {
+    let count = sql_query("DELETE FROM question_images WHERE question = ?")
+        .bind::<Integer, _>(question_id)
+        .execute(conn)?;
+    Ok(count)
+}
+
+// =========================================================================
+// Scheme / Answer Pages
+// =========================================================================
+
+/// Insert a marking scheme page (INSERT OR IGNORE for idempotency).
+pub fn insert_scheme_page(
+    conn: &mut SqliteConnection,
+    paper_id: &str,
+    page: i16,
+    key: &str,
+) -> Result<()> {
+    let now = chrono::Utc::now().timestamp();
+    sql_query("INSERT OR IGNORE INTO scheme_pages (paper, page, key, created) VALUES (?, ?, ?, ?)")
+        .bind::<Text, _>(paper_id)
+        .bind::<SmallInt, _>(page)
+        .bind::<Text, _>(key)
+        .bind::<BigInt, _>(now)
+        .execute(conn)?;
+    Ok(())
+}
+
+/// Insert a student answer page (INSERT OR IGNORE for idempotency).
+pub fn insert_answer_page(
+    conn: &mut SqliteConnection,
+    paper_id: &str,
+    student: i32,
+    page: i16,
+    key: &str,
+) -> Result<()> {
+    let now = chrono::Utc::now().timestamp();
+    sql_query(
+        "INSERT OR IGNORE INTO answer_pages (paper, student, page, key, created) \
+         VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind::<Text, _>(paper_id)
+    .bind::<Integer, _>(student)
+    .bind::<SmallInt, _>(page)
+    .bind::<Text, _>(key)
+    .bind::<BigInt, _>(now)
+    .execute(conn)?;
+    Ok(())
+}
+
+/// Get all marking scheme pages for a paper, ordered by page number.
+/// Returns `(page, r2_key)` pairs.
+pub fn get_scheme_pages(conn: &mut SqliteConnection, paper_id: &str) -> Result<Vec<(i16, String)>> {
+    let rows: Vec<PageKeyRow> =
+        sql_query("SELECT page, key FROM scheme_pages WHERE paper = ? ORDER BY page")
+            .bind::<Text, _>(paper_id)
+            .load(conn)?;
+    Ok(rows.into_iter().map(|r| (r.page, r.key)).collect())
+}
+
+/// Get all answer pages for a specific student on a paper, ordered by page number.
+/// Returns `(page, r2_key)` pairs.
+pub fn get_answer_pages(
+    conn: &mut SqliteConnection,
+    paper_id: &str,
+    student: i32,
+) -> Result<Vec<(i16, String)>> {
+    let rows: Vec<PageKeyRow> = sql_query(
+        "SELECT page, key FROM answer_pages WHERE paper = ? AND student = ? ORDER BY page",
+    )
+    .bind::<Text, _>(paper_id)
+    .bind::<Integer, _>(student)
+    .load(conn)?;
+    Ok(rows.into_iter().map(|r| (r.page, r.key)).collect())
+}
+
+/// Get all distinct student admission numbers that have paper_questions rows for a paper.
+pub fn get_paper_student_adms(conn: &mut SqliteConnection, paper_id: &str) -> Result<Vec<i32>> {
+    let rows: Vec<StudentAdmRow> = sql_query(
+        "SELECT DISTINCT student FROM paper_questions \
+         WHERE paper = ? AND student IS NOT NULL",
+    )
+    .bind::<Text, _>(paper_id)
+    .load(conn)?;
+    Ok(rows.into_iter().map(|r| r.student).collect())
 }

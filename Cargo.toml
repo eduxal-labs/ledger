@@ -30,7 +30,10 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 base64 = "0.22"
 urlencoding = "2.1.3"
-printpdf = "0.9"
+typst = "0.13"
+typst-pdf = "0.13"
+typst-assets = { version = "0.13", features = ["fonts"] }
+comemo = "0.4"
 
 [build-dependencies]
 tonic-prost-build = "0.14.5"

@@ -1,0 +1,85 @@
+syntax = "proto3";
+
+package event_service;
+
+import "types/event.proto";
+
+service EventService {
+  rpc CreateEvent(CreateEventRequest) returns (CreateEventResponse);
+  rpc GetEvent(GetEventRequest)       returns (GetEventResponse);
+  rpc ListEvents(ListEventsRequest)   returns (ListEventsResponse);
+  rpc UpdateEvent(UpdateEventRequest) returns (UpdateEventResponse);
+  rpc DeleteEvent(DeleteEventRequest) returns (DeleteEventResponse);
+}
+
+message CreateEventRequest {
+  /// The school this event belongs to.
+  string school    = 1;
+  /// The name of the event.
+  string name      = 2;
+  /// The type of the event.
+  int32 type       = 3;
+  /// The term in which the event occurs.
+  int32 term       = 4;
+  /// The year in which the event occurs.
+  int32 year       = 5;
+  /// The start date of the event (days since Unix epoch).
+  int32 start_date = 6;
+  /// The end date of the event (days since Unix epoch).
+  int32 end_date   = 7;
+}
+message CreateEventResponse {
+  /// The newly created event.
+  event.Event event = 1;
+}
+
+message GetEventRequest {
+  /// The id of the event to retrieve.
+  string event_id = 1;
+}
+message GetEventResponse {
+  /// The retrieved event.
+  event.Event event = 1;
+}
+
+message ListEventsRequest {
+  /// The school whose events to list.
+  string school        = 1;
+  /// Optional filter by year.
+  optional int32 year  = 2;
+  /// Optional filter by term.
+  optional int32 term  = 3;
+}
+message ListEventsResponse {
+  /// The list of matching events.
+  repeated event.Event events = 1;
+}
+
+message UpdateEventRequest {
+  /// The id of the event to update.
+  string event_id           = 1;
+  /// Updated name.
+  optional string name      = 2;
+  /// Updated type.
+  optional int32 type       = 3;
+  /// Updated term.
+  optional int32 term       = 4;
+  /// Updated year.
+  optional int32 year       = 5;
+  /// Updated start date (days since Unix epoch).
+  optional int32 start_date = 6;
+  /// Updated end date (days since Unix epoch).
+  optional int32 end_date   = 7;
+  /// Updated status.
+  optional int32 status     = 8;
+}
+message UpdateEventResponse {
+  /// The updated event.
+  event.Event event = 1;
+}
+
+message DeleteEventRequest {
+  /// The id of the event to delete.
+  string event_id = 1;
+}
+message DeleteEventResponse {}

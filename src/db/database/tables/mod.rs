@@ -1,7 +1,10 @@
 pub mod actions;
 pub mod delete;
+pub mod events;
 pub mod insert;
 mod memberships;
+pub mod paper_management;
+pub mod papers;
 pub mod question_bank;
 pub mod rows;
 pub mod snapshot;

@@ -1,428 +1,232 @@
 syntax = "proto3";
-
 package question_bank;
 
 service QuestionBank {
-  // === System User Operations (question management) ===
-  rpc CreateQuestion(CreateQuestionRequest) returns (CreateQuestionResponse);
-  rpc UpdateQuestion(UpdateQuestionRequest) returns (UpdateQuestionResponse);
-  rpc DeleteQuestion(DeleteQuestionRequest) returns (DeleteQuestionResponse);
-  rpc BulkImportQuestions(BulkImportRequest) returns (BulkImportResponse);
+  // ── Global catalog (admin/teacher) ──────────────────────────
+  rpc CreateQuestion(CreateQuestionRequest)       returns (CreateQuestionResponse);
+  rpc GetQuestion(GetQuestionRequest)             returns (GetQuestionResponse);
+  rpc ListQuestions(ListQuestionsRequest)         returns (ListQuestionsResponse);
+  rpc UpdateQuestion(UpdateQuestionRequest)       returns (UpdateQuestionResponse);
+  rpc DeleteQuestion(DeleteQuestionRequest)       returns (DeleteQuestionResponse);
+  rpc BulkImport(BulkImportRequest)               returns (BulkImportResponse);
   rpc RequestImageUploadUrls(ImageUploadUrlsRequest) returns (ImageUploadUrlsResponse);
 
-  // === Teacher Operations (exam paper assembly) ===
-  rpc GeneratePaper(GeneratePaperRequest) returns (GeneratePaperResponse);
-  rpc RegenerateQuestion(RegenerateQuestionRequest) returns (RegenerateQuestionResponse);
-  rpc EditPaperQuestion(EditPaperQuestionRequest) returns (EditPaperQuestionResponse);
-  rpc FinalizePaper(FinalizePaperRequest) returns (FinalizePaperResponse);
-  rpc GetPaperPdf(GetPaperPdfRequest) returns (GetPaperPdfResponse);
+  // ── Paper question management ────────────────────────────────
+  rpc GeneratePaper(GeneratePaperRequest)         returns (GeneratePaperResponse);
   rpc GetPaperQuestions(GetPaperQuestionsRequest) returns (GetPaperQuestionsResponse);
-  rpc SetPaperQuestionSection(SetPaperQuestionSectionRequest) returns (SetPaperQuestionSectionResponse);
-  // Delete all generated questions and the generated PDF for a paper.
-  // The paper must be in Pending status. Returns FAILED_PRECONDITION otherwise.
+  rpc RegenerateQuestion(RegenerateQuestionRequest) returns (RegenerateQuestionResponse);
   rpc ClearPaperQuestions(ClearPaperQuestionsRequest) returns (ClearPaperQuestionsResponse);
-  // Copy a generated paper to additional streams in the same grade.
-  rpc CopyPaperToStreams(CopyPaperToStreamsRequest) returns (CopyPaperToStreamsResponse);
+  rpc FinalizePaper(FinalizePaperRequest)         returns (FinalizePaperResponse);
 
-  // === Read Operations (paper state restoration) ===
-  rpc ListQuestions(ListQuestionsRequest) returns (ListQuestionsResponse);
-  rpc GetQuestion(GetQuestionRequest) returns (GetQuestionResponse);
+  // ── Marking ──────────────────────────────────────────────────
+  rpc GetMarkingStatus(MarkingStatusRequest)      returns (MarkingStatusResponse);
   rpc GetQuestionGrades(GetQuestionGradesRequest) returns (GetQuestionGradesResponse);
-  rpc GetMarkingStatus(MarkingStatusRequest) returns (MarkingStatusResponse);
 }
 
-// === Shared types ===
+// ── Question messages ────────────────────────────────────────────────────────
 
 message Question {
-  int32 id = 1;
-  int32 topic_id = 2;
-  string text = 3;
-  int32 marks = 4;
-  optional string example_answer = 5;
-  repeated RubricCriterion rubric = 6;
-  repeated QuestionImage images = 7;
-  int64 created = 8;
-  int64 updated = 9;
+  int32 id                           = 1;
+  int32 topic_id                     = 2;
+  string body                        = 3;
+  int32 body_format                  = 4;
+  optional string stimulus           = 5;
+  int32 type                         = 6;
+  int32 difficulty                   = 7;
+  int32 cognitive_level              = 8;
+  int32 marks                        = 9;
+  optional int32 max_marks           = 10;
+  int32 answer_space_type            = 11;
+  optional int32 answer_lines        = 12;
+  optional int32 answer_box_height_mm = 13;
+  optional string example_answer     = 14;
+  repeated RubricCriterion rubric    = 15;
+  repeated QuestionPart parts        = 16;
+  int64 created                      = 17;
+  int64 updated                      = 18;
 }
 
 message RubricCriterion {
-  int32 position = 1;
-  string criterion = 2;
-  int32 marks = 3;
+  int32 position           = 1;
+  string criterion         = 2;
+  int32 marks              = 3;
+  optional int32 max_marks = 4;
+  bool required            = 5;
 }
 
-message QuestionImage {
-  int32 id = 1;
-  int32 position = 2;
-  int32 context = 3;
-  string key = 4;
-  optional string url = 5;
-  optional string caption = 6;
+message QuestionPart {
+  int32 position                       = 1;
+  string label                         = 2;
+  string body                          = 3;
+  int32 body_format                    = 4;
+  int32 marks                          = 5;
+  optional int32 max_marks             = 6;
+  int32 answer_space_type              = 7;
+  optional int32 answer_lines          = 8;
+  optional int32 answer_box_height_mm  = 9;
+  optional string example_answer       = 10;
+  optional string stimulus             = 11;
+  repeated RubricCriterion rubric      = 12;
 }
 
-// === CreateQuestion ===
-
-// Global catalog operation.
-// Creates a question in the shared system-wide question bank and is not school-scoped.
-// School-scoped fields belong only to paper assembly / grading / marking requests.
-message CreateQuestionRequest {
-  int32 topic_id = 1;
-  string text = 2;
-  int32 marks = 3;
-  optional string example_answer = 4;
-  repeated RubricCriterionInput rubric = 5;
-}
+// ── Create ───────────────────────────────────────────────────────────────────
 
 message RubricCriterionInput {
-  string criterion = 1;
-  int32 marks = 2;
-}
-
-message CreateQuestionResponse {
-  Question question = 1;
-}
-
-// === UpdateQuestion ===
-
-// Global catalog operation.
-// Updates a question in the shared system-wide question bank and is not school-scoped.
-// School-scoped fields belong only to paper assembly / grading / marking requests.
-message UpdateQuestionRequest {
-  int32 question_id = 1;
-  optional string text = 2;
-  optional int32 marks = 3;
-  optional string example_answer = 4;
-  repeated RubricCriterionInput rubric = 5;
-}
-
-message UpdateQuestionResponse {
-  Question question = 1;
-}
-
-// === DeleteQuestion ===
-
-// Global catalog operation.
-// Deletes a question from the shared system-wide question bank and is not school-scoped.
-// School-scoped fields belong only to paper assembly / grading / marking requests.
-message DeleteQuestionRequest {
-  int32 question_id = 1;
-}
-
-message DeleteQuestionResponse {}
-
-// === BulkImport ===
-
-// Global catalog operation.
-// Imports questions into the shared system-wide question bank and is not school-scoped.
-// School-scoped fields belong only to paper assembly / grading / marking requests.
-message BulkImportRequest {
-  string json_content = 1;
-}
-
-message BulkImportResponse {
-  int32 questions_created = 1;
-  repeated ImportError errors = 2;
-  repeated int32 question_ids = 3;
-  int32 duplicates_skipped = 4;
-}
-
-message ImportError {
-  int32 index = 1;
-  string message = 2;
-}
-
-// === Image Upload URLs ===
-
-message ImageUploadUrlsRequest {
-  repeated ImageUploadSpec images = 1;
-}
-
-message ImageUploadSpec {
-  int32 question_id = 1;
-  int32 position = 2;
-  int32 context = 3;
-  optional string caption = 4;
-  string filename = 5;
-}
-
-message ImageUploadUrlsResponse {
-  repeated ImageUploadUrl urls = 1;
-}
-
-message ImageUploadUrl {
-  int32 question_id = 1;
-  int32 position = 2;
-  string key = 3;
-  string put_url = 4;
-}
-
-// === GeneratePaper ===
-
-// School-scoped paper assembly operation.
-// The `school` field is intentional here because paper generation is school-bound,
-// unlike global question-bank catalog CRUD/import/list requests.
-message GeneratePaperRequest {
-  string school = 1;
-  string exam = 2;
-  int32 subject = 3;
-  optional int32 paper = 4;
-  int32 grade = 5;
-  optional int32 stream = 6;
-  int32 total_marks = 7;
-  repeated TopicAllocation topic_allocations = 8;
-}
-
-message TopicAllocation {
-  int32 topic_id = 1;
-  int32 marks = 2;
-}
-
-message GeneratePaperResponse {
-  repeated PaperQuestion questions = 1;
-}
-
-message PaperQuestion {
-  int32 position = 1;
-  Question question = 2;
-  optional string section = 3;
-}
-
-// === RegenerateQuestion ===
-
-// School-scoped paper assembly operation.
-// The `school` field is intentional here because paper regeneration is school-bound,
-// unlike global question-bank catalog CRUD/import/list requests.
-message RegenerateQuestionRequest {
-  string school = 1;
-  string exam = 2;
-  int32 subject = 3;
-  optional int32 paper = 4;
-  int32 grade = 5;
-  optional int32 stream = 6;
-  int32 position = 7;
-  int32 topic_id = 8;
-  int32 marks = 9;
-  repeated int32 exclude_ids = 10;
-}
-
-message RegenerateQuestionResponse {
-  PaperQuestion replacement = 1;
-}
-
-// === EditPaperQuestion ===
-
-message EditPaperQuestionRequest {
-  int32 question_id = 1;
-  optional string text = 2;
-  optional int32 marks = 3;
-  optional string example_answer = 4;
-  repeated RubricCriterionInput rubric = 5;
-}
-
-message EditPaperQuestionResponse {
-  Question question = 1;
-}
-
-// === FinalizePaper ===
-
-// School-scoped paper assembly operation.
-// The `school` field is intentional here because paper finalization is school-bound,
-// unlike global question-bank catalog CRUD/import/list requests.
-message FinalizePaperRequest {
-  string school = 1;
-  string exam = 2;
-  int32 subject = 3;
-  optional int32 paper = 4;
-  int32 grade = 5;
-  optional int32 stream = 6;
-}
-
-message FinalizePaperResponse {
-  string pdf_url = 1;
-  int64 pdf_expiry = 2;
-  string marking_scheme_url = 3;
-  int64 marking_scheme_expiry = 4;
-}
-
-// === GetPaperPdf ===
-
-// School-scoped paper retrieval operation.
-// The `school` field is intentional here because paper PDF access is school-bound,
-// unlike global question-bank catalog CRUD/import/list requests.
-message GetPaperPdfRequest {
-  string school = 1;
-  string exam = 2;
-  int32 subject = 3;
-  optional int32 paper = 4;
-  int32 grade = 5;
-  optional int32 stream = 6;
-}
-
-message GetPaperPdfResponse {
-  string pdf_url = 1;
-  int64 pdf_expiry = 2;
-}
-
-// === GetPaperQuestions ===
-
-// Returns the currently assembled question list for a paper, ordered by position.
-// Returns an empty list if no paper has been generated yet for this identity.
-message GetPaperQuestionsRequest {
-  string school = 1;
-  string exam = 2;
-  int32 subject = 3;
-  optional int32 paper = 4;
-  int32 grade = 5;
-  optional int32 stream = 6;
-}
-
-message GetPaperQuestionsResponse {
-  repeated PaperQuestion questions = 1;
-}
-
-// === SetPaperQuestionSection ===
-
-message SetPaperQuestionSectionRequest {
-  string school = 1;
-  string exam = 2;
-  int32 subject = 3;
-  optional int32 paper = 4;
-  int32 grade = 5;
-  optional int32 stream = 6;
-  int32 position = 7;
-  optional string section = 8;
-}
-
-message SetPaperQuestionSectionResponse {}
-
-// === ListQuestions ===
-
-// Global catalog operation.
-// Lists questions from the shared system-wide question bank and is not school-scoped.
-// School-scoped fields belong only to paper assembly / grading / marking requests.
-message ListQuestionsRequest {
-  int32 topic_id = 1;
-  optional int32 min_marks = 2;
+  string criterion         = 1;
+  int32 marks              = 2;
   optional int32 max_marks = 3;
-  int32 offset = 4;
-  int32 limit = 5;
+  bool required            = 4;
 }
 
+message QuestionPartInput {
+  string label                         = 1;
+  string body                          = 2;
+  int32 body_format                    = 3;
+  int32 marks                          = 4;
+  optional int32 max_marks             = 5;
+  int32 answer_space_type              = 6;
+  optional int32 answer_lines          = 7;
+  optional int32 answer_box_height_mm  = 8;
+  optional string example_answer       = 9;
+  optional string stimulus             = 10;
+  repeated RubricCriterionInput rubric = 11;
+}
+
+message CreateQuestionRequest {
+  int32 topic_id                       = 1;
+  string body                          = 2;
+  int32 body_format                    = 3;
+  optional string stimulus             = 4;
+  int32 type                           = 5;
+  int32 difficulty                     = 6;
+  int32 cognitive_level                = 7;
+  int32 marks                          = 8;
+  optional int32 max_marks             = 9;
+  int32 answer_space_type              = 10;
+  optional int32 answer_lines          = 11;
+  optional int32 answer_box_height_mm  = 12;
+  optional string example_answer       = 13;
+  repeated RubricCriterionInput rubric = 14;
+  repeated QuestionPartInput parts     = 15;
+}
+
+message CreateQuestionResponse { Question question = 1; }
+
+// ── Read ─────────────────────────────────────────────────────────────────────
+
+message GetQuestionRequest  { int32 question_id = 1; }
+message GetQuestionResponse { Question question = 1; }
+
+message ListQuestionsRequest {
+  int32 topic_id    = 1;
+  int32 page        = 2;
+  int32 page_size   = 3;
+}
 message ListQuestionsResponse {
   repeated Question questions = 1;
-  int32 total = 2;
+  int32 total                 = 2;
 }
 
-// === GetQuestion ===
+// ── Update ───────────────────────────────────────────────────────────────────
 
-// Global catalog operation.
-// Fetches a question from the shared system-wide question bank and is not school-scoped.
-// School-scoped fields belong only to paper assembly / grading / marking requests.
-message GetQuestionRequest {
+message UpdateQuestionRequest {
+  int32 question_id                      = 1;
+  optional int32 topic_id                = 2;
+  optional string body                   = 3;
+  optional int32 body_format             = 4;
+  optional string stimulus               = 5;
+  optional int32 type                    = 6;
+  optional int32 difficulty              = 7;
+  optional int32 cognitive_level         = 8;
+  optional int32 marks                   = 9;
+  optional int32 max_marks               = 10;
+  optional int32 answer_space_type       = 11;
+  optional int32 answer_lines            = 12;
+  optional int32 answer_box_height_mm    = 13;
+  optional string example_answer         = 14;
+  repeated RubricCriterionInput rubric   = 15;
+  repeated QuestionPartInput parts       = 16;
+}
+message UpdateQuestionResponse { Question question = 1; }
+
+// ── Delete ───────────────────────────────────────────────────────────────────
+
+message DeleteQuestionRequest  { int32 question_id = 1; }
+message DeleteQuestionResponse {}
+
+// ── Bulk import ──────────────────────────────────────────────────────────────
+
+message BulkImportRequest  { repeated CreateQuestionRequest questions = 1; }
+message BulkImportResponse { int32 created = 1; int32 skipped = 2; }
+
+// ── Image upload ─────────────────────────────────────────────────────────────
+
+message ImageUploadUrlsRequest {
   int32 question_id = 1;
+  int32 count       = 2;
+}
+message ImageUploadUrlsResponse { repeated string urls = 1; }
+
+// ── Paper question management ─────────────────────────────────────────────────
+
+message TopicAllocation {
+  int32 topic_id    = 1;
+  int32 total_marks = 2;
 }
 
-message GetQuestionResponse {
-  Question question = 1;
+message GeneratePaperRequest {
+  string paper_id                            = 1;
+  int32 total_marks                          = 2;
+  repeated TopicAllocation topic_allocations = 3;
+}
+message GeneratePaperResponse { bool success = 1; string message = 2; }
+
+message GetPaperQuestionsRequest {
+  string paper_id          = 1;
+  optional int32 student   = 2;
+}
+message GetPaperQuestionsResponse {
+  repeated Question questions = 1;
 }
 
-// === GetQuestionGrades ===
-
-// School-scoped grading/marking operation.
-// The `school` field is intentional here because question-grade lookup is school-bound,
-// unlike global question-bank catalog CRUD/import/list requests.
-message GetQuestionGradesRequest {
-  string school = 1;
-  string exam = 2;
-  int32 student = 3;
-  int32 subject = 4;
-  optional int32 paper = 5;
-  int32 grade = 6;
-  optional int32 stream = 7;
+message RegenerateQuestionRequest {
+  string paper_id            = 1;
+  optional int32 student     = 2;
+  int32 position             = 3;
+  int32 topic_id             = 4;
+  int32 marks                = 5;
+  repeated int32 exclude_ids = 6;
 }
-
-message GetQuestionGradesResponse {
-  repeated QuestionGradeDetail grades = 1;
-}
-
-message QuestionGradeDetail {
-  int32 question_id = 1;
-  string question_text = 2;
-  int32 question_marks = 3;
-  float score = 4;
-  optional string feedback = 5;
-  repeated RubricCriterion rubric = 6;
-}
-
-// === MarkingStatus ===
-
-enum MarkingPhase {
-  QUEUED = 0;
-  DOWNLOADING = 1;
-  CACHING = 2;
-  MARKING = 3;
-  AGGREGATING = 4;
-  COMPLETE = 5;
-  FAILED = 6;
-}
-
-// School-scoped grading/marking operation.
-// The `school` field is intentional here because marking status is school-bound,
-// unlike global question-bank catalog CRUD/import/list requests.
-message MarkingStatusRequest {
-  string school = 1;
-  string exam = 2;
-  int32 subject = 3;
-  optional int32 paper = 4;
-  int32 grade = 5;
-  optional int32 stream = 6;
-}
-
-message MarkingStatusResponse {
-  MarkingPhase phase = 1;
-  string progress = 2;
-  optional string error = 3;
-  optional int64 estimated_completion = 4;
-}
-
-// ─── ClearPaperQuestions ─────────────────────────────────────────────────────
+message RegenerateQuestionResponse { Question question = 1; }
 
 message ClearPaperQuestionsRequest {
-  string school = 1;
-  string exam = 2;
-  int32 subject = 3;
-  optional int32 paper = 4;
-  int32 grade = 5;
-  optional int32 stream = 6;
+  string paper_id         = 1;
+  optional int32 student  = 2;
+}
+message ClearPaperQuestionsResponse {}
+
+message FinalizePaperRequest  { string paper_id = 1; }
+message FinalizePaperResponse { string pdf_key = 1; string ms_key = 2; }
+
+// ── Marking ───────────────────────────────────────────────────────────────────
+
+message MarkingStatusRequest  { string paper_id = 1; }
+message MarkingStatusResponse {
+  int32 phase           = 1;
+  string progress       = 2;
+  optional string error = 3;
+  int32 total_students  = 4;
+  int32 marked_students = 5;
 }
 
-message ClearPaperQuestionsResponse {
-  int32 questions_deleted = 1;
-  bool pdf_deleted = 2;
+message QuestionGrade {
+  int32 question_id        = 1;
+  float score              = 2;
+  optional string feedback = 3;
 }
 
-// ─── CopyPaperToStreams ───────────────────────────────────────────────────────
-
-message CopyPaperToStreamsRequest {
-  string school = 1;
-  string exam = 2;
-  int32 subject = 3;
-  optional int32 paper = 4;
-  int32 grade = 5;
-  optional int32 source_stream = 6;
-  repeated int32 target_streams = 7;
+message GetQuestionGradesRequest {
+  string paper_id = 1;
+  int32 student   = 2;
 }
-
-message StreamCopyResult {
-  int32 stream = 1;
-  bool success = 2;
-  string pdf_url = 3;
-  int64 pdf_expiry = 4;
-  string marking_scheme_url = 5;
-  int64 marking_scheme_expiry = 6;
-  string error = 7;
-}
-
-message CopyPaperToStreamsResponse {
-  repeated StreamCopyResult results = 1;
-}
+message GetQuestionGradesResponse { repeated QuestionGrade grades = 1; }

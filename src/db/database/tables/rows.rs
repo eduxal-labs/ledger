@@ -1763,23 +1763,41 @@ impl From<&AnswerPageRow> for AnswerPageInsert {
 // Question Bank — Server-Only Tables
 // ---------------------------------------------------------------------------
 
-#[derive(QueryableByName)]
+#[derive(Debug, Clone, diesel::QueryableByName)]
 pub struct QuestionRow {
-    #[diesel(sql_type = Integer)]
-    pub id: i32,
-    #[diesel(sql_type = Integer)]
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Integer>)]
+    pub id: Option<i32>,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
     pub topic: i32,
-    #[diesel(sql_type = Text)]
-    pub text: String,
-    #[diesel(sql_type = SmallInt)]
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub body: String,
+    #[diesel(sql_type = diesel::sql_types::SmallInt)]
+    pub body_format: i16,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+    pub stimulus: Option<String>,
+    #[diesel(sql_type = diesel::sql_types::SmallInt)]
+    pub type_: i16,
+    #[diesel(sql_type = diesel::sql_types::SmallInt)]
+    pub difficulty: i16,
+    #[diesel(sql_type = diesel::sql_types::SmallInt)]
+    pub cognitive_level: i16,
+    #[diesel(sql_type = diesel::sql_types::SmallInt)]
     pub marks: i16,
-    #[diesel(sql_type = Nullable<Text>)]
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::SmallInt>)]
+    pub max_marks: Option<i16>,
+    #[diesel(sql_type = diesel::sql_types::SmallInt)]
+    pub answer_space_type: i16,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::SmallInt>)]
+    pub answer_lines: Option<i16>,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::SmallInt>)]
+    pub answer_box_height_mm: Option<i16>,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
     pub example_answer: Option<String>,
-    #[diesel(sql_type = BigInt)]
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
     pub created: i64,
-    #[diesel(sql_type = BigInt)]
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
     pub updated: i64,
-    #[diesel(sql_type = Text)]
+    #[diesel(sql_type = diesel::sql_types::Text)]
     pub created_by: String,
 }
 
@@ -1811,76 +1829,238 @@ pub struct QuestionImageRow {
     pub caption: Option<String>,
 }
 
-#[derive(QueryableByName)]
+#[derive(Debug, Clone, diesel::QueryableByName)]
 pub struct QuestionGradeRow {
-    #[diesel(sql_type = Text)]
-    pub school: String,
-    #[diesel(sql_type = Text)]
-    pub exam: String,
-    #[diesel(sql_type = Integer)]
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub paper: String,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
     pub student: i32,
-    #[diesel(sql_type = Integer)]
+    #[diesel(sql_type = diesel::sql_types::Integer)]
     pub question: i32,
-    #[diesel(sql_type = Float)]
+    #[diesel(sql_type = diesel::sql_types::Float)]
     pub score: f32,
-    #[diesel(sql_type = Nullable<Text>)]
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
     pub feedback: Option<String>,
-    #[diesel(sql_type = BigInt)]
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+    pub awarded_criteria: Option<String>,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
     pub created: i64,
-    #[diesel(sql_type = BigInt)]
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
     pub updated: i64,
 }
 
-#[derive(QueryableByName)]
+#[derive(Debug, Clone, diesel::QueryableByName)]
 pub struct PaperQuestionRow {
-    #[diesel(sql_type = Text)]
-    pub school: String,
-    #[diesel(sql_type = Text)]
-    pub exam: String,
-    #[diesel(sql_type = Integer)]
-    pub subject: i32,
-    #[diesel(sql_type = Nullable<SmallInt>)]
-    pub paper: Option<i16>,
-    #[diesel(sql_type = SmallInt)]
-    pub grade: i16,
-    #[diesel(sql_type = Nullable<SmallInt>)]
-    pub stream: Option<i16>,
-    #[diesel(sql_type = Integer)]
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub paper: String,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Integer>)]
+    pub student: Option<i32>,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
     pub question: i32,
-    #[diesel(sql_type = SmallInt)]
+    #[diesel(sql_type = diesel::sql_types::SmallInt)]
     pub position: i16,
-    #[diesel(sql_type = Nullable<Text>)]
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
     pub section: Option<String>,
 }
 
-#[derive(QueryableByName)]
+#[derive(Debug, Clone, diesel::QueryableByName)]
 pub struct MarkingQueueRow {
-    #[diesel(sql_type = Integer)]
+    #[diesel(sql_type = diesel::sql_types::Integer)]
     pub id: i32,
-    #[diesel(sql_type = Text)]
-    pub school: String,
-    #[diesel(sql_type = Text)]
-    pub exam: String,
-    #[diesel(sql_type = Integer)]
-    pub subject: i32,
-    #[diesel(sql_type = Nullable<SmallInt>)]
-    pub paper: Option<i16>,
-    #[diesel(sql_type = SmallInt)]
-    pub grade: i16,
-    #[diesel(sql_type = Nullable<SmallInt>)]
-    pub stream: Option<i16>,
-    #[diesel(sql_type = SmallInt)]
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub paper: String,
+    #[diesel(sql_type = diesel::sql_types::SmallInt)]
     pub phase: i16,
-    #[diesel(sql_type = Text)]
+    #[diesel(sql_type = diesel::sql_types::Text)]
     pub progress: String,
-    #[diesel(sql_type = Nullable<Text>)]
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
     pub error: Option<String>,
-    #[diesel(sql_type = Integer)]
+    #[diesel(sql_type = diesel::sql_types::Integer)]
     pub total_students: i32,
-    #[diesel(sql_type = Integer)]
+    #[diesel(sql_type = diesel::sql_types::Integer)]
     pub marked_students: i32,
-    #[diesel(sql_type = BigInt)]
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
     pub created: i64,
-    #[diesel(sql_type = BigInt)]
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
     pub updated: i64,
+}
+
+// ── EventRow ─────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, diesel::QueryableByName)]
+pub struct EventRow {
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub id: String,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub school: String,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub name: String,
+    #[diesel(sql_type = diesel::sql_types::SmallInt)]
+    pub type_: i16,
+    #[diesel(sql_type = diesel::sql_types::SmallInt)]
+    pub term: i16,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    pub year: i32,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    pub start_date: i32,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    pub end_date: i32,
+    #[diesel(sql_type = diesel::sql_types::SmallInt)]
+    pub status: i16,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub created: i64,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub updated: i64,
+}
+
+impl EventRow {
+    pub fn row_key(&self) -> String {
+        self.id.clone()
+    }
+    pub fn school_id(&self) -> Option<String> {
+        Some(self.school.clone())
+    }
+}
+
+// ── PaperRowV2 ────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, diesel::QueryableByName)]
+pub struct PaperRowV2 {
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub id: String,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub school: String,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+    pub event: Option<String>,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    pub subject: i32,
+    #[diesel(sql_type = diesel::sql_types::SmallInt)]
+    pub grade: i16,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::SmallInt>)]
+    pub stream: Option<i16>,
+    #[diesel(sql_type = diesel::sql_types::SmallInt)]
+    pub type_: i16,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub teacher: String,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub name: String,
+    #[diesel(sql_type = diesel::sql_types::SmallInt)]
+    pub total_marks: i16,
+    #[diesel(sql_type = diesel::sql_types::SmallInt)]
+    pub duration_minutes: i16,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    pub date: i32,
+    #[diesel(sql_type = diesel::sql_types::SmallInt)]
+    pub status: i16,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub created: i64,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub updated: i64,
+}
+
+impl PaperRowV2 {
+    pub fn row_key(&self) -> String {
+        self.id.clone()
+    }
+    pub fn school_id(&self) -> Option<String> {
+        Some(self.school.clone())
+    }
+}
+
+// ── PaperScheduleRow ──────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, diesel::QueryableByName)]
+pub struct PaperScheduleRow {
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub id: String,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub event: String,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    pub subject: i32,
+    #[diesel(sql_type = diesel::sql_types::SmallInt)]
+    pub grade: i16,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::SmallInt>)]
+    pub stream: Option<i16>,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    pub date: i32,
+    #[diesel(sql_type = diesel::sql_types::SmallInt)]
+    pub generation_status: i16,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub reveal_at: i64,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub generate_at: i64,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub created: i64,
+}
+
+impl PaperScheduleRow {
+    pub fn row_key(&self) -> String {
+        self.id.clone()
+    }
+    pub fn school_id(&self) -> Option<String> {
+        None
+    }
+}
+
+// ── TaughtTopicRow ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, diesel::QueryableByName)]
+pub struct TaughtTopicRow {
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub school: String,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    pub subject: i32,
+    #[diesel(sql_type = diesel::sql_types::SmallInt)]
+    pub grade: i16,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::SmallInt>)]
+    pub stream: Option<i16>,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    pub topic: i32,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub taught_by: String,
+    #[diesel(sql_type = diesel::sql_types::SmallInt)]
+    pub status: i16,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Integer>)]
+    pub taught_date: Option<i32>,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub updated: i64,
+}
+
+impl TaughtTopicRow {
+    pub fn row_key(&self) -> String {
+        format!(
+            "{}|{}|{}|{}|{}",
+            self.school,
+            self.subject,
+            self.grade,
+            self.stream.unwrap_or(-1),
+            self.topic
+        )
+    }
+    pub fn school_id(&self) -> Option<String> {
+        Some(self.school.clone())
+    }
+}
+
+// ── ExamCoverageRow ───────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, diesel::QueryableByName)]
+pub struct ExamCoverageRow {
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub schedule: String,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    pub topic: i32,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub confirmed_by: String,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub confirmed_at: i64,
+}
+
+impl ExamCoverageRow {
+    pub fn row_key(&self) -> String {
+        format!("{}|{}", self.schedule, self.topic)
+    }
+    pub fn school_id(&self) -> Option<String> {
+        None
+    }
 }

@@ -1388,8 +1388,8 @@ Use Diesel ORM for all operations. `insert_event` uses `INSERT INTO events ... R
 Add `pub mod events;` to `src/db/database/tables/mod.rs`.
 
 **Update after completion:**
-- [ ] Mark this task `[x]`
-- [ ] Orchestrator: git commit after this task
+- [x] Mark this task `[x]`
+- [x] Orchestrator: git commit after this task
 
 ---
 
@@ -1801,7 +1801,7 @@ message DeleteEventResponse {}
 
 ---
 
-### Task D3: New paper.proto
+### [x] Task D3: New paper.proto
 **Files to create:** `protos/types/paper.proto`, `protos/services/paper.proto`
 **Depends on:** Task B4
 **Parallel group:** P_D
@@ -1904,12 +1904,12 @@ message ForceSetPaperStatusResponse { paper.Paper paper = 1; }
 ```
 
 **Update after completion:**
-- [ ] Mark this task `[x]`
+- [x] Mark this task `[x]`
 - [ ] Orchestrator: git commit after this task
 
 ---
 
-### Task D4: New paper_management.proto
+### [x] Task D4: New paper_management.proto
 **Files to create:** `protos/services/paper_management.proto`
 **Depends on:** Tasks B5, B6
 **Parallel group:** P_D
@@ -3067,19 +3067,19 @@ pub mod sync;
 - [x] B5: PaperSchedule domain types
 - [x] B6: TaughtTopic/ExamCoverage/PaperTopic types
 - [x] B7: Error enum additions
-- [ ] B8: Row structs for new tables
+- [x] B8: Row structs for new tables
 - [x] B9: LogTable enum update
-- [ ] C1: Rewrite question_bank DB ops
-- [ ] C2: Events DB ops
-- [ ] C3: Papers DB ops
-- [ ] C4: PaperSchedules/TaughtTopics/ExamCoverage DB ops
+- [x] C1: Rewrite question_bank DB ops
+- [x] C2: Events DB ops
+- [x] C3: Papers DB ops
+- [x] C4: PaperSchedules/TaughtTopics/ExamCoverage DB ops
 - [ ] C5: AiMarking DB ops update
-- [ ] D1: Update question_bank.proto
-- [ ] D2: New event.proto
-- [ ] D3: New paper.proto
-- [ ] D4: New paper_management.proto
+- [x] D1: Update question_bank.proto
+- [x] D2: New event.proto
+- [x] D3: New paper.proto
+- [x] D4: New paper_management.proto
 - [ ] D5: Register protos in build.rs
-- [ ] D6: Update ai_marking.proto
+- [x] D6: Update ai_marking.proto
 - [ ] E1: Update question_bank proto adapter
 - [ ] E2: New event proto adapter
 - [ ] E3: New paper proto adapter
@@ -3090,7 +3090,7 @@ pub mod sync;
 - [ ] F4: New PaperManagementService
 - [ ] F5: Auto-generation background job
 - [ ] F6: Update AiMarkingService
-- [ ] G1: Add typst dependency + scaffold
+- [x] G1: Add typst dependency + scaffold
 - [ ] G2: Typst exam paper template
 - [ ] G3: Typst marking scheme + per-student PDFs
 - [ ] H1: Wire all services in server.rs

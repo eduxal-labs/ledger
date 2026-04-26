@@ -1,0 +1,62 @@
+syntax = "proto3";
+package paper_service;
+import "types/paper.proto";
+
+service PaperService {
+  rpc CreatePaper(CreatePaperRequest)                       returns (CreatePaperResponse);
+  rpc GetPaper(GetPaperRequest)                             returns (GetPaperResponse);
+  rpc ListPapers(ListPapersRequest)                         returns (ListPapersResponse);
+  rpc UpdatePaper(UpdatePaperRequest)                       returns (UpdatePaperResponse);
+  rpc GetPaperPdfUrl(GetPaperPdfUrlRequest)                 returns (GetPaperPdfUrlResponse);
+  rpc GetMarkingSchemeUrl(GetMarkingSchemeUrlRequest)       returns (GetMarkingSchemeUrlResponse);
+  rpc ForceSetPaperStatus(ForceSetPaperStatusRequest)       returns (ForceSetPaperStatusResponse);
+}
+
+message PaperTopicWeight { int32 topic_id = 1; float weight = 2; }
+
+message CreatePaperRequest {
+  string school                           = 1;
+  optional string event                   = 2;
+  int32 subject                           = 3;
+  int32 grade                             = 4;
+  optional int32 stream                   = 5;
+  int32 type                              = 6;
+  string name                             = 7;
+  int32 total_marks                       = 8;
+  int32 duration_minutes                  = 9;
+  int32 date                              = 10;
+  int32 generation_mode                   = 11;
+  optional string instructions            = 12;
+  repeated PaperTopicWeight topic_weights = 13;
+}
+message CreatePaperResponse { paper.Paper paper = 1; }
+
+message GetPaperRequest  { string paper_id = 1; }
+message GetPaperResponse { paper.Paper paper = 1; }
+
+message ListPapersRequest {
+  string school          = 1;
+  optional string event  = 2;
+  optional int32 grade   = 3;
+  optional int32 subject = 4;
+}
+message ListPapersResponse { repeated paper.Paper papers = 1; }
+
+message UpdatePaperRequest {
+  string paper_id                 = 1;
+  optional string name            = 2;
+  optional int32 total_marks      = 3;
+  optional int32 duration_minutes = 4;
+  optional int32 date             = 5;
+  optional string instructions    = 6;
+  optional int32 generation_mode  = 7;
+}
+message UpdatePaperResponse { paper.Paper paper = 1; }
+
+message GetPaperPdfUrlRequest       { string paper_id = 1; }
+message GetPaperPdfUrlResponse      { string url = 1; int64 expiry = 2; }
+message GetMarkingSchemeUrlRequest  { string paper_id = 1; }
+message GetMarkingSchemeUrlResponse { string url = 1; int64 expiry = 2; }
+
+message ForceSetPaperStatusRequest  { string paper_id = 1; int32 status = 2; }
+message ForceSetPaperStatusResponse { paper.Paper paper = 1; }
