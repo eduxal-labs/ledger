@@ -3060,15 +3060,15 @@ pub mod sync;
 
 - [x] A1: Migration SQL
 - [x] A2: Regenerate schema.rs
-- [ ] B1: Question domain types
+- [x] B1: Question domain types
 - [ ] B2: QuestionPart domain types
-- [ ] B3: Event domain types
-- [ ] B4: Paper domain types
+- [x] B3: Event domain types
+- [x] B4: Paper domain types
 - [ ] B5: PaperSchedule domain types
 - [ ] B6: TaughtTopic/ExamCoverage/PaperTopic types
-- [ ] B7: Error enum additions
+- [x] B7: Error enum additions
 - [ ] B8: Row structs for new tables
-- [ ] B9: LogTable enum update
+- [x] B9: LogTable enum update
 - [ ] C1: Rewrite question_bank DB ops
 - [ ] C2: Events DB ops
 - [ ] C3: Papers DB ops

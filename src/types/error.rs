@@ -94,6 +94,24 @@ pub enum Error {
     NotEnoughQuestions,
     #[error("not found")]
     NotFound,
+    #[error("event not found")]
+    EventNotFound,
+    #[error("paper not found")]
+    PaperNotFound,
+    #[error("paper schedule not found")]
+    PaperScheduleNotFound,
+    #[error("paper already finalized")]
+    PaperAlreadyFinalized,
+    #[error("paper not yet revealed")]
+    PaperNotRevealed,
+    #[error("not enough questions for topic allocation")]
+    NotEnoughQuestionsForAllocation,
+    #[error("generation in progress")]
+    GenerationInProgress,
+    #[error("invalid paper status transition")]
+    InvalidStatusTransition,
+    #[error("coverage not confirmed")]
+    CoverageNotConfirmed,
     #[error("internal server error")]
     Internal,
 }
@@ -191,6 +209,25 @@ impl From<Error> for Status {
                 "not enough questions in the bank for this topic and mark allocation",
             ),
             Error::NotFound => Status::not_found("not found"),
+            Error::EventNotFound => Status::not_found("event not found"),
+            Error::PaperNotFound => Status::not_found("paper not found"),
+            Error::PaperScheduleNotFound => Status::not_found("paper schedule not found"),
+            Error::PaperAlreadyFinalized => Status::failed_precondition("paper already finalized"),
+            Error::PaperNotRevealed => {
+                Status::failed_precondition("paper questions not yet revealed")
+            }
+            Error::NotEnoughQuestionsForAllocation => Status::failed_precondition(
+                "not enough questions in the bank for this topic/mark allocation",
+            ),
+            Error::GenerationInProgress => {
+                Status::failed_precondition("generation already in progress")
+            }
+            Error::InvalidStatusTransition => {
+                Status::failed_precondition("invalid paper status transition")
+            }
+            Error::CoverageNotConfirmed => {
+                Status::failed_precondition("exam coverage not confirmed by admin")
+            }
             Error::Internal => Status::internal("internal server error"),
         }
     }

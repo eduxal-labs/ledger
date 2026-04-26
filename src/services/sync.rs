@@ -65,6 +65,10 @@ pub enum LogTable {
     Mpesa = 34,
     SchemePages = 36,
     AnswerPages = 37,
+    Events = 38,
+    PapersV2 = 39,
+    PaperSchedules = 40,
+    TaughtTopics = 41,
 }
 
 impl LogTable {
@@ -106,6 +110,10 @@ impl LogTable {
             34 => Some(Self::Mpesa),
             36 => Some(Self::SchemePages),
             37 => Some(Self::AnswerPages),
+            38 => Some(Self::Events),
+            39 => Some(Self::PapersV2),
+            40 => Some(Self::PaperSchedules),
+            41 => Some(Self::TaughtTopics),
             _ => None,
         }
     }
@@ -125,6 +133,10 @@ impl LogTable {
             Self::Lessons => Some(Resource::Lessons),
             Self::Exams | Self::Papers | Self::SchemePages => Some(Resource::Exams),
             Self::Grades | Self::Mastery | Self::AnswerPages => Some(Resource::Grades),
+            Self::Events => Some(Resource::Classes),
+            Self::PapersV2 => Some(Resource::Classes),
+            Self::PaperSchedules => Some(Resource::Classes),
+            Self::TaughtTopics => Some(Resource::Classes),
             Self::Fees | Self::Invoices => Some(Resource::Fees),
             Self::Payments => Some(Resource::Payments),
             Self::Announcements => Some(Resource::Announcements),
@@ -147,6 +159,12 @@ impl LogTable {
             // id-PK school-scoped tables — school is in the row data, not the key
             Self::Exams | Self::Fees | Self::Invoices | Self::Announcements | Self::Payments => {
                 None
+            }
+            // New tables: Events/PapersV2/PaperSchedules use id PKs; TaughtTopics has school as first key segment
+            Self::Events | Self::PapersV2 | Self::PaperSchedules => None,
+            Self::TaughtTopics => {
+                let first = row_key.split('|').next()?;
+                first.parse().ok()
             }
             // Roles and scopes can be system-scoped (school IS NULL)
             Self::Roles => None,
@@ -619,6 +637,7 @@ const SNAPSHOT_TABLE_ORDER: &[i32] = &[
     22, 23, 24, // announcements, mastery, aiusage
     29, 30, // subscriptions, discounts
     34, // mpesa
+    38, 39, 40, 41, // events, papers_v2, paper_schedules, taught_topics
 ];
 
 /// Returns the current byte length of the binary changelog (the cursor
