@@ -3061,11 +3061,11 @@ pub mod sync;
 - [x] A1: Migration SQL
 - [x] A2: Regenerate schema.rs
 - [x] B1: Question domain types
-- [ ] B2: QuestionPart domain types
+- [x] B2: QuestionPart domain types
 - [x] B3: Event domain types
 - [x] B4: Paper domain types
-- [ ] B5: PaperSchedule domain types
-- [ ] B6: TaughtTopic/ExamCoverage/PaperTopic types
+- [x] B5: PaperSchedule domain types
+- [x] B6: TaughtTopic/ExamCoverage/PaperTopic types
 - [x] B7: Error enum additions
 - [ ] B8: Row structs for new tables
 - [x] B9: LogTable enum update
