@@ -3,7 +3,7 @@ use crate::types::error::OnConflict;
 use diesel::RunQueryDsl;
 use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
 
-mod authorize;
+pub mod authorize;
 pub mod tables;
 pub mod traits;
 
@@ -59,4 +59,10 @@ const fn url() -> &'static str {
         Some(url) => url,
         None => "database.db",
     }
+}
+
+#[cfg(test)]
+pub fn test_conn() -> diesel::SqliteConnection {
+    use diesel::Connection;
+    diesel::SqliteConnection::establish(":memory:").expect("failed to open in-memory SQLite")
 }

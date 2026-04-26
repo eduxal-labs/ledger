@@ -138,7 +138,7 @@ impl Authorize for Conn {
     }
 }
 
-fn aggregate_permissions(roles: &[Role]) -> Permissions {
+pub fn aggregate_permissions(roles: &[Role]) -> Permissions {
     let mut granted = Permissions::new();
     for role in roles {
         granted += role.permissions;
@@ -146,12 +146,103 @@ fn aggregate_permissions(roles: &[Role]) -> Permissions {
     granted
 }
 
-fn check_permissions(required: Permissions, granted: Permissions) -> Result<()> {
+pub fn check_permissions(required: Permissions, granted: Permissions) -> Result<()> {
     let remaining = required - granted;
     if remaining.is_empty() {
         Ok(())
     } else {
         warn!("authorize: forbidden — required permissions not satisfied");
         Err(Error::Forbidden)
+    }
+}
+
+/// Authorize an action for an already-loaded user against an organisation context.
+///
+/// This is the push-path equivalent of `Authorize::authorize` that avoids
+/// re-fetching the user from the database (the caller already has the `User`).
+///
+/// - Super users bypass all checks immediately.
+/// - `Organisation::Account` allows any active user (ownership validated by the
+///   action handler itself).
+/// - `Organisation::System` requires `Level::System` or above and the user must
+///   hold system-scoped roles that cover the required permissions.
+/// - `Organisation::School(id)` verifies school is active, grants owners a bypass,
+///   loads school-scoped roles (+ system roles for System users), and checks
+///   required permissions against the aggregate.
+pub fn authorize_user(
+    conn: &mut Conn,
+    user: &User,
+    organisation: Organisation,
+    permissions: Permissions,
+) -> Result<()> {
+    // Super bypass
+    if user.level == Level::Super {
+        debug!(user_id = %user.id, "authorize_user: super bypass");
+        return Ok(());
+    }
+
+    match organisation {
+        Organisation::System => {
+            if user.level != Level::System {
+                warn!(user_id = %user.id, "authorize_user: non-system user attempted system op");
+                return Err(Error::Forbidden);
+            }
+            let roles: Vec<Role> = conn.load(user)?;
+            let granted = aggregate_permissions(&roles);
+            check_permissions(permissions, granted)
+        }
+
+        Organisation::Account => {
+            // The action handler validates that the user can only mutate their own record.
+            Ok(())
+        }
+
+        Organisation::School(school_id) => {
+            // Verify the school exists and is active (status = 1)
+            let school_status: i16 = schools::table
+                .find(school_id)
+                .select(schools::status)
+                .first(conn)
+                .optional()?
+                .ok_or(Error::SchoolNotFound)?;
+
+            if school_status != 1 {
+                warn!(
+                    user_id = %user.id,
+                    school_id = %school_id,
+                    "authorize_user: school is not active"
+                );
+                return Err(Error::Forbidden);
+            }
+
+            // School owners bypass all permission checks within their school
+            let is_owner: bool = owners::table
+                .filter(owners::school.eq(school_id))
+                .filter(owners::user.eq(user.id))
+                .first::<(Id, Id, i64)>(conn)
+                .optional()?
+                .is_some();
+
+            if is_owner {
+                debug!(
+                    user_id = %user.id,
+                    school_id = %school_id,
+                    "authorize_user: school owner bypass"
+                );
+                return Ok(());
+            }
+
+            // Load school-scoped roles
+            let mut roles: Vec<Role> = conn.load((school_id, user))?;
+
+            // System users also get their system-scoped roles merged in
+            if user.level == Level::System {
+                let system_roles: Vec<Role> = conn.load(user)?;
+                roles.extend(system_roles);
+            }
+
+            let granted = aggregate_permissions(&roles);
+            check_permissions(permissions, granted)
+        }
     }
 }

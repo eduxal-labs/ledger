@@ -4,6 +4,7 @@ use crate::config::Config;
 use crate::config::storage::sign;
 use crate::db::changelog::{LOG, Record};
 use crate::db::database::CONN;
+use crate::db::database::authorize::authorize_user;
 use crate::db::database::tables::actions;
 use crate::db::database::traits::{Database, Load};
 use crate::proto::services::sync::{
@@ -11,7 +12,7 @@ use crate::proto::services::sync::{
 };
 use crate::types::error::{Error, Result};
 use crate::types::id::Id;
-use crate::types::role::{Action, Permissions, Resource, Role};
+use crate::types::role::{Action, Actions, Permissions, Resource, Role};
 use crate::types::token::Token;
 use crate::types::user::{Level, Status, User};
 use chrono::Utc;
@@ -311,19 +312,27 @@ fn process_action(user: &User, request: &ActionRequest) -> ActionResponse {
     let result = CONN.with(|cell| {
         let conn = &mut *cell.borrow_mut();
 
-        // 1. Look up the required permission
+        // 1. Map action → required (Resource, Action)
         let (resource, action) = actions::action_permission(request.action)?;
 
-        // 2. Authorization check
-        check_action_permission(conn, user, resource, action)?;
+        // 2. Build a Permissions value containing only the one required action
+        let mut required = Permissions::new();
+        required[resource] = Actions::from(action);
 
-        // 3. Execute inside a transaction
+        // 3. Determine the organisation context from the payload
+        let organisation =
+            actions::action_organisation(conn, request.action, user.id, &request.payload)?;
+
+        // 4. Full authorization — Super bypass, owner bypass, role check
+        authorize_user(conn, user, organisation, required)?;
+
+        // 5. Execute inside a transaction
         conn.transaction(|conn| actions::execute_action(conn, request.action, &request.payload))
     });
 
     match result {
         Ok(action_result) => ActionResponse {
-            id: request.id,
+            id: request.id.clone(),
             success: true,
             code: 0,
             error: String::new(),
@@ -340,57 +349,13 @@ fn process_action(user: &User, request: &ActionRequest) -> ActionResponse {
                 _ => (3, format!("Validation error: {e}")),
             };
             ActionResponse {
-                id: request.id,
+                id: request.id.clone(),
                 success: false,
                 code,
                 error,
                 rows: vec![],
                 file_urls: vec![],
             }
-        }
-    }
-}
-
-/// Check whether the user has the required permission for the action.
-///
-/// - Super users bypass all checks.
-/// - System users are checked against their system-scoped roles.
-/// - Normal users are allowed for now (fine-grained school-scoped
-///   authorization is deferred — membership is checked at the handler
-///   level via foreign key constraints).
-fn check_action_permission(
-    conn: &mut diesel::SqliteConnection,
-    user: &User,
-    resource: Resource,
-    action: Action,
-) -> Result<()> {
-    match user.level {
-        Level::Super => Ok(()),
-        Level::System => {
-            // Load system-scoped roles and check aggregate permissions
-            let roles: Vec<Role> = Load::<&User, Role>::load(conn, &user)?;
-            let mut granted = Permissions::new();
-            for role in &roles {
-                granted += role.permissions;
-            }
-            if granted[resource].contains(action) {
-                Ok(())
-            } else {
-                warn!(
-                    user_id = %user.id,
-                    resource = ?resource,
-                    action = ?action,
-                    "system user permission denied on push"
-                );
-                Err(Error::Forbidden)
-            }
-        }
-        Level::Normal => {
-            // Normal users: membership-based access.
-            // For now, allow all actions — the action handlers enforce
-            // school membership implicitly via FK constraints.  Full
-            // school-scoped role checking is deferred.
-            Ok(())
         }
     }
 }
@@ -1812,5 +1777,139 @@ mod tests {
         let bytes = record.to_bytes();
         let decoded = Record::from_bytes(&bytes);
         assert_eq!(record, decoded);
+    }
+
+    // Authorization / action_organisation tests
+
+    use crate::db::database::tables::actions::{action_organisation, sync_action};
+    use crate::types::role::Organisation;
+
+    fn dummy_id() -> Id {
+        "683d5a1b4f2e7c0019abcdef".parse().unwrap()
+    }
+
+    fn other_id() -> Id {
+        "683d5a1b4f2e7c0019000001".parse().unwrap()
+    }
+
+    /// Build a minimal proto-encoded payload with a single string at field 1.
+    fn encode_field1_string(s: &str) -> Vec<u8> {
+        let bytes = s.as_bytes();
+        let mut out = Vec::new();
+        out.push(0x0a); // field 1, wire type 2
+        let mut len = bytes.len();
+        loop {
+            let byte = (len & 0x7f) as u8;
+            len >>= 7;
+            if len == 0 {
+                out.push(byte);
+                break;
+            } else {
+                out.push(byte | 0x80);
+            }
+        }
+        out.extend_from_slice(bytes);
+        out
+    }
+
+    /// Encode two string fields: field 1 = id, field 2 = school.
+    fn encode_field1_field2_string(f1: &str, f2: &str) -> Vec<u8> {
+        let mut out = encode_field1_string(f1);
+        // field 2, wire type 2: tag byte = 0x12
+        let bytes = f2.as_bytes();
+        out.push(0x12);
+        let mut len = bytes.len();
+        loop {
+            let byte = (len & 0x7f) as u8;
+            len >>= 7;
+            if len == 0 {
+                out.push(byte);
+                break;
+            } else {
+                out.push(byte | 0x80);
+            }
+        }
+        out.extend_from_slice(bytes);
+        out
+    }
+
+    #[test]
+    fn create_school_is_system() {
+        let mut conn = crate::db::database::test_conn();
+        let result = action_organisation(&mut conn, sync_action::CREATE_SCHOOL, dummy_id(), &[]);
+        assert!(matches!(result, Ok(Organisation::System)));
+    }
+
+    #[test]
+    fn create_plan_is_system() {
+        let mut conn = crate::db::database::test_conn();
+        let result = action_organisation(&mut conn, sync_action::CREATE_PLAN, dummy_id(), &[]);
+        assert!(matches!(result, Ok(Organisation::System)));
+    }
+
+    #[test]
+    fn update_user_own_is_account() {
+        let id = dummy_id();
+        let mut conn = crate::db::database::test_conn();
+        let payload = encode_field1_string(&id.to_string());
+        let result = action_organisation(&mut conn, sync_action::UPDATE_USER, id, &payload);
+        assert!(matches!(result, Ok(Organisation::Account)));
+    }
+
+    #[test]
+    fn update_user_other_is_system() {
+        let acting_user = dummy_id();
+        let target_user = other_id();
+        let mut conn = crate::db::database::test_conn();
+        let payload = encode_field1_string(&target_user.to_string());
+        let result =
+            action_organisation(&mut conn, sync_action::UPDATE_USER, acting_user, &payload);
+        assert!(matches!(result, Ok(Organisation::System)));
+    }
+
+    #[test]
+    fn update_school_extracts_school_id_from_id_field() {
+        let school_id = dummy_id();
+        let mut conn = crate::db::database::test_conn();
+        let payload = encode_field1_string(&school_id.to_string());
+        let result =
+            action_organisation(&mut conn, sync_action::UPDATE_SCHOOL, other_id(), &payload);
+        assert!(matches!(result, Ok(Organisation::School(id)) if id == school_id));
+    }
+
+    #[test]
+    fn create_teacher_extracts_school_from_field1() {
+        let school_id = dummy_id();
+        let mut conn = crate::db::database::test_conn();
+        let payload = encode_field1_string(&school_id.to_string());
+        let result =
+            action_organisation(&mut conn, sync_action::CREATE_TEACHER, other_id(), &payload);
+        assert!(matches!(result, Ok(Organisation::School(id)) if id == school_id));
+    }
+
+    #[test]
+    fn create_exam_extracts_school_from_field2() {
+        let school_id = dummy_id();
+        let exam_id = "exam_001";
+        let mut conn = crate::db::database::test_conn();
+        let payload = encode_field1_field2_string(exam_id, &school_id.to_string());
+        let result = action_organisation(&mut conn, sync_action::CREATE_EXAM, other_id(), &payload);
+        assert!(matches!(result, Ok(Organisation::School(id)) if id == school_id));
+    }
+
+    #[test]
+    fn assign_role_with_school_is_school_scoped() {
+        let school_id = dummy_id();
+        let mut conn = crate::db::database::test_conn();
+        let payload = encode_field1_string(&school_id.to_string());
+        let result = action_organisation(&mut conn, sync_action::ASSIGN_ROLE, other_id(), &payload);
+        assert!(matches!(result, Ok(Organisation::School(id)) if id == school_id));
+    }
+
+    #[test]
+    fn assign_role_without_school_is_system() {
+        let mut conn = crate::db::database::test_conn();
+        let result = action_organisation(&mut conn, sync_action::ASSIGN_ROLE, dummy_id(), &[]);
+        assert!(matches!(result, Ok(Organisation::System)));
     }
 }

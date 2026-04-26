@@ -8,6 +8,7 @@ use crate::db::changelog::{LOG, Record};
 use crate::proto::services::sync::*;
 use crate::types::error::{Error, Result};
 use crate::types::id::Id;
+use crate::types::role::Organisation;
 use crate::types::role::{Action, Resource};
 use diesel::RunQueryDsl;
 use diesel::SqliteConnection as Conn;
@@ -19,6 +20,12 @@ use prost::Message;
 struct FkCheckRow {
     #[diesel(sql_type = diesel::sql_types::BigInt)]
     cnt: i64,
+}
+
+#[derive(diesel::QueryableByName)]
+struct SchoolIdRow {
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    school: Id,
 }
 
 /// SyncAction integer values — must match the client's SyncAction enum.
@@ -319,12 +326,335 @@ pub fn action_permission(action_id: i32) -> Result<(Resource, Action)> {
     }
 }
 
+/// Determine the `Organisation` context for an action.
+///
+/// Returns the organisation scope that authorization should be checked against:
+/// - `Organisation::System`      — system/super only operations
+/// - `Organisation::Account`     — user editing their own account
+/// - `Organisation::School(id)`  — school-scoped operation; `id` is the school
+///
+/// `user_id` is the ID of the already-authenticated user, needed to distinguish
+/// UPDATE_USER on own record (Account) from updating another user (System).
+pub fn action_organisation(
+    conn: &mut Conn,
+    action_id: i32,
+    user_id: Id,
+    payload: &[u8],
+) -> Result<Organisation> {
+    use sync_action::*;
+
+    // Helper: decode school from field 1 and parse as Id
+    let school_from_field1 = |payload: &[u8]| -> Result<Organisation> {
+        let p: SchoolField = decode(payload)?;
+        let id: Id = p.school.parse().map_err(|_| {
+            tracing::error!("action_organisation: invalid school id in field 1");
+            Error::Internal
+        })?;
+        Ok(Organisation::School(id))
+    };
+
+    match action_id {
+        // ── Pure system-level: only System/Super users ──────────────────────
+        CREATE_SCHOOL | CREATE_PLAN | UPDATE_PLAN | DELETE_PLAN | CREATE_SUBJECT
+        | UPDATE_SUBJECT | DELETE_SUBJECT | CREATE_TOPIC | UPDATE_TOPIC | DELETE_TOPIC
+        | UPDATE_ROLE | DELETE_ROLE | DELETE_USER => Ok(Organisation::System),
+
+        // ── Account: user editing their own profile ──────────────────────────
+        UPDATE_USER => {
+            let p: IdField = decode(payload)?;
+            if p.id.parse::<Id>().ok() == Some(user_id) {
+                Ok(Organisation::Account)
+            } else {
+                Ok(Organisation::System)
+            }
+        }
+
+        // ── School IS the id (UpdateSchool / DeleteSchool) ───────────────────
+        UPDATE_SCHOOL | DELETE_SCHOOL => {
+            let p: IdField = decode(payload)?;
+            let id: Id = p.id.parse().map_err(|_| {
+                tracing::error!("action_organisation: invalid school id for UPDATE/DELETE_SCHOOL");
+                Error::Internal
+            })?;
+            Ok(Organisation::School(id))
+        }
+
+        // ── School at field 1 (the common case) ─────────────────────────────
+        CREATE_TEACHER
+        | UPDATE_TEACHER
+        | DELETE_TEACHER
+        | CREATE_STAFF
+        | UPDATE_STAFF
+        | DELETE_STAFF
+        | CREATE_OWNER
+        | DELETE_OWNER
+        | CREATE_STUDENT
+        | UPDATE_STUDENT
+        | DELETE_STUDENT
+        | ENROLL_STUDENT
+        | UNENROLL_STUDENT
+        | CREATE_GUARDIAN
+        | UPDATE_GUARDIAN
+        | DELETE_GUARDIAN
+        | CREATE_DEPARTMENT
+        | UPDATE_DEPARTMENT
+        | DELETE_DEPARTMENT
+        | CREATE_TERM
+        | UPDATE_TERM
+        | DELETE_TERM
+        | ASSIGN_CLASS_TEACHER
+        | UNASSIGN_CLASS_TEACHER
+        | ASSIGN_SUBJECT
+        | UNASSIGN_SUBJECT
+        | CREATE_TIMETABLE_ENTRY
+        | UPDATE_TIMETABLE_ENTRY
+        | DELETE_TIMETABLE_ENTRY
+        | MARK_ATTENDANCE
+        | DELETE_ATTENDANCE
+        | CREATE_LESSON
+        | DELETE_LESSON
+        | CREATE_PAPER
+        | UPDATE_PAPER
+        | DELETE_PAPER
+        | MARK_GRADES
+        | UPDATE_GRADE
+        | DELETE_GRADE
+        | UPDATE_MASTERY
+        | CREATE_STREAM
+        | UPDATE_STREAM
+        | DELETE_STREAM
+        | CREATE_MPESA
+        | UPDATE_MPESA
+        | DELETE_MPESA
+        | CREATE_SUBSCRIPTION
+        | UPDATE_SUBSCRIPTION
+        | DELETE_SUBSCRIPTION
+        | CREATE_DISCOUNT
+        | UPDATE_DISCOUNT
+        | DELETE_DISCOUNT
+        | UPDATE_AI_USAGE
+        | UPDATE_SETTINGS
+        | UPLOAD_SCHEME
+        | DELETE_SCHEME
+        | UPLOAD_ANSWER_SHEET
+        | DELETE_ANSWER_SHEET => school_from_field1(payload),
+
+        // ── School at field 2 (id is field 1) ───────────────────────────────
+        CREATE_EXAM | CREATE_FEE | CREATE_INVOICE | CREATE_ANNOUNCEMENT => {
+            let p: IdSchoolField = decode(payload)?;
+            let id: Id = p.school.parse().map_err(|_| {
+                tracing::error!("action_organisation: invalid school id in field 2");
+                Error::Internal
+            })?;
+            Ok(Organisation::School(id))
+        }
+
+        // ── CreateRole: optional school at field 2 ───────────────────────────
+        CREATE_ROLE => {
+            let p: CreateRoleField = decode(payload)?;
+            match p.school {
+                Some(s) if !s.is_empty() => {
+                    let id: Id = s.parse().map_err(|_| {
+                        tracing::error!("action_organisation: invalid school id in CreateRole");
+                        Error::Internal
+                    })?;
+                    Ok(Organisation::School(id))
+                }
+                _ => Ok(Organisation::System),
+            }
+        }
+
+        // ── AssignRole / UnassignRole: optional school at field 1 ────────────
+        ASSIGN_ROLE | UNASSIGN_ROLE => {
+            let p: OptionalSchoolField = decode(payload)?;
+            match p.school {
+                Some(s) if !s.is_empty() => {
+                    let id: Id = s.parse().map_err(|_| {
+                        tracing::error!(
+                            "action_organisation: invalid school id in role assignment"
+                        );
+                        Error::Internal
+                    })?;
+                    Ok(Organisation::School(id))
+                }
+                _ => Ok(Organisation::System),
+            }
+        }
+
+        // ── CreatePayment: optional school at field 3 ────────────────────────
+        CREATE_PAYMENT => {
+            let p: CreatePaymentField = decode(payload)?;
+            match p.school {
+                Some(s) if !s.is_empty() => {
+                    let id: Id = s.parse().map_err(|_| {
+                        tracing::error!("action_organisation: invalid school id in CreatePayment");
+                        Error::Internal
+                    })?;
+                    Ok(Organisation::School(id))
+                }
+                _ => Ok(Organisation::System),
+            }
+        }
+
+        // ── DB lookup required ───────────────────────────────────────────────
+        UPDATE_EXAM | DELETE_EXAM => {
+            let p: IdField = decode(payload)?;
+            Ok(Organisation::School(school_for_exam(conn, &p.id)?))
+        }
+
+        UPDATE_FEE | DELETE_FEE => {
+            let p: IdField = decode(payload)?;
+            Ok(Organisation::School(school_for_fee(conn, &p.id)?))
+        }
+
+        UPDATE_INVOICE | DELETE_INVOICE => {
+            let p: IdField = decode(payload)?;
+            Ok(Organisation::School(school_for_invoice(conn, &p.id)?))
+        }
+
+        UPDATE_PAYMENT | DELETE_PAYMENT | APPROVE_PAYMENT => {
+            let p: IdField = decode(payload)?;
+            Ok(Organisation::School(school_for_payment(conn, &p.id)?))
+        }
+
+        UPDATE_ANNOUNCEMENT | DELETE_ANNOUNCEMENT => {
+            let p: IdField = decode(payload)?;
+            Ok(Organisation::School(school_for_announcement(conn, &p.id)?))
+        }
+
+        _ => {
+            tracing::error!("action_organisation: unknown action {action_id}");
+            Err(Error::Internal)
+        }
+    }
+}
+
+/// Decodes a payload whose first field is the school ID string.
+#[derive(prost::Message)]
+struct SchoolField {
+    #[prost(string, tag = "1")]
+    school: String,
+}
+
+/// Decodes a payload whose first field is an opaque ID and second field is school.
+#[derive(prost::Message)]
+struct IdSchoolField {
+    #[prost(string, tag = "1")]
+    id: String,
+    #[prost(string, tag = "2")]
+    school: String,
+}
+
+/// Decodes a payload whose only relevant field is an ID string at field 1.
+#[derive(prost::Message)]
+struct IdField {
+    #[prost(string, tag = "1")]
+    id: String,
+}
+
+/// Decodes payloads where school is an optional field at position 1.
+#[derive(prost::Message)]
+struct OptionalSchoolField {
+    #[prost(string, optional, tag = "1")]
+    school: Option<String>,
+}
+
+/// Decodes CreateRolePayload where school is optional at position 2.
+#[derive(prost::Message)]
+struct CreateRoleField {
+    #[prost(string, tag = "1")]
+    id: String,
+    #[prost(string, optional, tag = "2")]
+    school: Option<String>,
+}
+
+/// Decodes CreatePaymentPayload where school is optional at position 3.
+#[derive(prost::Message)]
+struct CreatePaymentField {
+    #[prost(string, tag = "1")]
+    id: String,
+    #[prost(string, optional, tag = "2")]
+    invoice: Option<String>,
+    #[prost(string, optional, tag = "3")]
+    school: Option<String>,
+}
+
 /// Decode a protobuf payload, returning `Error::Internal` on failure.
 fn decode<T: Message + Default>(payload: &[u8]) -> Result<T> {
     T::decode(payload).map_err(|e| {
         tracing::error!("failed to decode payload: {e}");
         Error::Internal
     })
+}
+
+fn school_for_exam(conn: &mut Conn, id: &str) -> Result<Id> {
+    sql_query("SELECT school FROM exams WHERE id = ?")
+        .bind::<Text, _>(id)
+        .load::<SchoolIdRow>(conn)
+        .map_err(|e| {
+            tracing::error!("school_for_exam: {e}");
+            Error::Internal
+        })?
+        .into_iter()
+        .next()
+        .map(|r| r.school)
+        .ok_or(Error::Internal)
+}
+
+fn school_for_fee(conn: &mut Conn, id: &str) -> Result<Id> {
+    sql_query("SELECT school FROM fees WHERE id = ?")
+        .bind::<Text, _>(id)
+        .load::<SchoolIdRow>(conn)
+        .map_err(|e| {
+            tracing::error!("school_for_fee: {e}");
+            Error::Internal
+        })?
+        .into_iter()
+        .next()
+        .map(|r| r.school)
+        .ok_or(Error::Internal)
+}
+
+fn school_for_invoice(conn: &mut Conn, id: &str) -> Result<Id> {
+    sql_query("SELECT school FROM invoices WHERE id = ?")
+        .bind::<Text, _>(id)
+        .load::<SchoolIdRow>(conn)
+        .map_err(|e| {
+            tracing::error!("school_for_invoice: {e}");
+            Error::Internal
+        })?
+        .into_iter()
+        .next()
+        .map(|r| r.school)
+        .ok_or(Error::Internal)
+}
+
+fn school_for_payment(conn: &mut Conn, id: &str) -> Result<Id> {
+    sql_query("SELECT school FROM payments WHERE id = ?")
+        .bind::<Text, _>(id)
+        .load::<SchoolIdRow>(conn)
+        .map_err(|e| {
+            tracing::error!("school_for_payment: {e}");
+            Error::Internal
+        })?
+        .into_iter()
+        .next()
+        .map(|r| r.school)
+        .ok_or(Error::Internal)
+}
+
+fn school_for_announcement(conn: &mut Conn, id: &str) -> Result<Id> {
+    sql_query("SELECT school FROM announcements WHERE id = ?")
+        .bind::<Text, _>(id)
+        .load::<SchoolIdRow>(conn)
+        .map_err(|e| {
+            tracing::error!("school_for_announcement: {e}");
+            Error::Internal
+        })?
+        .into_iter()
+        .next()
+        .map(|r| r.school)
+        .ok_or(Error::Internal)
 }
 
 // ---------------------------------------------------------------------------
