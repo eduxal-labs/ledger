@@ -176,15 +176,15 @@ pub fn build_exam_paper_typst(input: &PaperPdfInput) -> String {
     // Questions
     let mut current_section: Option<String> = None;
     for (i, q) in input.questions.iter().enumerate() {
-        // Section header
+        // Section header — always update current_section so None resets correctly
         if q.section != current_section {
             if let Some(ref s) = q.section {
                 doc.push_str(&format!(
                     "\n#align(center)[*SECTION {}*]\n\n",
                     escape_typst(s)
                 ));
-                current_section = Some(s.clone());
             }
+            current_section = q.section.clone();
         }
 
         doc.push_str(&format!(
@@ -197,14 +197,23 @@ pub fn build_exam_paper_typst(input: &PaperPdfInput) -> String {
 
         // Stimulus
         if let Some(ref stim) = q.stimulus {
+            let body = extract_stimulus_body(stim);
             doc.push_str(&format!(
                 "#block(fill: luma(240), stroke: 0.5pt, inset: 6pt, width: 100%)[{}]\n\n",
-                escape_typst(stim)
+                escape_typst(&body)
             ));
         }
 
         // Parts
         for part in &q.parts {
+            // Part stimulus
+            if let Some(ref stim) = part.stimulus {
+                let body = extract_stimulus_body(stim);
+                doc.push_str(&format!(
+                    "  #block(fill: luma(240), stroke: 0.5pt, inset: 6pt, width: 100%)[{}]\n\n",
+                    escape_typst(&body)
+                ));
+            }
             doc.push_str(&format!(
                 "  *({})* {} #h(1fr) [*{} mark{}*]\n\n",
                 part.label,
@@ -396,6 +405,15 @@ pub fn generate_student_paper_pdf(
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+/// Extract the `body` field from a stimulus JSON string.
+/// Falls back to the raw string if parsing fails.
+fn extract_stimulus_body(stimulus: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(stimulus)
+        .ok()
+        .and_then(|v| v.get("body").and_then(|b| b.as_str()).map(|s| s.to_owned()))
+        .unwrap_or_else(|| stimulus.to_owned())
+}
 
 /// Escape text for safe inclusion in Typst source.
 fn escape_typst(s: &str) -> String {

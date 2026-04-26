@@ -11,3 +11,9 @@ pub mod role {
 pub mod member {
     tonic::include_proto!("member");
 }
+pub mod event {
+    tonic::include_proto!("event");
+}
+pub mod paper {
+    tonic::include_proto!("paper");
+}

@@ -2217,7 +2217,7 @@ Update the tonic `impl question_bank_server::QuestionBank for T` block to forwar
 Ensure the `extract_token` helper is preserved.
 
 **Update after completion:**
-- [ ] Mark this task `[x]`
+- [x] Mark this task `[x]`
 - [ ] Orchestrator: git commit after this task
 
 ---
@@ -3073,17 +3073,17 @@ pub mod sync;
 - [x] C2: Events DB ops
 - [x] C3: Papers DB ops
 - [x] C4: PaperSchedules/TaughtTopics/ExamCoverage DB ops
-- [ ] C5: AiMarking DB ops update
+- [x] C5: AiMarking DB ops update
 - [x] D1: Update question_bank.proto
 - [x] D2: New event.proto
 - [x] D3: New paper.proto
 - [x] D4: New paper_management.proto
-- [ ] D5: Register protos in build.rs
+- [x] D5: Register protos in build.rs
 - [x] D6: Update ai_marking.proto
-- [ ] E1: Update question_bank proto adapter
-- [ ] E2: New event proto adapter
-- [ ] E3: New paper proto adapter
-- [ ] E4: New paper_management proto adapter + ai_marking update
+- [x] E1: Update question_bank proto adapter
+- [x] E2: New event proto adapter
+- [x] E3: New paper proto adapter
+- [x] E4: New paper_management proto adapter + ai_marking update
 - [ ] F1: Update QuestionBankService
 - [ ] F2: New EventService
 - [ ] F3: New PaperService
@@ -3091,6 +3091,6 @@ pub mod sync;
 - [ ] F5: Auto-generation background job
 - [ ] F6: Update AiMarkingService
 - [x] G1: Add typst dependency + scaffold
-- [ ] G2: Typst exam paper template
+- [x] G2: Typst exam paper template
 - [ ] G3: Typst marking scheme + per-student PDFs
 - [ ] H1: Wire all services in server.rs

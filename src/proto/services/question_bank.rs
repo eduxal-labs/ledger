@@ -104,12 +104,6 @@ pub trait QuestionBank: Sync + Send + 'static + Sized {
         request: ClearPaperQuestionsRequest,
     ) -> impl Future<Output = Result<ClearPaperQuestionsResponse>> + Send;
 
-    fn copy_paper_to_streams(
-        &self,
-        token: Token,
-        request: CopyPaperToStreamsRequest,
-    ) -> impl Future<Output = Result<CopyPaperToStreamsResponse>> + Send;
-
     // === Read Operations ===
 
     fn list_questions(
@@ -257,16 +251,6 @@ impl<T: QuestionBank> question_bank_server::QuestionBank for T {
         let token = extract_token(&request)?;
         let response =
             QuestionBank::clear_paper_questions(self, token, request.into_inner()).await?;
-        Ok(Response::new(response))
-    }
-
-    async fn copy_paper_to_streams(
-        &self,
-        request: Request<CopyPaperToStreamsRequest>,
-    ) -> std::result::Result<Response<CopyPaperToStreamsResponse>, Status> {
-        let token = extract_token(&request)?;
-        let response =
-            QuestionBank::copy_paper_to_streams(self, token, request.into_inner()).await?;
         Ok(Response::new(response))
     }
 
