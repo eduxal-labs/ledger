@@ -1,6 +1,7 @@
 //! PDF generation using the Typst typesetting engine.
 
 use crate::types::error::Result;
+use crate::types::question::{ExampleAnswer, ExampleAnswerFormat, Stimulus, StimulusType};
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -199,22 +200,14 @@ pub fn build_exam_paper_typst(input: &PaperPdfInput) -> String {
 
         // Stimulus
         if let Some(ref stim) = q.stimulus {
-            let body = extract_stimulus_body(stim);
-            doc.push_str(&format!(
-                "#block(fill: luma(240), stroke: 0.5pt, inset: 6pt, width: 100%)[{}]\n\n",
-                escape_typst(&body)
-            ));
+            render_stimulus(&mut doc, stim, "");
         }
 
         // Parts
         for part in &q.parts {
             // Part stimulus
             if let Some(ref stim) = part.stimulus {
-                let body = extract_stimulus_body(stim);
-                doc.push_str(&format!(
-                    "  #block(fill: luma(240), stroke: 0.5pt, inset: 6pt, width: 100%)[{}]\n\n",
-                    escape_typst(&body)
-                ));
+                render_stimulus(&mut doc, stim, "  ");
             }
             doc.push_str(&format!(
                 "  *({})* {} #h(1fr) [*{} mark{}*]\n\n",
@@ -310,6 +303,11 @@ pub fn build_marking_scheme_typst(input: &PaperPdfInput) -> String {
             if q.marks != 1 { "s" } else { "" }
         ));
 
+        // Stimulus
+        if let Some(ref stim) = q.stimulus {
+            render_stimulus(&mut doc, stim, "");
+        }
+
         if let Some(cap) = q.max_marks {
             doc.push_str(&format!("_(Award any {} of the following)_\n\n", cap));
         }
@@ -330,8 +328,17 @@ pub fn build_marking_scheme_typst(input: &PaperPdfInput) -> String {
             doc.push_str("\n");
         }
 
+        // Example answer
+        if let Some(ref ea) = q.example_answer {
+            render_example_answer(&mut doc, ea, "");
+        }
+
         // Parts
         for part in &q.parts {
+            // Part stimulus
+            if let Some(ref stim) = part.stimulus {
+                render_stimulus(&mut doc, stim, "  ");
+            }
             doc.push_str(&format!(
                 "  *({})* {}\n",
                 part.label,
@@ -408,13 +415,100 @@ pub fn generate_student_paper_pdf(
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-/// Extract the `body` field from a stimulus JSON string.
-/// Falls back to the raw string if parsing fails.
-fn extract_stimulus_body(stimulus: &str) -> String {
-    serde_json::from_str::<serde_json::Value>(stimulus)
-        .ok()
-        .and_then(|v| v.get("body").and_then(|b| b.as_str()).map(|s| s.to_owned()))
-        .unwrap_or_else(|| stimulus.to_owned())
+/// Render a stimulus JSON string as a Typst block, with type label, caption, and image info.
+fn render_stimulus(doc: &mut String, stimulus_json: &str, indent: &str) {
+    match serde_json::from_str::<Stimulus>(stimulus_json) {
+        Ok(stim) => {
+            let body_text = escape_typst(&stim.body);
+            let label = match stim.type_ {
+                StimulusType::Passage => "",
+                StimulusType::Table => "[Table] ",
+                StimulusType::Graph => "[Graph] ",
+                StimulusType::Diagram => "[Diagram] ",
+            };
+            doc.push_str(&format!(
+                "{indent}#block(fill: luma(240), stroke: 0.5pt, inset: 6pt, width: 100%)[{label}{body_text}",
+            ));
+            if !stim.caption.is_empty() {
+                doc.push_str(&format!(
+                    " \\\\ #text(size: 9pt, style: \"italic\")[{}]",
+                    escape_typst(&stim.caption)
+                ));
+            }
+            if let Some(img) = &stim.image {
+                doc.push_str(&format!(
+                    " \\\\ #text(size: 9pt)[Image: {}]",
+                    escape_typst(&img.filename)
+                ));
+            }
+            doc.push_str("]\n\n");
+        }
+        Err(_) => {
+            // Legacy: plain string fallback
+            doc.push_str(&format!(
+                "{indent}#block(fill: luma(240), stroke: 0.5pt, inset: 6pt, width: 100%)[{}]\n\n",
+                escape_typst(stimulus_json)
+            ));
+        }
+    }
+}
+
+/// Render an example_answer JSON string as a Typst indented block.
+fn render_example_answer(doc: &mut String, example_answer_json: &str, indent: &str) {
+    match serde_json::from_str::<ExampleAnswer>(example_answer_json) {
+        Ok(ea) => match ea.format {
+            ExampleAnswerFormat::Plain | ExampleAnswerFormat::Tiptap => {
+                if let Some(content) = &ea.content {
+                    let text = strip_html(content);
+                    doc.push_str(&format!(
+                        "{indent}#block(inset: (left: 8pt))[_Example answer:_ {}]\n\n",
+                        escape_typst(&text)
+                    ));
+                }
+            }
+            ExampleAnswerFormat::Svg => {
+                if let Some(content) = &ea.content {
+                    doc.push_str(&format!(
+                        "{indent}#block(inset: (left: 8pt))[#image.decode(\"{}\", format: \"svg\")]\n\n",
+                        escape_typst(content)
+                    ));
+                }
+            }
+            ExampleAnswerFormat::Image => {
+                let filename = ea
+                    .image
+                    .as_ref()
+                    .map(|i| i.filename.as_str())
+                    .unwrap_or("image");
+                doc.push_str(&format!(
+                    "{indent}#block(inset: (left: 8pt))[_Example answer:_ [See image: {}]]\n\n",
+                    escape_typst(filename)
+                ));
+            }
+        },
+        Err(_) => {
+            // Legacy: plain string
+            doc.push_str(&format!(
+                "{indent}#block(inset: (left: 8pt))[_Example answer:_ {}]\n\n",
+                escape_typst(example_answer_json)
+            ));
+        }
+    }
+}
+
+/// Strip basic HTML tags from a string.
+fn strip_html(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut in_tag = false;
+    for c in s.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => result.push(c),
+            _ => {}
+        }
+    }
+    result
 }
 
 /// Escape text for safe inclusion in Typst source.
