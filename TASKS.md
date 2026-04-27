@@ -3086,7 +3086,7 @@ pub mod sync;
 - [x] E4: New paper_management proto adapter + ai_marking update
 - [x] F1: Update QuestionBankService
 - [x] F2: New EventService
-- [ ] F3: New PaperService
+- [x] F3: New PaperService
 - [x] F4: New PaperManagementService
 - [ ] F5: Auto-generation background job
 - [x] F6: Update AiMarkingService
