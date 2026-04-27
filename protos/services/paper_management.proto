@@ -152,6 +152,3 @@ message GetStudentPaperPdfResponse {
   string pdf_url = 1;
   int64 expiry   = 2;
 }
-```
-
-Now let me mark the task complete in `TASKS.md`:

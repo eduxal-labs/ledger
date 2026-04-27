@@ -22,13 +22,25 @@ pub trait QuestionBank: Sync + Send + 'static + Sized {
     type Config: Sync + Send + 'static;
     fn new(config: Self::Config) -> QuestionBankServer<Self>;
 
-    // === System User Operations (question management) ===
+    // ── Global catalog ────────────────────────────────────────────────────
 
     fn create_question(
         &self,
         token: Token,
         request: CreateQuestionRequest,
     ) -> impl Future<Output = Result<CreateQuestionResponse>> + Send;
+
+    fn get_question(
+        &self,
+        token: Token,
+        request: GetQuestionRequest,
+    ) -> impl Future<Output = Result<GetQuestionResponse>> + Send;
+
+    fn list_questions(
+        &self,
+        token: Token,
+        request: ListQuestionsRequest,
+    ) -> impl Future<Output = Result<ListQuestionsResponse>> + Send;
 
     fn update_question(
         &self,
@@ -42,7 +54,7 @@ pub trait QuestionBank: Sync + Send + 'static + Sized {
         request: DeleteQuestionRequest,
     ) -> impl Future<Output = Result<DeleteQuestionResponse>> + Send;
 
-    fn bulk_import_questions(
+    fn bulk_import(
         &self,
         token: Token,
         request: BulkImportRequest,
@@ -54,7 +66,7 @@ pub trait QuestionBank: Sync + Send + 'static + Sized {
         request: ImageUploadUrlsRequest,
     ) -> impl Future<Output = Result<ImageUploadUrlsResponse>> + Send;
 
-    // === Teacher Operations (exam paper assembly) ===
+    // ── Paper question management ─────────────────────────────────────────
 
     fn generate_paper(
         &self,
@@ -62,41 +74,17 @@ pub trait QuestionBank: Sync + Send + 'static + Sized {
         request: GeneratePaperRequest,
     ) -> impl Future<Output = Result<GeneratePaperResponse>> + Send;
 
-    fn regenerate_question(
-        &self,
-        token: Token,
-        request: RegenerateQuestionRequest,
-    ) -> impl Future<Output = Result<RegenerateQuestionResponse>> + Send;
-
-    fn edit_paper_question(
-        &self,
-        token: Token,
-        request: EditPaperQuestionRequest,
-    ) -> impl Future<Output = Result<EditPaperQuestionResponse>> + Send;
-
-    fn finalize_paper(
-        &self,
-        token: Token,
-        request: FinalizePaperRequest,
-    ) -> impl Future<Output = Result<FinalizePaperResponse>> + Send;
-
-    fn get_paper_pdf(
-        &self,
-        token: Token,
-        request: GetPaperPdfRequest,
-    ) -> impl Future<Output = Result<GetPaperPdfResponse>> + Send;
-
     fn get_paper_questions(
         &self,
         token: Token,
         request: GetPaperQuestionsRequest,
     ) -> impl Future<Output = Result<GetPaperQuestionsResponse>> + Send;
 
-    fn set_paper_question_section(
+    fn regenerate_question(
         &self,
         token: Token,
-        request: SetPaperQuestionSectionRequest,
-    ) -> impl Future<Output = Result<SetPaperQuestionSectionResponse>> + Send;
+        request: RegenerateQuestionRequest,
+    ) -> impl Future<Output = Result<RegenerateQuestionResponse>> + Send;
 
     fn clear_paper_questions(
         &self,
@@ -104,31 +92,25 @@ pub trait QuestionBank: Sync + Send + 'static + Sized {
         request: ClearPaperQuestionsRequest,
     ) -> impl Future<Output = Result<ClearPaperQuestionsResponse>> + Send;
 
-    // === Read Operations ===
-
-    fn list_questions(
+    fn finalize_paper(
         &self,
         token: Token,
-        request: ListQuestionsRequest,
-    ) -> impl Future<Output = Result<ListQuestionsResponse>> + Send;
+        request: FinalizePaperRequest,
+    ) -> impl Future<Output = Result<FinalizePaperResponse>> + Send;
 
-    fn get_question(
-        &self,
-        token: Token,
-        request: GetQuestionRequest,
-    ) -> impl Future<Output = Result<GetQuestionResponse>> + Send;
-
-    fn get_question_grades(
-        &self,
-        token: Token,
-        request: GetQuestionGradesRequest,
-    ) -> impl Future<Output = Result<GetQuestionGradesResponse>> + Send;
+    // ── Marking ───────────────────────────────────────────────────────────
 
     fn get_marking_status(
         &self,
         token: Token,
         request: MarkingStatusRequest,
     ) -> impl Future<Output = Result<MarkingStatusResponse>> + Send;
+
+    fn get_question_grades(
+        &self,
+        token: Token,
+        request: GetQuestionGradesRequest,
+    ) -> impl Future<Output = Result<GetQuestionGradesResponse>> + Send;
 }
 
 #[tonic::async_trait]
@@ -139,6 +121,24 @@ impl<T: QuestionBank> question_bank_server::QuestionBank for T {
     ) -> std::result::Result<Response<CreateQuestionResponse>, Status> {
         let token = extract_token(&request)?;
         let response = QuestionBank::create_question(self, token, request.into_inner()).await?;
+        Ok(Response::new(response))
+    }
+
+    async fn get_question(
+        &self,
+        request: Request<GetQuestionRequest>,
+    ) -> std::result::Result<Response<GetQuestionResponse>, Status> {
+        let token = extract_token(&request)?;
+        let response = QuestionBank::get_question(self, token, request.into_inner()).await?;
+        Ok(Response::new(response))
+    }
+
+    async fn list_questions(
+        &self,
+        request: Request<ListQuestionsRequest>,
+    ) -> std::result::Result<Response<ListQuestionsResponse>, Status> {
+        let token = extract_token(&request)?;
+        let response = QuestionBank::list_questions(self, token, request.into_inner()).await?;
         Ok(Response::new(response))
     }
 
@@ -160,13 +160,12 @@ impl<T: QuestionBank> question_bank_server::QuestionBank for T {
         Ok(Response::new(response))
     }
 
-    async fn bulk_import_questions(
+    async fn bulk_import(
         &self,
         request: Request<BulkImportRequest>,
     ) -> std::result::Result<Response<BulkImportResponse>, Status> {
         let token = extract_token(&request)?;
-        let response =
-            QuestionBank::bulk_import_questions(self, token, request.into_inner()).await?;
+        let response = QuestionBank::bulk_import(self, token, request.into_inner()).await?;
         Ok(Response::new(response))
     }
 
@@ -189,42 +188,6 @@ impl<T: QuestionBank> question_bank_server::QuestionBank for T {
         Ok(Response::new(response))
     }
 
-    async fn regenerate_question(
-        &self,
-        request: Request<RegenerateQuestionRequest>,
-    ) -> std::result::Result<Response<RegenerateQuestionResponse>, Status> {
-        let token = extract_token(&request)?;
-        let response = QuestionBank::regenerate_question(self, token, request.into_inner()).await?;
-        Ok(Response::new(response))
-    }
-
-    async fn edit_paper_question(
-        &self,
-        request: Request<EditPaperQuestionRequest>,
-    ) -> std::result::Result<Response<EditPaperQuestionResponse>, Status> {
-        let token = extract_token(&request)?;
-        let response = QuestionBank::edit_paper_question(self, token, request.into_inner()).await?;
-        Ok(Response::new(response))
-    }
-
-    async fn finalize_paper(
-        &self,
-        request: Request<FinalizePaperRequest>,
-    ) -> std::result::Result<Response<FinalizePaperResponse>, Status> {
-        let token = extract_token(&request)?;
-        let response = QuestionBank::finalize_paper(self, token, request.into_inner()).await?;
-        Ok(Response::new(response))
-    }
-
-    async fn get_paper_pdf(
-        &self,
-        request: Request<GetPaperPdfRequest>,
-    ) -> std::result::Result<Response<GetPaperPdfResponse>, Status> {
-        let token = extract_token(&request)?;
-        let response = QuestionBank::get_paper_pdf(self, token, request.into_inner()).await?;
-        Ok(Response::new(response))
-    }
-
     async fn get_paper_questions(
         &self,
         request: Request<GetPaperQuestionsRequest>,
@@ -234,13 +197,12 @@ impl<T: QuestionBank> question_bank_server::QuestionBank for T {
         Ok(Response::new(response))
     }
 
-    async fn set_paper_question_section(
+    async fn regenerate_question(
         &self,
-        request: Request<SetPaperQuestionSectionRequest>,
-    ) -> std::result::Result<Response<SetPaperQuestionSectionResponse>, Status> {
+        request: Request<RegenerateQuestionRequest>,
+    ) -> std::result::Result<Response<RegenerateQuestionResponse>, Status> {
         let token = extract_token(&request)?;
-        let response =
-            QuestionBank::set_paper_question_section(self, token, request.into_inner()).await?;
+        let response = QuestionBank::regenerate_question(self, token, request.into_inner()).await?;
         Ok(Response::new(response))
     }
 
@@ -254,30 +216,12 @@ impl<T: QuestionBank> question_bank_server::QuestionBank for T {
         Ok(Response::new(response))
     }
 
-    async fn list_questions(
+    async fn finalize_paper(
         &self,
-        request: Request<ListQuestionsRequest>,
-    ) -> std::result::Result<Response<ListQuestionsResponse>, Status> {
+        request: Request<FinalizePaperRequest>,
+    ) -> std::result::Result<Response<FinalizePaperResponse>, Status> {
         let token = extract_token(&request)?;
-        let response = QuestionBank::list_questions(self, token, request.into_inner()).await?;
-        Ok(Response::new(response))
-    }
-
-    async fn get_question(
-        &self,
-        request: Request<GetQuestionRequest>,
-    ) -> std::result::Result<Response<GetQuestionResponse>, Status> {
-        let token = extract_token(&request)?;
-        let response = QuestionBank::get_question(self, token, request.into_inner()).await?;
-        Ok(Response::new(response))
-    }
-
-    async fn get_question_grades(
-        &self,
-        request: Request<GetQuestionGradesRequest>,
-    ) -> std::result::Result<Response<GetQuestionGradesResponse>, Status> {
-        let token = extract_token(&request)?;
-        let response = QuestionBank::get_question_grades(self, token, request.into_inner()).await?;
+        let response = QuestionBank::finalize_paper(self, token, request.into_inner()).await?;
         Ok(Response::new(response))
     }
 
@@ -287,6 +231,15 @@ impl<T: QuestionBank> question_bank_server::QuestionBank for T {
     ) -> std::result::Result<Response<MarkingStatusResponse>, Status> {
         let token = extract_token(&request)?;
         let response = QuestionBank::get_marking_status(self, token, request.into_inner()).await?;
+        Ok(Response::new(response))
+    }
+
+    async fn get_question_grades(
+        &self,
+        request: Request<GetQuestionGradesRequest>,
+    ) -> std::result::Result<Response<GetQuestionGradesResponse>, Status> {
+        let token = extract_token(&request)?;
+        let response = QuestionBank::get_question_grades(self, token, request.into_inner()).await?;
         Ok(Response::new(response))
     }
 }

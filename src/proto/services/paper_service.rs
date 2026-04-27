@@ -132,6 +132,3 @@ impl<T: PaperService> paper_service_server::PaperService for T {
         Ok(Response::new(response))
     }
 }
-```
-
-Now let me update `TASKS.md` to mark E3 complete.

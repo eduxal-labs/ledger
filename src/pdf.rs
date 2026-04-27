@@ -16,6 +16,7 @@ pub struct PaperPdfInput<'a> {
     pub questions: &'a [PaperQuestion],
 }
 
+#[derive(Clone)]
 pub struct PaperQuestion {
     pub body: String,
     pub body_format: u8,
@@ -31,6 +32,7 @@ pub struct PaperQuestion {
     pub section: Option<String>,
 }
 
+#[derive(Clone)]
 pub struct PaperPart {
     pub label: String,
     pub body: String,

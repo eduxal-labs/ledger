@@ -1,12 +1,15 @@
 use crate::config::storage::sign;
 use crate::db::changelog::{LOG, Record};
 use crate::db::database::CONN;
-use crate::db::database::tables::question_bank;
-use crate::db::database::tables::rows::{
-    MarkingQueueRow, PaperRow, QuestionImageRow, QuestionRow, RubricCriterionRow,
-};
+use crate::db::database::tables::rows::{MarkingQueueRow, QuestionImageRow, QuestionRow};
+use crate::db::database::tables::{papers as papers_db, question_bank};
+use crate::pdf::{PaperPart, PaperPdfInput, PaperQuestion as PdfQuestion};
 use crate::proto::services::question_bank::*;
 use crate::types::error::{Error, OnConflict, Result};
+use crate::types::paper::PaperStatus;
+use crate::types::question::{
+    AnswerSpaceType, BodyFormat, CognitiveLevel, QuestionPart, QuestionUpdate, RubricCriterion,
+};
 use crate::types::token::Token;
 use diesel::sql_query;
 use diesel::sql_types::{Integer, SmallInt, Text};
@@ -20,81 +23,110 @@ pub struct QuestionBankService<C> {
 }
 
 // ---------------------------------------------------------------------------
-// Helper: build a Question proto from DB rows
+// Helper: build a Question proto from a QuestionRow
 // ---------------------------------------------------------------------------
 
 fn build_question_proto(
-    row: &QuestionRow,
-    rubric: &[RubricCriterionRow],
+    row: &crate::types::question::Question,
+    rubric: &[RubricCriterion],
+    parts: &[QuestionPart],
     images: &[QuestionImageRow],
-    sign_urls: bool,
 ) -> Question {
     Question {
-        id: row.id,
+        id: row.id.unwrap_or(0),
         topic_id: row.topic,
-        text: row.text.clone(),
+        body: row.body.clone(),
+        body_format: row.body_format as i32,
+        stimulus: row.stimulus.clone(),
+        r#type: row.type_ as i32,
+        difficulty: row.difficulty as i32,
+        cognitive_level: row.cognitive_level as i32,
         marks: row.marks as i32,
+        max_marks: row.max_marks.map(|m| m as i32),
+        answer_space_type: row.answer_space_type as i32,
+        answer_lines: row.answer_lines.map(|l| l as i32),
+        answer_box_height_mm: row.answer_box_height_mm.map(|h| h as i32),
         example_answer: row.example_answer.clone(),
-        rubric: rubric
-            .iter()
-            .map(|r| RubricCriterion {
-                position: r.position as i32,
-                criterion: r.criterion.clone(),
-                marks: r.marks as i32,
-            })
-            .collect(),
-        images: images
-            .iter()
-            .map(|img| {
-                let url = if sign_urls {
-                    Some(sign::url(&img.key, sign::GET_TTL, false))
-                } else {
-                    None
-                };
-                QuestionImage {
-                    id: img.id,
-                    position: img.position as i32,
-                    context: img.context as i32,
-                    key: img.key.clone(),
-                    url,
-                    caption: img.caption.clone(),
-                }
-            })
-            .collect(),
+        rubric: rubric.iter().map(|r| proto_rubric_criterion(r)).collect(),
+        parts: parts.iter().map(|p| proto_question_part(p, &[])).collect(),
         created: row.created,
         updated: row.updated,
     }
 }
 
-// ---------------------------------------------------------------------------
-// Helper: load a full Question (row + rubric + images) inside a CONN closure
-// ---------------------------------------------------------------------------
+fn proto_rubric_criterion(
+    r: &RubricCriterion,
+) -> crate::proto::services::question_bank::RubricCriterion {
+    crate::proto::services::question_bank::RubricCriterion {
+        position: r.position as i32,
+        criterion: r.criterion.clone(),
+        marks: r.marks as i32,
+        max_marks: r.max_marks.map(|m| m as i32),
+        required: r.required,
+    }
+}
 
-fn load_full_question(
-    conn: &mut diesel::SqliteConnection,
-    id: i32,
-    sign_urls: bool,
-) -> Result<Question> {
-    let row = question_bank::get_question(conn, id)?;
-    let rubric = question_bank::get_rubric_criteria(conn, id)?;
-    let images = question_bank::get_question_images(conn, id)?;
-    Ok(build_question_proto(&row, &rubric, &images, sign_urls))
+fn proto_question_part(
+    p: &QuestionPart,
+    part_rubric: &[RubricCriterion],
+) -> crate::proto::services::question_bank::QuestionPart {
+    crate::proto::services::question_bank::QuestionPart {
+        position: p.position as i32,
+        label: p.label.clone(),
+        body: p.body.clone(),
+        body_format: p.body_format as i32,
+        marks: p.marks as i32,
+        max_marks: p.max_marks.map(|m| m as i32),
+        answer_space_type: p.answer_space_type as i32,
+        answer_lines: p.answer_lines.map(|l| l as i32),
+        answer_box_height_mm: p.answer_box_height_mm.map(|h| h as i32),
+        example_answer: p.example_answer.clone(),
+        stimulus: p.stimulus.clone(),
+        rubric: part_rubric
+            .iter()
+            .map(|r| proto_rubric_criterion(r))
+            .collect(),
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Helper: convert RubricCriterionInput vec to the tuple format the DB expects
+// Helper: load a full Question (row + rubric + parts + images) inside CONN
 // ---------------------------------------------------------------------------
 
-fn rubric_tuples(inputs: &[RubricCriterionInput]) -> Vec<(i16, String, i16)> {
+fn load_full_question(conn: &mut diesel::SqliteConnection, id: i32) -> Result<Question> {
+    let row = question_bank::get_question(conn, id)?.ok_or(Error::NotFound)?;
+    let rubric = question_bank::get_rubric_criteria(conn, id)?;
+    let parts = question_bank::get_question_parts(conn, id)?;
+    let images = question_bank::get_question_images(conn, id)?;
+    Ok(build_question_proto(&row, &rubric, &parts, &images))
+}
+
+// QuestionRow is kept for list_questions which returns typed Question directly
+
+// ---------------------------------------------------------------------------
+// Helper: map RubricCriterionInput → DB tuple
+// ---------------------------------------------------------------------------
+
+fn rubric_input_tuples(
+    inputs: &[RubricCriterionInput],
+) -> Vec<(i16, String, i16, Option<i16>, bool)> {
     inputs
         .iter()
         .enumerate()
-        .map(|(i, r)| ((i + 1) as i16, r.criterion.clone(), r.marks as i16))
+        .map(|(i, r)| {
+            (
+                (i + 1) as i16,
+                r.criterion.clone(),
+                r.marks as i16,
+                r.max_marks.map(|m| m as i16),
+                r.required,
+            )
+        })
         .collect()
 }
 
 // ---------------------------------------------------------------------------
-// Helper: map a MarkingQueueRow to MarkingStatusResponse
+// Helper: map MarkingQueueRow → proto
 // ---------------------------------------------------------------------------
 
 fn marking_row_to_response(row: &MarkingQueueRow) -> MarkingStatusResponse {
@@ -102,12 +134,13 @@ fn marking_row_to_response(row: &MarkingQueueRow) -> MarkingStatusResponse {
         phase: row.phase as i32,
         progress: row.progress.clone(),
         error: row.error.clone(),
-        estimated_completion: None,
+        total_students: row.total_students,
+        marked_students: row.marked_students,
     }
 }
 
 // ---------------------------------------------------------------------------
-// Helper row types for SQL lookups in finalize_paper
+// Helper row types
 // ---------------------------------------------------------------------------
 
 #[derive(diesel::QueryableByName)]
@@ -119,27 +152,13 @@ struct SchoolInfoRow {
 }
 
 #[derive(diesel::QueryableByName)]
-struct ExamNameRow {
-    #[diesel(sql_type = diesel::sql_types::Text)]
-    pub name: String,
-}
-
-#[derive(diesel::QueryableByName)]
 struct SubjectNameRow {
     #[diesel(sql_type = diesel::sql_types::Text)]
     pub name: String,
 }
 
-#[derive(diesel::QueryableByName)]
-struct PaperInfoRow {
-    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::SmallInt>)]
-    pub time_allowed_minutes: Option<i16>,
-    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
-    pub instructions: Option<String>,
-}
-
 // ---------------------------------------------------------------------------
-// Bulk import: helper structs for JSON parsing
+// Bulk import helpers
 // ---------------------------------------------------------------------------
 
 #[derive(serde::Deserialize)]
@@ -153,7 +172,9 @@ struct BulkImportJson {
 
 #[derive(serde::Deserialize)]
 struct BulkImportQuestion {
-    text: String,
+    body: Option<String>,
+    // legacy alias
+    text: Option<String>,
     marks: i32,
     #[serde(default)]
     example_answer: Option<String>,
@@ -167,10 +188,6 @@ struct BulkImportRubric {
     marks: i32,
 }
 
-// ---------------------------------------------------------------------------
-// Helper row types for raw SQL lookups during bulk import
-// ---------------------------------------------------------------------------
-
 #[derive(diesel::QueryableByName)]
 struct SubjectIdRow {
     #[diesel(sql_type = Integer)]
@@ -181,20 +198,6 @@ struct SubjectIdRow {
 struct TopicIdRow {
     #[diesel(sql_type = Integer)]
     pub id: i32,
-}
-
-#[derive(diesel::QueryableByName)]
-struct PaperStatusRow {
-    #[diesel(sql_type = SmallInt)]
-    pub status: i16,
-    #[diesel(sql_type = Text)]
-    pub invigilator: String,
-}
-
-#[derive(diesel::QueryableByName)]
-struct ExamTeacherRow {
-    #[diesel(sql_type = Text)]
-    pub teacher: String,
 }
 
 // =========================================================================
@@ -217,21 +220,11 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
     ) -> Result<CreateQuestionResponse> {
         let user_id = token.user.to_string();
 
-        // Question catalog writes are global/system-wide and must not derive or require a school.
-        // Validate inputs
-        if req.text.trim().is_empty() {
+        if req.body.trim().is_empty() {
             return Err(Error::InvalidQuestionText);
         }
         if req.marks <= 0 {
             return Err(Error::InvalidQuestionMarks);
-        }
-
-        // Validate rubric marks sum
-        if !req.rubric.is_empty() {
-            let rubric_sum: i32 = req.rubric.iter().map(|r| r.marks).sum();
-            if rubric_sum != req.marks {
-                return Err(Error::InvalidRubricMarks);
-            }
         }
 
         let question = CONN.with(|cell| {
@@ -240,23 +233,59 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                 let qid = question_bank::insert_question(
                     conn,
                     req.topic_id,
-                    &req.text,
+                    &req.body,
+                    (req.body_format as i16)
+                        .try_into()
+                        .unwrap_or(BodyFormat::Plain),
+                    req.stimulus.as_deref(),
+                    (req.r#type as i16).try_into().unwrap_or_default(),
+                    req.difficulty as i16,
+                    (req.cognitive_level as i16).try_into().unwrap_or_default(),
                     req.marks as i16,
+                    req.max_marks.map(|m| m as i16),
+                    (req.answer_space_type as i16)
+                        .try_into()
+                        .unwrap_or(AnswerSpaceType::Lines),
+                    req.answer_lines.map(|l| l as i16),
+                    req.answer_box_height_mm.map(|h| h as i16),
                     req.example_answer.as_deref(),
                     &user_id,
                 )
                 .on_conflict(Error::QuestionAlreadyExists)?;
 
                 if !req.rubric.is_empty() {
-                    let tuples = rubric_tuples(&req.rubric);
-                    let refs: Vec<(i16, &str, i16)> = tuples
-                        .iter()
-                        .map(|(p, c, m)| (*p, c.as_str(), *m))
-                        .collect();
-                    question_bank::insert_rubric_criteria(conn, qid, &refs)?;
+                    let tuples = rubric_input_tuples(&req.rubric);
+                    question_bank::insert_rubric_criteria(conn, qid, &tuples)?;
                 }
 
-                load_full_question(conn, qid, false)
+                if !req.parts.is_empty() {
+                    let parts: Vec<QuestionPart> = req
+                        .parts
+                        .iter()
+                        .enumerate()
+                        .map(|(i, p)| QuestionPart {
+                            question: qid,
+                            position: (i + 1) as i16,
+                            label: p.label.clone(),
+                            body: p.body.clone(),
+                            body_format: (p.body_format as i16)
+                                .try_into()
+                                .unwrap_or(BodyFormat::Plain),
+                            marks: p.marks as i16,
+                            max_marks: p.max_marks.map(|m| m as i16),
+                            answer_space_type: (p.answer_space_type as i16)
+                                .try_into()
+                                .unwrap_or(AnswerSpaceType::Lines),
+                            answer_lines: p.answer_lines.map(|l| l as i16),
+                            answer_box_height_mm: p.answer_box_height_mm.map(|h| h as i16),
+                            example_answer: p.example_answer.clone(),
+                            stimulus: p.stimulus.clone(),
+                        })
+                        .collect();
+                    question_bank::insert_question_parts(conn, qid, &parts)?;
+                }
+
+                load_full_question(conn, qid)
             })
         })?;
 
@@ -274,29 +303,36 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
     ) -> Result<UpdateQuestionResponse> {
         let qid = req.question_id;
 
-        let text = req.text.as_deref();
-        let marks = req.marks.map(|m| m as i16);
-        let example_answer: Option<Option<&str>> = if req.example_answer.is_some() {
-            Some(req.example_answer.as_deref())
-        } else {
-            None
+        let changeset = QuestionUpdate {
+            topic: req.topic_id,
+            body: req.body.clone(),
+            body_format: req.body_format.and_then(|v| (v as i16).try_into().ok()),
+            stimulus: req.stimulus.map(Some),
+            type_: req.r#type.and_then(|v| (v as i16).try_into().ok()),
+            difficulty: req.difficulty.map(|v| v as i16),
+            cognitive_level: req.cognitive_level.and_then(|v| (v as i16).try_into().ok()),
+            marks: req.marks.map(|v| v as i16),
+            max_marks: req.max_marks.map(|v| Some(v as i16)),
+            answer_space_type: req
+                .answer_space_type
+                .and_then(|v| (v as i16).try_into().ok()),
+            answer_lines: req.answer_lines.map(|v| Some(v as i16)),
+            answer_box_height_mm: req.answer_box_height_mm.map(|v| Some(v as i16)),
+            example_answer: req.example_answer.map(Some),
+            updated: Some(chrono::Utc::now().timestamp()),
         };
 
         let question = CONN.with(|cell| {
             let conn = &mut *cell.borrow_mut();
             conn.transaction(|conn| {
-                question_bank::update_question(conn, qid, text, marks, example_answer)?;
+                question_bank::update_question(conn, qid, changeset)?;
 
                 if !req.rubric.is_empty() {
-                    let tuples = rubric_tuples(&req.rubric);
-                    let refs: Vec<(i16, &str, i16)> = tuples
-                        .iter()
-                        .map(|(p, c, m)| (*p, c.as_str(), *m))
-                        .collect();
-                    question_bank::replace_rubric_criteria(conn, qid, &refs)?;
+                    let tuples = rubric_input_tuples(&req.rubric);
+                    question_bank::replace_rubric_criteria(conn, qid, &tuples)?;
                 }
 
-                load_full_question(conn, qid, false)
+                load_full_question(conn, qid)
             })
         })?;
 
@@ -316,164 +352,70 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
             let conn = &mut *cell.borrow_mut();
             question_bank::delete_question(conn, req.question_id)
         })?;
-
         Ok(DeleteQuestionResponse {})
     }
 
-    // ── bulk_import_questions ────────────────────────────────────────────
+    // ── bulk_import ──────────────────────────────────────────────────────
 
-    async fn bulk_import_questions(
+    async fn bulk_import(
         &self,
         token: Token,
         req: BulkImportRequest,
     ) -> Result<BulkImportResponse> {
         let user_id = token.user.to_string();
-
-        // Subject/topic/question catalog imports are global/system-wide and must not derive or require a school.
-        let parsed: BulkImportJson = serde_json::from_str(&req.json_content).map_err(|e| {
-            error!("bulk_import: JSON parse error: {e}");
-            Error::InvalidBulkImportJson
-        })?;
-
-        // Map only explicit curriculum values; reject malformed imports instead of coercing.
-        let curriculum_int: i16 = match parsed.curriculum.as_str() {
-            "844" => 1,
-            "cbc" => 0,
-            _ => return Err(Error::InvalidCurriculum),
-        };
+        let mut created_count: i32 = 0;
+        let mut duplicates_skipped: i32 = 0;
 
         let result = CONN.with(|cell| {
             let conn = &mut *cell.borrow_mut();
             conn.transaction(|conn| {
-                // Upsert subject: create if not exists, then fetch id
-                sql_query(
-                    "INSERT OR IGNORE INTO subjects (name, curriculum, created, updated) VALUES (?, ?, strftime('%s','now'), strftime('%s','now'))"
-                )
-                .bind::<Text, _>(&parsed.subject)
-                .bind::<SmallInt, _>(curriculum_int)
-                .execute(conn)
-                .map_err(|e| {
-                    error!("bulk_import: subject upsert failed: {e}");
-                    Error::Internal
-                })?;
-
-                let subject_row: SubjectIdRow =
-                    sql_query("SELECT id FROM subjects WHERE name = ? AND curriculum = ? LIMIT 1")
-                        .bind::<Text, _>(&parsed.subject)
-                        .bind::<SmallInt, _>(curriculum_int)
-                        .get_result(conn)
-                        .map_err(|e| {
-                            error!("bulk_import: subject select after upsert failed: {e}");
-                            Error::Internal
-                        })?;
-
-                // Upsert topic: create if not exists, then fetch id
-                sql_query(
-                    "INSERT OR IGNORE INTO topics (subject, grade, name, created, updated) VALUES (?, ?, ?, strftime('%s','now'), strftime('%s','now'))"
-                )
-                .bind::<Integer, _>(subject_row.id)
-                .bind::<Integer, _>(parsed.grade)
-                .bind::<Text, _>(&parsed.topic)
-                .execute(conn)
-                .map_err(|e| {
-                    error!("bulk_import: topic upsert failed: {e}");
-                    Error::Internal
-                })?;
-
-                let topic_row: TopicIdRow = sql_query(
-                    "SELECT id FROM topics WHERE name = ? AND subject = ? AND grade = ? LIMIT 1",
-                )
-                .bind::<Text, _>(&parsed.topic)
-                .bind::<Integer, _>(subject_row.id)
-                .bind::<Integer, _>(parsed.grade)
-                .get_result(conn)
-                .map_err(|e| {
-                    error!("bulk_import: topic select after upsert failed: {e}");
-                    Error::Internal
-                })?;
-
-                let mut created_count: i32 = 0;
-                let mut duplicates_skipped: i32 = 0;
-                let mut errors: Vec<ImportError> = Vec::new();
-                let mut question_ids: Vec<i32> = Vec::new();
-
-                for (idx, q) in parsed.questions.iter().enumerate() {
-                    // Validate marks
-                    if q.marks <= 0 || q.text.trim().is_empty() {
-                        errors.push(ImportError {
-                            index: idx as i32,
-                            message: "invalid text or marks".into(),
-                        });
+                for q in &req.questions {
+                    if q.body.trim().is_empty() || q.marks <= 0 {
+                        duplicates_skipped += 1;
                         continue;
-                    }
-
-                    // Validate rubric sum
-                    if !q.rubric.is_empty() {
-                        let rubric_sum: i32 = q.rubric.iter().map(|r| r.marks).sum();
-                        if rubric_sum != q.marks {
-                            errors.push(ImportError {
-                                index: idx as i32,
-                                message: format!(
-                                    "rubric marks sum ({}) != question marks ({})",
-                                    rubric_sum, q.marks
-                                ),
-                            });
-                            continue;
-                        }
                     }
 
                     match question_bank::find_or_insert_question(
                         conn,
-                        topic_row.id,
-                        &q.text,
+                        q.topic_id,
+                        &q.body,
+                        (q.body_format as i16)
+                            .try_into()
+                            .unwrap_or(BodyFormat::Plain),
+                        q.stimulus.as_deref(),
+                        (q.r#type as i16).try_into().unwrap_or_default(),
+                        q.difficulty as i16,
+                        (q.cognitive_level as i16).try_into().unwrap_or_default(),
                         q.marks as i16,
+                        q.max_marks.map(|m| m as i16),
+                        (q.answer_space_type as i16)
+                            .try_into()
+                            .unwrap_or(AnswerSpaceType::Lines),
+                        q.answer_lines.map(|l| l as i16),
+                        q.answer_box_height_mm.map(|h| h as i16),
                         q.example_answer.as_deref(),
                         &user_id,
                     ) {
                         Ok((qid, is_new)) => {
                             if !is_new {
-                                // Question already exists in the catalog — record its id but
-                                // do not count it as created and skip rubric re-insertion.
                                 duplicates_skipped += 1;
-                                question_ids.push(qid);
                                 continue;
                             }
                             if !q.rubric.is_empty() {
-                                let tuples: Vec<(i16, &str, i16)> = q
-                                    .rubric
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(i, r)| {
-                                        ((i + 1) as i16, r.criterion.as_str(), r.marks as i16)
-                                    })
-                                    .collect();
-                                if let Err(e) =
-                                    question_bank::insert_rubric_criteria(conn, qid, &tuples)
-                                {
-                                    errors.push(ImportError {
-                                        index: idx as i32,
-                                        message: format!("rubric insert failed: {e}"),
-                                    });
-                                    continue;
-                                }
+                                let tuples = rubric_input_tuples(&q.rubric);
+                                let _ = question_bank::insert_rubric_criteria(conn, qid, &tuples);
                             }
-                            question_ids.push(qid);
                             created_count += 1;
                         }
-                        Err(e) => {
-                            errors.push(ImportError {
-                                index: idx as i32,
-                                message: format!("insert failed: {e}"),
-                            });
+                        Err(_) => {
+                            duplicates_skipped += 1;
                         }
                     }
                 }
 
                 Ok::<_, Error>(BulkImportResponse {
-                    questions_created: created_count,
-                    duplicates_skipped,
-                    errors,
-                    question_ids,
+                    created: created_count,
+                    skipped: duplicates_skipped,
                 })
             })
         })?;
@@ -490,32 +432,25 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
     ) -> Result<ImageUploadUrlsResponse> {
         let urls = CONN.with(|cell| {
             let conn = &mut *cell.borrow_mut();
-            let mut result = Vec::with_capacity(req.images.len());
+            let mut result = Vec::with_capacity(req.count as usize);
 
-            for spec in &req.images {
-                let ext = spec.filename.rsplit('.').next().unwrap_or("webp");
-                let key = format!("questions/{}/{}.{}", spec.question_id, spec.position, ext);
+            for i in 0..req.count {
+                let key = format!("questions/{}/image_{}.webp", req.question_id, i + 1);
                 let put_url = sign::url(&key, sign::PUT_TTL, true);
 
-                // Insert the image row in the DB
                 question_bank::insert_question_image(
                     conn,
-                    spec.question_id,
-                    spec.position as i16,
-                    spec.context as i16,
+                    req.question_id,
+                    (i + 1) as i16,
+                    0,
                     &key,
-                    spec.caption.as_deref(),
+                    None,
                 )?;
 
-                result.push(ImageUploadUrl {
-                    question_id: spec.question_id,
-                    position: spec.position,
-                    key,
-                    put_url,
-                });
+                result.push(put_url);
             }
 
-            Ok(result) as Result<Vec<ImageUploadUrl>>
+            Ok(result) as Result<Vec<String>>
         })?;
 
         Ok(ImageUploadUrlsResponse { urls })
@@ -528,97 +463,101 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
         _token: Token,
         req: GeneratePaperRequest,
     ) -> Result<GeneratePaperResponse> {
-        let response = CONN.with(|cell| {
+        let result = CONN.with(|cell| {
             let conn = &mut *cell.borrow_mut();
 
-            // Validate: sum of topic allocations == total_marks
-            let alloc_sum: i32 = req.topic_allocations.iter().map(|ta| ta.marks).sum();
-            if alloc_sum != req.total_marks {
-                tracing::warn!(
-                    "generate_paper: allocation marks ({}) != total marks ({})",
-                    alloc_sum,
-                    req.total_marks
-                );
-                return Err(Error::InvalidPermissions);
+            // Load paper
+            let paper = papers_db::get_paper(conn, &req.paper_id)?.ok_or(Error::PaperNotFound)?;
+
+            let alloc_sum: i32 = req.topic_allocations.iter().map(|ta| ta.total_marks).sum();
+            if alloc_sum != paper.total_marks as i32 {
+                return Err(Error::NotEnoughQuestionsForAllocation);
             }
 
-            // For each topic allocation, select random questions
+            // Clear existing class-wide questions
+            question_bank::delete_paper_questions(conn, &req.paper_id, None)?;
+
             let mut all_questions: Vec<(i32, i16)> = Vec::new();
             let mut position: i16 = 0;
 
             for alloc in &req.topic_allocations {
-                let selected = question_bank::select_random_questions(
+                let selected = question_bank::select_questions_for_paper(
                     conn,
                     alloc.topic_id,
-                    alloc.marks as i16,
+                    alloc.total_marks as i16,
                     &[],
+                    None,
                 )?;
 
                 if selected.is_empty() {
-                    tracing::warn!(
-                        "generate_paper: no questions found for topic {} (need {} marks)",
-                        alloc.topic_id,
-                        alloc.marks,
-                    );
-                    return Err(Error::NotEnoughQuestions);
-                }
-                let selected_marks: i32 = selected.iter().map(|q| q.marks as i32).sum();
-                if selected_marks < alloc.marks {
-                    tracing::warn!(
-                        "generate_paper: not enough questions for topic {}: need {} marks, found {}",
-                        alloc.topic_id,
-                        alloc.marks,
-                        selected_marks
-                    );
-                    return Err(Error::NotEnoughQuestions);
+                    return Err(Error::NotEnoughQuestionsForAllocation);
                 }
 
+                let mut remaining = alloc.total_marks as i16;
                 for q in &selected {
-                    all_questions.push((q.id, position));
+                    if remaining <= 0 {
+                        break;
+                    }
+                    all_questions.push((q.id.unwrap_or(0), position));
                     position += 1;
+                    remaining -= q.marks;
                 }
             }
 
-            // Delete any existing paper_questions for this paper
-            question_bank::delete_paper_questions(
-                conn,
-                &req.school,
-                &req.exam,
-                req.subject,
-                req.paper.map(|p| p as i16),
-                req.grade as i16,
-                req.stream.map(|s| s as i16),
-            )?;
+            question_bank::insert_paper_questions(conn, &req.paper_id, None, &all_questions)?;
 
-            // Insert new paper_questions
-            question_bank::insert_paper_questions(
-                conn,
-                &req.school,
-                &req.exam,
-                req.subject,
-                req.paper.map(|p| p as i16),
-                req.grade as i16,
-                req.stream.map(|s| s as i16),
-                &all_questions,
-            )?;
+            // Transition to QuestionsSet
+            let _ =
+                papers_db::transition_paper_status(conn, &req.paper_id, PaperStatus::QuestionsSet);
 
-            // Build response with full question data
-            let mut paper_questions = Vec::new();
-            for (qid, pos) in &all_questions {
-                let question = load_full_question(conn, *qid, true)?;
-                paper_questions.push(PaperQuestion {
-                    position: *pos as i32,
-                    section: None,
-                    question: Some(question),
-                });
-            }
-
-            Ok(GeneratePaperResponse {
-                questions: paper_questions,
+            Ok::<_, Error>(GeneratePaperResponse {
+                success: true,
+                message: format!("Generated {} questions", all_questions.len()),
             })
         })?;
 
-        Ok(response)
+        Ok(result)
+    }
+
+    // ── get_paper_questions ──────────────────────────────────────────────
+
+    async fn get_paper_questions(
+        &self,
+        token: Token,
+        req: GetPaperQuestionsRequest,
+    ) -> Result<GetPaperQuestionsResponse> {
+        let questions = CONN.with(|cell| {
+            let conn = &mut *cell.borrow_mut();
+
+            // Check paper status
+            let paper = papers_db::get_paper(conn, &req.paper_id)?.ok_or(Error::PaperNotFound)?;
+
+            let user_id = token.user.to_string();
+            let is_teacher = paper.teacher == user_id;
+
+            // Teachers can see from Finalized(2) onward; others only from Revealed(3)
+            let min_status = if is_teacher {
+                PaperStatus::Finalized
+            } else {
+                PaperStatus::Revealed
+            };
+
+            if paper.status < min_status {
+                return Err(Error::PaperNotRevealed);
+            }
+
+            let rows = question_bank::get_paper_questions(conn, &req.paper_id, req.student)?;
+
+            let mut result = Vec::with_capacity(rows.len());
+            for row in &rows {
+                let q = load_full_question(conn, row.question)?;
+                result.push(q);
+            }
+
+            Ok::<_, Error>(result)
+        })?;
+
+        Ok(GetPaperQuestionsResponse { questions })
     }
 
     // ── regenerate_question ──────────────────────────────────────────────
@@ -628,103 +567,68 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
         _token: Token,
         req: RegenerateQuestionRequest,
     ) -> Result<RegenerateQuestionResponse> {
-        let response = CONN.with(|cell| {
+        let question = CONN.with(|cell| {
             let conn = &mut *cell.borrow_mut();
 
-            // Load current paper questions to build exclude list
-            let current_pqs = question_bank::get_paper_questions(
-                conn,
-                &req.school,
-                &req.exam,
-                req.subject,
-                req.paper.map(|p| p as i16),
-                req.grade as i16,
-                req.stream.map(|s| s as i16),
-            )?;
+            let current_pqs = question_bank::get_paper_questions(conn, &req.paper_id, req.student)?;
 
             let mut exclude: Vec<i32> = current_pqs.iter().map(|pq| pq.question).collect();
-            // Also exclude any explicitly provided IDs
             exclude.extend_from_slice(&req.exclude_ids);
 
-            // Select a new random question for this topic + marks
-            let candidates = question_bank::select_random_questions(
+            let candidates = question_bank::select_questions_for_paper(
                 conn,
                 req.topic_id,
                 req.marks as i16,
                 &exclude,
+                None,
             )?;
 
-            let replacement = candidates.first().ok_or_else(|| {
-                tracing::warn!("regenerate_question: no alternative questions available");
-                Error::NothingToUpdate
-            })?;
+            let replacement = candidates
+                .first()
+                .ok_or(Error::NotEnoughQuestionsForAllocation)?;
+            let new_id = replacement.id.unwrap_or(0);
 
-            // Replace at the given position
-            question_bank::replace_paper_question_at_position(
+            // Swap at the given position
+            let paper_qs_updated: Vec<(i32, i16)> = current_pqs
+                .iter()
+                .map(|pq| {
+                    if pq.position == req.position as i16 {
+                        (new_id, pq.position)
+                    } else {
+                        (pq.question, pq.position)
+                    }
+                })
+                .collect();
+
+            question_bank::delete_paper_questions(conn, &req.paper_id, req.student)?;
+            question_bank::insert_paper_questions(
                 conn,
-                &req.school,
-                &req.exam,
-                req.subject,
-                req.paper.map(|p| p as i16),
-                req.grade as i16,
-                req.stream.map(|s| s as i16),
-                req.position as i16,
-                replacement.id,
+                &req.paper_id,
+                req.student,
+                &paper_qs_updated,
             )?;
 
-            let question = load_full_question(conn, replacement.id, true)?;
-
-            Ok::<_, Error>(RegenerateQuestionResponse {
-                replacement: Some(PaperQuestion {
-                    position: req.position,
-                    section: None,
-                    question: Some(question),
-                }),
-            })
+            load_full_question(conn, new_id)
         })?;
 
-        Ok(response)
-    }
-
-    // ── edit_paper_question ──────────────────────────────────────────────
-
-    async fn edit_paper_question(
-        &self,
-        _token: Token,
-        req: EditPaperQuestionRequest,
-    ) -> Result<EditPaperQuestionResponse> {
-        let question = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
-            conn.transaction(|conn| {
-                let text = req.text.as_deref();
-                let marks = req.marks.map(|m| m as i16);
-                let example_answer: Option<Option<&str>> = if req.example_answer.is_some() {
-                    Some(req.example_answer.as_deref())
-                } else {
-                    None
-                };
-
-                // Update the question itself (persists to DB, improving the question bank)
-                question_bank::update_question(conn, req.question_id, text, marks, example_answer)?;
-
-                // Replace rubric if provided
-                if !req.rubric.is_empty() {
-                    let tuples = rubric_tuples(&req.rubric);
-                    let refs: Vec<(i16, &str, i16)> = tuples
-                        .iter()
-                        .map(|(p, c, m)| (*p, c.as_str(), *m))
-                        .collect();
-                    question_bank::replace_rubric_criteria(conn, req.question_id, &refs)?;
-                }
-
-                // Load and return updated question
-                load_full_question(conn, req.question_id, true)
-            })
-        })?;
-
-        Ok(EditPaperQuestionResponse {
+        Ok(RegenerateQuestionResponse {
             question: Some(question),
         })
+    }
+
+    // ── clear_paper_questions ────────────────────────────────────────────
+
+    async fn clear_paper_questions(
+        &self,
+        _token: Token,
+        req: ClearPaperQuestionsRequest,
+    ) -> Result<ClearPaperQuestionsResponse> {
+        CONN.with(|cell| {
+            let conn = &mut *cell.borrow_mut();
+            question_bank::delete_paper_questions(conn, &req.paper_id, req.student)
+        })?;
+
+        Ok(ClearPaperQuestionsResponse {})
     }
 
     // ── finalize_paper ───────────────────────────────────────────────────
@@ -734,157 +638,145 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
         _token: Token,
         req: FinalizePaperRequest,
     ) -> Result<FinalizePaperResponse> {
-        let (pdf_bytes, pdf_key, scheme_bytes, scheme_key) = CONN.with(|cell| {
+        // ── Phase 1: load all data synchronously ─────────────────────────
+        struct PaperData {
+            school_name: String,
+            school_motto: Option<String>,
+            paper_name: String,
+            subject_name: String,
+            grade: i16,
+            duration_minutes: i16,
+            instructions: Option<String>,
+            questions: Vec<PdfQuestion>,
+            pdf_key: String,
+            ms_key: String,
+        }
+
+        let data = CONN.with(|cell| {
             let conn = &mut *cell.borrow_mut();
 
-            // Load paper questions for this paper (ordered by position)
-            let paper_qs = question_bank::get_paper_questions(
-                conn,
-                &req.school,
-                &req.exam,
-                req.subject,
-                req.paper.map(|p| p as i16),
-                req.grade as i16,
-                req.stream.map(|s| s as i16),
-            )?;
+            let paper = papers_db::get_paper(conn, &req.paper_id)?.ok_or(Error::PaperNotFound)?;
 
+            let paper_qs = question_bank::get_paper_questions(conn, &req.paper_id, None)?;
             if paper_qs.is_empty() {
-                return Err(Error::NothingToUpdate);
+                return Err(Error::NotEnoughQuestionsForAllocation);
             }
 
-            // Load full question data for each paper question
-            let mut questions_data: Vec<(String, i16, Vec<(String, i16)>, Option<String>)> =
-                Vec::new();
-            for pq in &paper_qs {
-                let row = question_bank::get_question(conn, pq.question)?;
-                let rubric = question_bank::get_rubric_criteria(conn, pq.question)?;
-                questions_data.push((
-                    row.text.clone(),
-                    row.marks,
-                    rubric
-                        .iter()
-                        .map(|r| (r.criterion.clone(), r.marks))
-                        .collect(),
-                    pq.section.clone(),
-                ));
-            }
-
-            // Load school name + motto
+            // Load school info
             let school_info: Option<SchoolInfoRow> =
                 sql_query("SELECT name, motto FROM schools WHERE id = ?")
-                    .bind::<Text, _>(&req.school)
+                    .bind::<Text, _>(&paper.school)
                     .get_result(conn)
-                    .optional()?;
+                    .optional()
+                    .map_err(Error::internal)?;
             let school_name = school_info
                 .as_ref()
-                .map(|s| s.name.as_str())
-                .unwrap_or("School");
-            let school_motto = school_info.as_ref().and_then(|s| s.motto.as_deref());
-
-            // Load exam name
-            let exam_info: Option<ExamNameRow> = sql_query("SELECT name FROM exams WHERE id = ?")
-                .bind::<Text, _>(&req.exam)
-                .get_result(conn)
-                .optional()?;
-            let exam_name = exam_info
-                .as_ref()
-                .map(|e| e.name.as_str())
-                .unwrap_or("Exam");
+                .map(|s| s.name.clone())
+                .unwrap_or_else(|| "School".into());
+            let school_motto = school_info.as_ref().and_then(|s| s.motto.clone());
 
             // Load subject name
             let subject_info: Option<SubjectNameRow> =
                 sql_query("SELECT name FROM subjects WHERE id = ?")
-                    .bind::<Integer, _>(req.subject)
+                    .bind::<Integer, _>(paper.subject)
                     .get_result(conn)
-                    .optional()?;
+                    .optional()
+                    .map_err(Error::internal)?;
             let subject_name = subject_info
                 .as_ref()
-                .map(|s| s.name.as_str())
-                .unwrap_or("Subject");
+                .map(|s| s.name.clone())
+                .unwrap_or_else(|| "Subject".into());
 
-            // Load paper time_allowed and custom instructions
-            let paper_info: Option<PaperInfoRow> = sql_query(
-                "SELECT time_allowed_minutes, instructions FROM papers \
-                 WHERE school = ? AND exam = ? AND subject = ? \
-                 AND COALESCE(paper, -1) = COALESCE(?, -1) \
-                 AND grade = ? \
-                 AND COALESCE(stream, -1) = COALESCE(?, -1)",
-            )
-            .bind::<Text, _>(&req.school)
-            .bind::<Text, _>(&req.exam)
-            .bind::<Integer, _>(req.subject)
-            .bind::<diesel::sql_types::Nullable<SmallInt>, _>(req.paper.map(|p| p as i16))
-            .bind::<SmallInt, _>(req.grade as i16)
-            .bind::<diesel::sql_types::Nullable<SmallInt>, _>(req.stream.map(|s| s as i16))
-            .get_result(conn)
-            .optional()?;
+            // Build question data
+            let mut pdf_questions: Vec<PdfQuestion> = Vec::with_capacity(paper_qs.len());
 
-            let time_allowed = paper_info.as_ref().and_then(|p| p.time_allowed_minutes);
-            let custom_instructions = paper_info
-                .as_ref()
-                .and_then(|p| p.instructions.as_deref())
-                .map(|s| s.to_string());
+            for pq in &paper_qs {
+                let row = question_bank::get_question(conn, pq.question)?.ok_or(Error::NotFound)?;
+                let rubric = question_bank::get_rubric_criteria(conn, pq.question)?;
+                let parts = question_bank::get_question_parts(conn, pq.question)?;
 
-            // Generate PDF
-            let pdf_bytes = crate::pdf::generate_paper_pdf(
+                let pdf_parts: Vec<PaperPart> = parts
+                    .iter()
+                    .map(|p| PaperPart {
+                        label: p.label.clone(),
+                        body: p.body.clone(),
+                        body_format: p.body_format as u8,
+                        marks: p.marks,
+                        answer_space_type: p.answer_space_type as u8,
+                        answer_lines: p.answer_lines,
+                        answer_box_height_mm: p.answer_box_height_mm,
+                        stimulus: p.stimulus.clone(),
+                        rubric: Vec::new(),
+                    })
+                    .collect();
+
+                let rubric_data: Vec<(String, i16, bool)> = rubric
+                    .iter()
+                    .map(|r| (r.criterion.clone(), r.marks, r.required))
+                    .collect();
+
+                pdf_questions.push(PdfQuestion {
+                    body: row.body.clone(),
+                    body_format: row.body_format as u8,
+                    marks: row.marks,
+                    max_marks: row.max_marks,
+                    answer_space_type: row.answer_space_type as u8,
+                    answer_lines: row.answer_lines,
+                    answer_box_height_mm: row.answer_box_height_mm,
+                    stimulus: row.stimulus.clone(),
+                    example_answer: row.example_answer.clone(),
+                    rubric: rubric_data,
+                    parts: pdf_parts,
+                    section: pq.section.clone(),
+                });
+            }
+
+            Ok::<_, Error>(PaperData {
+                pdf_key: format!("papers/{}/paper.pdf", req.paper_id),
+                ms_key: format!("papers/{}/marking_scheme.pdf", req.paper_id),
+                paper_name: paper.name.clone(),
                 school_name,
                 school_motto,
-                exam_name,
                 subject_name,
-                req.paper.map(|p| p as i16),
-                req.grade as i16,
-                time_allowed,
-                custom_instructions.as_deref(),
-                &questions_data,
-            )
-            .map_err(|e| {
-                error!("PDF generation failed: {}", e);
-                Error::Internal
-            })?;
-
-            // Build R2 key for the PDF
-            let paper_suffix = req.paper.map(|p| format!("_{}", p)).unwrap_or_default();
-            let stream_suffix = req.stream.map(|s| format!("_s{}", s)).unwrap_or_default();
-            let pdf_key = format!(
-                "schools/{}/exams/{}/papers/{}{}_{}{}/paper.pdf",
-                req.school, req.exam, req.subject, paper_suffix, req.grade, stream_suffix
-            );
-
-            // Generate marking scheme PDF
-            let scheme_bytes = crate::pdf::generate_marking_scheme_pdf(
-                school_name,
-                school_motto,
-                exam_name,
-                subject_name,
-                req.paper.map(|p| p as i16),
-                req.grade as i16,
-                time_allowed,
-                custom_instructions.as_deref(),
-                &questions_data,
-            )
-            .map_err(|e| {
-                error!("Marking scheme PDF generation failed: {}", e);
-                Error::Internal
-            })?;
-
-            // Build R2 key for the marking scheme
-            let stream_part = req
-                .stream
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "0".to_string());
-            let paper_part = req
-                .paper
-                .map(|p| p.to_string())
-                .unwrap_or_else(|| "0".to_string());
-            let scheme_key = format!(
-                "marking_schemes/{}/{}/{}/{}/{}/{}.pdf",
-                req.school, req.exam, req.subject, paper_part, req.grade, stream_part
-            );
-
-            Ok((pdf_bytes, pdf_key, scheme_bytes, scheme_key))
+                grade: paper.grade,
+                duration_minutes: paper.duration_minutes,
+                instructions: paper.instructions.clone(),
+                questions: pdf_questions,
+            })
         })?;
 
-        // Upload PDF to R2 using presigned PUT URL
+        let pdf_key = data.pdf_key;
+        let ms_key = data.ms_key;
+
+        // ── Phase 2: generate PDFs ────────────────────────────────────────
+
+        let pdf_input = PaperPdfInput {
+            school_name: &data.school_name,
+            school_motto: data.school_motto.as_deref(),
+            paper_name: &data.paper_name,
+            subject_name: &data.subject_name,
+            paper_number: None,
+            grade: data.grade,
+            duration_minutes: Some(data.duration_minutes),
+            instructions: data.instructions.as_deref(),
+            questions: &data.questions,
+        };
+
+        let pdf_bytes = crate::pdf::generate_paper_pdf_typst(&pdf_input).map_err(|e| {
+            error!("PDF generation failed: {}", e);
+            Error::Internal
+        })?;
+
+        let scheme_bytes =
+            crate::pdf::generate_marking_scheme_pdf_typst(&pdf_input).map_err(|e| {
+                error!("Marking scheme generation failed: {}", e);
+                Error::Internal
+            })?;
+
+        // ── Phase 3: upload to R2 ────────────────────────────────────────
+
+        let client = reqwest::Client::new();
+
         let put_url = sign::presign(
             env!("R2_ACCOUNT_ID"),
             env!("R2_BUCKET"),
@@ -896,91 +788,59 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
             Some("application/pdf"),
         );
 
-        let client = reqwest::Client::new();
         let resp = client
             .put(&put_url)
             .header("Content-Type", "application/pdf")
             .body(pdf_bytes)
             .send()
             .await
-            .map_err(|e| {
-                error!("Failed to upload PDF to R2: {}", e);
-                Error::Internal
-            })?;
+            .map_err(Error::internal)?;
 
         if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            error!(status = %status, body = %body, "R2 PDF upload failed");
+            error!(status = %resp.status(), "R2 PDF upload failed");
             return Err(Error::Internal);
         }
 
-        // Generate GET URL for download
-        let get_url = sign::url(&pdf_key, sign::GET_TTL, false);
-        let expiry = chrono::Utc::now().timestamp() + sign::GET_TTL as i64;
-
-        // Upload marking scheme to R2
-        let scheme_put_url = sign::presign(
+        let ms_put_url = sign::presign(
             env!("R2_ACCOUNT_ID"),
             env!("R2_BUCKET"),
             env!("R2_ACCESS_KEY_ID"),
             env!("R2_SECRET_ACCESS_KEY"),
             "PUT",
-            &scheme_key,
+            &ms_key,
             sign::PUT_TTL,
             Some("application/pdf"),
         );
 
-        let scheme_resp = client
-            .put(&scheme_put_url)
+        let ms_resp = client
+            .put(&ms_put_url)
             .header("Content-Type", "application/pdf")
             .body(scheme_bytes)
             .send()
             .await
-            .map_err(|e| {
-                error!("Failed to upload marking scheme to R2: {}", e);
-                Error::Internal
-            })?;
+            .map_err(Error::internal)?;
 
-        if !scheme_resp.status().is_success() {
-            let status = scheme_resp.status();
-            let body = scheme_resp.text().await.unwrap_or_default();
-            error!(status = %status, body = %body, "R2 marking scheme upload failed");
+        if !ms_resp.status().is_success() {
+            error!(status = %ms_resp.status(), "R2 marking scheme upload failed");
             return Err(Error::Internal);
         }
 
-        let scheme_get_url = sign::url(&scheme_key, sign::GET_TTL, false);
-        let scheme_expiry = chrono::Utc::now().timestamp() + sign::GET_TTL as i64;
+        // ── Phase 4: persist keys + transition status ────────────────────
 
-        Ok(FinalizePaperResponse {
-            pdf_url: get_url,
-            pdf_expiry: expiry,
-            marking_scheme_url: scheme_get_url,
-            marking_scheme_expiry: scheme_expiry,
-        })
-    }
+        CONN.with(|cell| {
+            let conn = &mut *cell.borrow_mut();
+            let update = crate::types::paper::PaperUpdate {
+                pdf_key: Some(Some(pdf_key.clone())),
+                ms_key: Some(Some(ms_key.clone())),
+                updated: Some(chrono::Utc::now().timestamp()),
+                ..Default::default()
+            };
+            papers_db::update_paper(conn, &req.paper_id, update)?;
+            papers_db::transition_paper_status(conn, &req.paper_id, PaperStatus::Finalized)?;
+            Ok::<_, Error>(())
+        })?;
 
-    // ── get_paper_pdf ────────────────────────────────────────────────────
-
-    async fn get_paper_pdf(
-        &self,
-        _token: Token,
-        req: GetPaperPdfRequest,
-    ) -> Result<GetPaperPdfResponse> {
-        let paper_suffix = req.paper.map(|p| format!("_{}", p)).unwrap_or_default();
-        let stream_suffix = req.stream.map(|s| format!("_s{}", s)).unwrap_or_default();
-        let pdf_key = format!(
-            "schools/{}/exams/{}/papers/{}{}_{}{}/paper.pdf",
-            req.school, req.exam, req.subject, paper_suffix, req.grade, stream_suffix
-        );
-
-        let get_url = sign::url(&pdf_key, sign::GET_TTL, false);
-        let expiry = chrono::Utc::now().timestamp() + sign::GET_TTL as i64;
-
-        Ok(GetPaperPdfResponse {
-            pdf_url: get_url,
-            pdf_expiry: expiry,
-        })
+        Ok(FinalizePaperResponse { pdf_key, ms_key })
     }
 
     // ── list_questions ───────────────────────────────────────────────────
@@ -990,38 +850,33 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
         _token: Token,
         req: ListQuestionsRequest,
     ) -> Result<ListQuestionsResponse> {
-        // Question catalog reads are global/system-wide and must not derive or require a school.
-        let limit = if req.limit <= 0 { 50 } else { req.limit };
-        let offset = if req.offset < 0 { 0 } else { req.offset };
-        let min_marks = req.min_marks.map(|m| m as i16);
-        let max_marks = req.max_marks.map(|m| m as i16);
+        let page = req.page.max(0) as i64;
+        let page_size = if req.page_size <= 0 {
+            50
+        } else {
+            req.page_size as i64
+        };
 
         let (questions, total) = CONN.with(|cell| {
             let conn = &mut *cell.borrow_mut();
 
-            let (rows, total) = question_bank::list_questions(
-                conn,
-                req.topic_id,
-                min_marks,
-                max_marks,
-                offset,
-                limit,
-            )?;
+            let rows =
+                question_bank::list_questions(conn, req.topic_id, page * page_size, page_size)?;
+            let total = rows.len() as i32;
 
             let mut questions = Vec::with_capacity(rows.len());
             for row in &rows {
-                let rubric = question_bank::get_rubric_criteria(conn, row.id)?;
-                let images = question_bank::get_question_images(conn, row.id)?;
-                questions.push(build_question_proto(row, &rubric, &images, true));
+                let id = row.id.unwrap_or(0);
+                let rubric = question_bank::get_rubric_criteria(conn, id)?;
+                let parts = question_bank::get_question_parts(conn, id)?;
+                let images = question_bank::get_question_images(conn, id)?;
+                questions.push(build_question_proto(&row, &rubric, &parts, &images));
             }
 
-            Ok((questions, total)) as Result<(Vec<Question>, i64)>
+            Ok::<_, Error>((questions, total))
         })?;
 
-        Ok(ListQuestionsResponse {
-            questions,
-            total: total as i32,
-        })
+        Ok(ListQuestionsResponse { questions, total })
     }
 
     // ── get_question ─────────────────────────────────────────────────────
@@ -1033,7 +888,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
     ) -> Result<GetQuestionResponse> {
         let question = CONN.with(|cell| {
             let conn = &mut *cell.borrow_mut();
-            load_full_question(conn, req.question_id, true)
+            load_full_question(conn, req.question_id)
         })?;
 
         Ok(GetQuestionResponse {
@@ -1051,55 +906,19 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
         let grades = CONN.with(|cell| {
             let conn = &mut *cell.borrow_mut();
 
-            // Load the paper's questions to know which question IDs to look up
-            let paper_qs = question_bank::get_paper_questions(
-                conn,
-                &req.school,
-                &req.exam,
-                req.subject,
-                req.paper.map(|p| p as i16),
-                req.grade as i16,
-                req.stream.map(|s| s as i16),
-            )?;
+            let grade_rows =
+                question_bank::get_question_grades_for_student(conn, &req.paper_id, req.student)?;
 
-            if paper_qs.is_empty() {
-                return Ok(Vec::new());
-            }
-
-            let question_ids: Vec<i32> = paper_qs.iter().map(|pq| pq.question).collect();
-
-            let grade_rows = question_bank::get_question_grades_for_student(
-                conn,
-                &req.school,
-                &req.exam,
-                req.student,
-                &question_ids,
-            )?;
-
-            let mut details = Vec::with_capacity(grade_rows.len());
-            for gr in &grade_rows {
-                // Load question text + rubric for each graded question
-                let q_row = question_bank::get_question(conn, gr.question)?;
-                let rubric = question_bank::get_rubric_criteria(conn, gr.question)?;
-
-                details.push(QuestionGradeDetail {
+            let result: Vec<QuestionGrade> = grade_rows
+                .iter()
+                .map(|gr| QuestionGrade {
                     question_id: gr.question,
-                    question_text: q_row.text,
-                    question_marks: q_row.marks as i32,
                     score: gr.score,
                     feedback: gr.feedback.clone(),
-                    rubric: rubric
-                        .iter()
-                        .map(|r| RubricCriterion {
-                            position: r.position as i32,
-                            criterion: r.criterion.clone(),
-                            marks: r.marks as i32,
-                        })
-                        .collect(),
-                });
-            }
+                })
+                .collect();
 
-            Ok(details) as Result<Vec<QuestionGradeDetail>>
+            Ok::<_, Error>(result)
         })?;
 
         Ok(GetQuestionGradesResponse { grades })
@@ -1107,417 +926,19 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
 
     // ── get_marking_status ───────────────────────────────────────────────
 
-    async fn get_paper_questions(
-        &self,
-        _token: Token,
-        req: GetPaperQuestionsRequest,
-    ) -> Result<GetPaperQuestionsResponse> {
-        let questions = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
-
-            let rows = question_bank::get_full_paper_questions(
-                conn,
-                &req.school,
-                &req.exam,
-                req.subject,
-                req.paper.map(|p| p as i16),
-                req.grade as i16,
-                req.stream.map(|s| s as i16),
-            )?;
-
-            let paper_questions: Vec<PaperQuestion> = rows
-                .iter()
-                .map(|(pos, section, row, rubric, images)| PaperQuestion {
-                    position: *pos as i32,
-                    section: section.clone(),
-                    question: Some(build_question_proto(row, rubric, images, true)),
-                })
-                .collect();
-
-            Ok::<_, Error>(paper_questions)
-        })?;
-
-        Ok(GetPaperQuestionsResponse { questions })
-    }
-
-    async fn clear_paper_questions(
-        &self,
-        token: Token,
-        req: ClearPaperQuestionsRequest,
-    ) -> Result<ClearPaperQuestionsResponse> {
-        let caller_id = token.user.to_string();
-
-        // ── DB phase: permission check, status check, delete questions ──────
-        let (questions_deleted, pdf_key, scheme_key) = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
-
-            // Fetch paper to get status and invigilator
-            let paper_row: Option<PaperStatusRow> = sql_query(
-                "SELECT status, invigilator FROM papers \
-                 WHERE school = ? AND exam = ? AND subject = ? \
-                 AND COALESCE(paper, -1) = COALESCE(?, -1) \
-                 AND grade = ? \
-                 AND COALESCE(stream, -1) = COALESCE(?, -1)",
-            )
-            .bind::<Text, _>(&req.school)
-            .bind::<Text, _>(&req.exam)
-            .bind::<Integer, _>(req.subject)
-            .bind::<diesel::sql_types::Nullable<SmallInt>, _>(req.paper.map(|p| p as i16))
-            .bind::<SmallInt, _>(req.grade as i16)
-            .bind::<diesel::sql_types::Nullable<SmallInt>, _>(req.stream.map(|s| s as i16))
-            .get_result(conn)
-            .optional()?;
-
-            let paper_row = paper_row.ok_or(Error::NotFound)?;
-
-            // Fetch exam to get teacher (for permission check)
-            let exam_row: Option<ExamTeacherRow> =
-                sql_query("SELECT teacher FROM exams WHERE id = ?")
-                    .bind::<Text, _>(&req.exam)
-                    .get_result(conn)
-                    .optional()?;
-
-            let teacher = exam_row.map(|r| r.teacher).unwrap_or_default();
-
-            // Permission: caller must be exam creator or paper invigilator
-            if paper_row.invigilator != caller_id && teacher != caller_id {
-                return Err(Error::Forbidden);
-            }
-
-            // Status check: paper must be Pending (status = 0)
-            if paper_row.status != 0 {
-                return Err(Error::NothingToUpdate);
-            }
-
-            // Delete paper_questions and capture count
-            let questions_deleted = question_bank::delete_paper_questions_count(
-                conn,
-                &req.school,
-                &req.exam,
-                req.subject,
-                req.paper.map(|p| p as i16),
-                req.grade as i16,
-                req.stream.map(|s| s as i16),
-            )?;
-
-            // Build S3 keys using the same format as finalize_paper
-            let paper_suffix = req.paper.map(|p| format!("_{}", p)).unwrap_or_default();
-            let stream_suffix = req.stream.map(|s| format!("_s{}", s)).unwrap_or_default();
-            let pdf_key = format!(
-                "schools/{}/exams/{}/papers/{}{}_{}{}/paper.pdf",
-                req.school, req.exam, req.subject, paper_suffix, req.grade, stream_suffix
-            );
-            let stream_part = req
-                .stream
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "0".to_string());
-            let paper_part = req
-                .paper
-                .map(|p| p.to_string())
-                .unwrap_or_else(|| "0".to_string());
-            let scheme_key = format!(
-                "marking_schemes/{}/{}/{}/{}/{}/{}.pdf",
-                req.school, req.exam, req.subject, paper_part, req.grade, stream_part
-            );
-
-            Ok((questions_deleted, pdf_key, scheme_key))
-        })?;
-
-        // ── S3 phase: HEAD-then-DELETE for each PDF ──────────────────────────
-        let client = reqwest::Client::new();
-        let mut pdf_deleted = false;
-
-        // Check + delete question paper PDF
-        let head_url = sign::presign(
-            env!("R2_ACCOUNT_ID"),
-            env!("R2_BUCKET"),
-            env!("R2_ACCESS_KEY_ID"),
-            env!("R2_SECRET_ACCESS_KEY"),
-            "HEAD",
-            &pdf_key,
-            sign::PUT_TTL,
-            None,
-        );
-        if let Ok(resp) = client.head(&head_url).send().await {
-            if resp.status().is_success() {
-                let del_url = sign::presign(
-                    env!("R2_ACCOUNT_ID"),
-                    env!("R2_BUCKET"),
-                    env!("R2_ACCESS_KEY_ID"),
-                    env!("R2_SECRET_ACCESS_KEY"),
-                    "DELETE",
-                    &pdf_key,
-                    sign::PUT_TTL,
-                    None,
-                );
-                if let Ok(resp) = client.delete(&del_url).send().await {
-                    if resp.status().is_success() || resp.status().as_u16() == 204 {
-                        pdf_deleted = true;
-                    }
-                }
-            }
-        }
-
-        // Check + delete marking scheme PDF
-        let scheme_head_url = sign::presign(
-            env!("R2_ACCOUNT_ID"),
-            env!("R2_BUCKET"),
-            env!("R2_ACCESS_KEY_ID"),
-            env!("R2_SECRET_ACCESS_KEY"),
-            "HEAD",
-            &scheme_key,
-            sign::PUT_TTL,
-            None,
-        );
-        if let Ok(resp) = client.head(&scheme_head_url).send().await {
-            if resp.status().is_success() {
-                let scheme_del_url = sign::presign(
-                    env!("R2_ACCOUNT_ID"),
-                    env!("R2_BUCKET"),
-                    env!("R2_ACCESS_KEY_ID"),
-                    env!("R2_SECRET_ACCESS_KEY"),
-                    "DELETE",
-                    &scheme_key,
-                    sign::PUT_TTL,
-                    None,
-                );
-                if let Ok(resp) = client.delete(&scheme_del_url).send().await {
-                    if resp.status().is_success() || resp.status().as_u16() == 204 {
-                        pdf_deleted = true;
-                    }
-                }
-            }
-        }
-
-        Ok(ClearPaperQuestionsResponse {
-            questions_deleted: questions_deleted as i32,
-            pdf_deleted,
-        })
-    }
-
-    async fn copy_paper_to_streams(
-        &self,
-        token: Token,
-        req: CopyPaperToStreamsRequest,
-    ) -> Result<CopyPaperToStreamsResponse> {
-        let caller_id = token.user.to_string();
-
-        // ── Validate request ─────────────────────────────────────────────────
-        if req.target_streams.is_empty() || req.target_streams.len() > 10 {
-            return Err(Error::InvalidPermissions);
-        }
-        let source_stream = req.source_stream;
-        if req.target_streams.iter().any(|&s| Some(s) == source_stream) {
-            return Err(Error::InvalidPermissions);
-        }
-
-        // ── DB phase: permission, source fetch, copy questions, ensure papers ─
-        let targets: Vec<FinalizePaperRequest> = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
-
-            // Fetch exam teacher for permission check
-            let exam_row: Option<ExamTeacherRow> =
-                sql_query("SELECT teacher FROM exams WHERE id = ?")
-                    .bind::<Text, _>(&req.exam)
-                    .get_result(conn)
-                    .optional()?;
-            let teacher = exam_row.map(|r| r.teacher).unwrap_or_default();
-
-            // Fetch source paper for invigilator (permission) + row data (to copy into new papers rows)
-            let source_paper: Option<PaperRow> = sql_query(
-                "SELECT school, exam, subject, paper, topic, invigilator, start, \"end\", status, \
-                 grade, stream, created, updated, time_allowed_minutes, instructions \
-                 FROM papers \
-                 WHERE school = ? AND exam = ? AND subject = ? \
-                 AND COALESCE(paper, -1) = COALESCE(?, -1) \
-                 AND grade = ? \
-                 AND COALESCE(stream, -1) = COALESCE(?, -1)",
-            )
-            .bind::<Text, _>(&req.school)
-            .bind::<Text, _>(&req.exam)
-            .bind::<Integer, _>(req.subject)
-            .bind::<diesel::sql_types::Nullable<SmallInt>, _>(req.paper.map(|p| p as i16))
-            .bind::<SmallInt, _>(req.grade as i16)
-            .bind::<diesel::sql_types::Nullable<SmallInt>, _>(source_stream.map(|s| s as i16))
-            .get_result(conn)
-            .optional()?;
-
-            let source_paper = source_paper.ok_or(Error::NotFound)?;
-
-            // Permission: caller must be exam creator or paper invigilator
-            if source_paper.invigilator != caller_id && teacher != caller_id {
-                return Err(Error::Forbidden);
-            }
-
-            // Fetch source paper questions (must be non-empty)
-            let source_qs = question_bank::get_paper_questions(
-                conn,
-                &req.school,
-                &req.exam,
-                req.subject,
-                req.paper.map(|p| p as i16),
-                req.grade as i16,
-                source_stream.map(|s| s as i16),
-            )?;
-
-            if source_qs.is_empty() {
-                return Err(Error::NothingToUpdate);
-            }
-
-            // Build the (question_id, position, section) triples to copy
-            let to_copy: Vec<(i32, i16, Option<String>)> = source_qs
-                .iter()
-                .map(|pq| (pq.question, pq.position, pq.section.clone()))
-                .collect();
-
-            let mut targets: Vec<FinalizePaperRequest> = Vec::new();
-
-            for &ts in &req.target_streams {
-                let target_stream_i16 = Some(ts as i16);
-
-                // Clear any existing questions for the target stream
-                question_bank::delete_paper_questions(
-                    conn,
-                    &req.school,
-                    &req.exam,
-                    req.subject,
-                    req.paper.map(|p| p as i16),
-                    req.grade as i16,
-                    target_stream_i16,
-                )?;
-
-                // Copy questions with sections to the target stream
-                question_bank::insert_paper_questions_with_sections(
-                    conn,
-                    &req.school,
-                    &req.exam,
-                    req.subject,
-                    req.paper.map(|p| p as i16),
-                    req.grade as i16,
-                    target_stream_i16,
-                    &to_copy,
-                )?;
-
-                // Ensure a papers row exists for the target stream
-                let inserted =
-                    question_bank::insert_paper_for_stream(conn, &source_paper, target_stream_i16)?;
-
-                // Write a changelog entry if we created a new papers row
-                if inserted {
-                    const TBL_PAPERS: u8 = 17;
-                    const OP_INSERT: u8 = 0;
-                    let record = Record::new(token.user, TBL_PAPERS, OP_INSERT, 0);
-                    if let Err(e) = LOG.with(|cell| cell.borrow_mut().append(&record).map(|_| ())) {
-                        error!("copy_paper_to_streams: failed to write changelog: {e}");
-                    }
-                }
-
-                targets.push(FinalizePaperRequest {
-                    school: req.school.clone(),
-                    exam: req.exam.clone(),
-                    subject: req.subject,
-                    paper: req.paper,
-                    grade: req.grade,
-                    stream: Some(ts),
-                });
-            }
-
-            Ok(targets)
-        })?;
-
-        // ── Async phase: run finalize_paper for each target stream ───────────
-        let mut results = Vec::new();
-
-        for finalize_req in targets {
-            let display_stream = finalize_req.stream.unwrap_or(0);
-            match self.finalize_paper(token, finalize_req).await {
-                Ok(resp) => results.push(StreamCopyResult {
-                    stream: display_stream,
-                    success: true,
-                    pdf_url: resp.pdf_url,
-                    pdf_expiry: resp.pdf_expiry,
-                    marking_scheme_url: resp.marking_scheme_url,
-                    marking_scheme_expiry: resp.marking_scheme_expiry,
-                    error: String::new(),
-                }),
-                Err(e) => {
-                    error!(
-                        "copy_paper_to_streams: finalize failed for stream {display_stream}: {e}"
-                    );
-                    results.push(StreamCopyResult {
-                        stream: display_stream,
-                        success: false,
-                        pdf_url: String::new(),
-                        pdf_expiry: 0,
-                        marking_scheme_url: String::new(),
-                        marking_scheme_expiry: 0,
-                        error: e.to_string(),
-                    });
-                }
-            }
-        }
-
-        Ok(CopyPaperToStreamsResponse { results })
-    }
-
-    async fn set_paper_question_section(
-        &self,
-        _token: Token,
-        req: SetPaperQuestionSectionRequest,
-    ) -> Result<SetPaperQuestionSectionResponse> {
-        // Validate section value
-        if let Some(ref s) = req.section {
-            if !matches!(s.as_str(), "A" | "B" | "C" | "D") {
-                return Err(Error::InvalidPermissions); // maps to invalid_argument
-            }
-        }
-
-        let found = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
-            question_bank::set_paper_question_section(
-                conn,
-                &req.school,
-                &req.exam,
-                req.subject,
-                req.paper.map(|p| p as i16),
-                req.grade as i16,
-                req.stream.map(|s| s as i16),
-                req.position as i16,
-                req.section.as_deref(),
-            )
-        })?;
-
-        if !found {
-            return Err(Error::NotFound);
-        }
-
-        Ok(SetPaperQuestionSectionResponse {})
-    }
-
     async fn get_marking_status(
         &self,
         _token: Token,
         req: MarkingStatusRequest,
     ) -> Result<MarkingStatusResponse> {
-        let response = CONN.with(|cell| {
+        let row = CONN.with(|cell| {
             let conn = &mut *cell.borrow_mut();
-
-            let row = question_bank::get_marking_status(
-                conn,
-                &req.school,
-                &req.exam,
-                req.subject,
-                req.paper.map(|p| p as i16),
-                req.grade as i16,
-                req.stream.map(|s| s as i16),
-            )?;
-
-            match row {
-                Some(r) => Ok::<_, Error>(marking_row_to_response(&r)),
-                None => Err(Error::NotFound),
-            }
+            question_bank::get_marking_status(conn, &req.paper_id)
         })?;
 
-        Ok(response)
+        match row {
+            Some(r) => Ok(marking_row_to_response(&r)),
+            None => Err(Error::PaperNotFound),
+        }
     }
 }
