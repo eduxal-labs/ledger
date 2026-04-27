@@ -155,49 +155,6 @@ struct SubjectNameRow {
     pub name: String,
 }
 
-// ---------------------------------------------------------------------------
-// Bulk import helpers
-// ---------------------------------------------------------------------------
-
-#[derive(serde::Deserialize)]
-struct BulkImportJson {
-    subject: String,
-    curriculum: String,
-    grade: i32,
-    topic: String,
-    questions: Vec<BulkImportQuestion>,
-}
-
-#[derive(serde::Deserialize)]
-struct BulkImportQuestion {
-    body: Option<String>,
-    // legacy alias
-    text: Option<String>,
-    marks: i32,
-    #[serde(default)]
-    example_answer: Option<String>,
-    #[serde(default)]
-    rubric: Vec<BulkImportRubric>,
-}
-
-#[derive(serde::Deserialize)]
-struct BulkImportRubric {
-    criterion: String,
-    marks: i32,
-}
-
-#[derive(diesel::QueryableByName)]
-struct SubjectIdRow {
-    #[diesel(sql_type = Integer)]
-    pub id: i32,
-}
-
-#[derive(diesel::QueryableByName)]
-struct TopicIdRow {
-    #[diesel(sql_type = Integer)]
-    pub id: i32,
-}
-
 // =========================================================================
 // QuestionBank trait implementation
 // =========================================================================

@@ -193,7 +193,7 @@ pub fn build_exam_paper_typst(input: &PaperPdfInput) -> String {
         doc.push_str(&format!(
             "*{}. * {} #h(1fr) [*{} mark{}*]\n\n",
             i + 1,
-            escape_typst(&q.body),
+            escape_typst(&render_body(&q.body, q.body_format)),
             q.marks,
             if q.marks != 1 { "s" } else { "" }
         ));
@@ -212,7 +212,7 @@ pub fn build_exam_paper_typst(input: &PaperPdfInput) -> String {
             doc.push_str(&format!(
                 "  *({})* {} #h(1fr) [*{} mark{}*]\n\n",
                 part.label,
-                escape_typst(&part.body),
+                escape_typst(&render_body(&part.body, part.body_format)),
                 part.marks,
                 if part.marks != 1 { "s" } else { "" }
             ));
@@ -298,7 +298,7 @@ pub fn build_marking_scheme_typst(input: &PaperPdfInput) -> String {
         doc.push_str(&format!(
             "*{}. * {} #h(1fr) [*{} mark{}*]\n\n",
             i + 1,
-            escape_typst(&q.body),
+            escape_typst(&render_body(&q.body, q.body_format)),
             q.marks,
             if q.marks != 1 { "s" } else { "" }
         ));
@@ -342,7 +342,7 @@ pub fn build_marking_scheme_typst(input: &PaperPdfInput) -> String {
             doc.push_str(&format!(
                 "  *({})* {}\n",
                 part.label,
-                escape_typst(&part.body)
+                escape_typst(&render_body(&part.body, part.body_format))
             ));
             for (j, (criterion, marks, required)) in part.rubric.iter().enumerate() {
                 let req_mark = if *required { "\\* " } else { "" };
@@ -497,6 +497,15 @@ fn render_example_answer(doc: &mut String, example_answer_json: &str, indent: &s
 }
 
 /// Strip basic HTML tags from a string.
+/// Return the body text, stripping HTML tags when body_format == 1 (Tiptap).
+fn render_body(body: &str, body_format: u8) -> String {
+    if body_format == 1 {
+        strip_html(body)
+    } else {
+        body.to_owned()
+    }
+}
+
 fn strip_html(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut in_tag = false;

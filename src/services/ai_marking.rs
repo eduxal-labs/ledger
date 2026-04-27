@@ -171,7 +171,7 @@ impl<C: Send + Sync + 'static> AiMarking for AiMarkingService<C> {
 
         let mark_req = MarkRequest {
             paper_id: paper_id.clone(),
-            school,
+            school: school.clone(),
             scheme_get_urls,
             students,
         };
@@ -189,6 +189,7 @@ impl<C: Send + Sync + 'static> AiMarking for AiMarkingService<C> {
 
         tracing::info!(
             paper_id = %paper_id,
+            school = %school,
             student_count = student_count,
             "mark_paper: queued — responding accepted=true"
         );
@@ -228,6 +229,7 @@ fn spawn_marking_worker(rx: mpsc::Receiver<MarkRequest>, gemini: GeminiClient) {
                 };
                 tracing::info!(
                     paper_id = %req.paper_id,
+                    school = %req.school,
                     student_count = req.students.len(),
                     "ai_worker: received request — preparing"
                 );
