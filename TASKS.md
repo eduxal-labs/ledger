@@ -3093,4 +3093,4 @@ pub mod sync;
 - [x] G1: Add typst dependency + scaffold
 - [x] G2: Typst exam paper template
 - [x] G3: Typst marking scheme + per-student PDFs
-- [ ] H1: Wire all services in server.rs
+- [x] H1: Wire all services in server.rs
