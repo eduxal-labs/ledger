@@ -3088,7 +3088,7 @@ pub mod sync;
 - [x] F2: New EventService
 - [x] F3: New PaperService
 - [x] F4: New PaperManagementService
-- [ ] F5: Auto-generation background job
+- [x] F5: Auto-generation background job
 - [x] F6: Update AiMarkingService
 - [x] G1: Add typst dependency + scaffold
 - [x] G2: Typst exam paper template
