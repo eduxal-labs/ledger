@@ -1,18 +1,18 @@
 use crate::config::storage::sign;
-use crate::db::changelog::{LOG, Record};
+
 use crate::db::database::CONN;
-use crate::db::database::tables::rows::{MarkingQueueRow, QuestionImageRow, QuestionRow};
+use crate::db::database::tables::rows::MarkingQueueRow;
 use crate::db::database::tables::{papers as papers_db, question_bank};
 use crate::pdf::{PaperPart, PaperPdfInput, PaperQuestion as PdfQuestion};
 use crate::proto::services::question_bank::*;
 use crate::types::error::{Error, OnConflict, Result};
 use crate::types::paper::PaperStatus;
 use crate::types::question::{
-    AnswerSpaceType, BodyFormat, CognitiveLevel, QuestionPart, QuestionUpdate, RubricCriterion,
+    AnswerSpaceType, BodyFormat, QuestionPart, QuestionUpdate, RubricCriterion,
 };
 use crate::types::token::Token;
 use diesel::sql_query;
-use diesel::sql_types::{Integer, SmallInt, Text};
+use diesel::sql_types::{Integer, Text};
 use diesel::{Connection, OptionalExtension, RunQueryDsl};
 use std::sync::Arc;
 use tracing::error;
@@ -30,7 +30,6 @@ fn build_question_proto(
     row: &crate::types::question::Question,
     rubric: &[RubricCriterion],
     parts: &[QuestionPart],
-    images: &[QuestionImageRow],
 ) -> Question {
     Question {
         id: row.id.unwrap_or(0),
@@ -97,8 +96,7 @@ fn load_full_question(conn: &mut diesel::SqliteConnection, id: i32) -> Result<Qu
     let row = question_bank::get_question(conn, id)?.ok_or(Error::NotFound)?;
     let rubric = question_bank::get_rubric_criteria(conn, id)?;
     let parts = question_bank::get_question_parts(conn, id)?;
-    let images = question_bank::get_question_images(conn, id)?;
-    Ok(build_question_proto(&row, &rubric, &parts, &images))
+    Ok(build_question_proto(&row, &rubric, &parts))
 }
 
 // QuestionRow is kept for list_questions which returns typed Question directly
@@ -869,8 +867,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                 let id = row.id.unwrap_or(0);
                 let rubric = question_bank::get_rubric_criteria(conn, id)?;
                 let parts = question_bank::get_question_parts(conn, id)?;
-                let images = question_bank::get_question_images(conn, id)?;
-                questions.push(build_question_proto(&row, &rubric, &parts, &images));
+                questions.push(build_question_proto(&row, &rubric, &parts));
             }
 
             Ok::<_, Error>((questions, total))

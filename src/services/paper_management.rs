@@ -119,7 +119,7 @@ impl<C: Send + Sync + 'static> PaperManagement for PaperManagementServiceImpl<C>
                 pm_db::get_schedule(conn, &req.schedule_id)?.ok_or(Error::PaperScheduleNotFound)?;
 
             if existing.generation_status != GenerationStatus::Pending {
-                return Err(Error::PaperAlreadyFinalized);
+                return Err(Error::InvalidStatusTransition);
             }
 
             let update = PaperScheduleUpdate {
