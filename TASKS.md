@@ -3084,13 +3084,13 @@ pub mod sync;
 - [x] E2: New event proto adapter
 - [x] E3: New paper proto adapter
 - [x] E4: New paper_management proto adapter + ai_marking update
-- [ ] F1: Update QuestionBankService
-- [ ] F2: New EventService
+- [x] F1: Update QuestionBankService
+- [x] F2: New EventService
 - [ ] F3: New PaperService
 - [ ] F4: New PaperManagementService
 - [ ] F5: Auto-generation background job
-- [ ] F6: Update AiMarkingService
+- [x] F6: Update AiMarkingService
 - [x] G1: Add typst dependency + scaffold
 - [x] G2: Typst exam paper template
-- [ ] G3: Typst marking scheme + per-student PDFs
+- [x] G3: Typst marking scheme + per-student PDFs
 - [ ] H1: Wire all services in server.rs
