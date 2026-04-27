@@ -3087,7 +3087,7 @@ pub mod sync;
 - [x] F1: Update QuestionBankService
 - [x] F2: New EventService
 - [ ] F3: New PaperService
-- [ ] F4: New PaperManagementService
+- [x] F4: New PaperManagementService
 - [ ] F5: Auto-generation background job
 - [x] F6: Update AiMarkingService
 - [x] G1: Add typst dependency + scaffold
