@@ -1869,6 +1869,13 @@ mod tests {
     }
 
     #[test]
+    fn task_c1_invite_user_is_system() {
+        let mut conn = crate::db::database::test_conn();
+        let result = action_organisation(&mut conn, sync_action::INVITE_USER, dummy_id(), &[]);
+        assert!(matches!(result, Ok(Organisation::System)));
+    }
+
+    #[test]
     fn update_user_own_is_account() {
         let id = dummy_id();
         let mut conn = crate::db::database::test_conn();
@@ -1932,5 +1939,35 @@ mod tests {
         let mut conn = crate::db::database::test_conn();
         let result = action_organisation(&mut conn, sync_action::ASSIGN_ROLE, dummy_id(), &[]);
         assert!(matches!(result, Ok(Organisation::System)));
+    }
+
+    #[test]
+    fn task_c1_process_action_maps_missing_non_invite_update_to_code_4() {
+        use prost::Message;
+
+        let user = make_user(Level::Super, Status::Active);
+        let payload = crate::proto::services::sync::UpdateUserPayload {
+            id: other_id().to_string(),
+            phone: None,
+            email: None,
+            name: Some("Missing User".to_string()),
+            level: None,
+            status: None,
+        }
+        .encode_to_vec();
+
+        let request = ActionRequest {
+            id: 42,
+            action: sync_action::UPDATE_USER,
+            payload,
+        };
+
+        let response = process_action(&user, &request);
+
+        assert!(!response.success);
+        assert_eq!(response.id, 42);
+        assert_eq!(response.code, 4);
+        assert_eq!(response.error, "user not found");
+        assert!(response.rows.is_empty());
     }
 }

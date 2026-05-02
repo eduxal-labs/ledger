@@ -4572,3 +4572,369 @@ fn handle_delete_answer_sheet(conn: &mut Conn, payload: &[u8]) -> Result<ActionR
 
     Ok(ActionResult::with_rows(rows))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::database::MIGRATIONS;
+    use crate::db::database::authorize::authorize_user;
+    use crate::types::role::{Actions as GrantedActions, Permissions};
+    use diesel::RunQueryDsl;
+    use diesel::sql_query;
+    use diesel_migrations::MigrationHarness;
+
+    fn setup_conn() -> Conn {
+        let mut conn = crate::db::database::test_conn();
+        conn.run_pending_migrations(MIGRATIONS).unwrap();
+        sql_query("PRAGMA foreign_keys = ON")
+            .execute(&mut conn)
+            .unwrap();
+        conn
+    }
+
+    fn make_user(level: Level, status: Status, phone: &str, name: &str) -> User {
+        User {
+            id: Id::default(),
+            phone: phone.parse().unwrap(),
+            email: None,
+            name: name.to_string(),
+            level,
+            status,
+            created: chrono::Utc::now().timestamp(),
+            updated: chrono::Utc::now().timestamp(),
+        }
+    }
+
+    fn persist_user(conn: &mut Conn, user: &User) {
+        insert::insert_user(
+            conn,
+            &UserInsert {
+                id: user.id.to_string(),
+                phone: user.phone.to_string(),
+                email: user.email.clone(),
+                name: user.name.clone(),
+                level: i32::from(user.level),
+                status: i32::from(user.status),
+            },
+        )
+        .unwrap();
+    }
+
+    fn persist_school(conn: &mut Conn, school: &str) {
+        insert::insert_school(
+            conn,
+            &SchoolInsert {
+                id: school.to_string(),
+                name: "Test School".to_string(),
+                motto: None,
+                phone: None,
+                email: None,
+                county: 1,
+                domain: None,
+                established: None,
+                status: 1,
+            },
+        )
+        .unwrap();
+    }
+
+    fn grant_users_create(conn: &mut Conn, user: &User) {
+        let mut permissions = Permissions::new();
+        permissions[Resource::Users] = GrantedActions::from(Action::Create);
+
+        let role_id = Id::default().to_string();
+        insert::insert_role(
+            conn,
+            &RoleInsert {
+                id: role_id.clone(),
+                school: None,
+                name: "User inviter".to_string(),
+                description: None,
+                permissions: Vec::<u8>::from(&permissions),
+            },
+        )
+        .unwrap();
+
+        insert::insert_scope(
+            conn,
+            &ScopeInsert {
+                school: None,
+                user: user.id.to_string(),
+                role: role_id,
+            },
+        )
+        .unwrap();
+    }
+
+    fn execute_standalone_invite(
+        conn: &mut Conn,
+        actor: &User,
+        requested_id: &str,
+        phone: &str,
+        name: &str,
+        level: Level,
+    ) -> Result<ActionResult> {
+        let payload = InviteUserPayload {
+            id: requested_id.to_string(),
+            phone: phone.to_string(),
+            name: name.to_string(),
+            level: i32::from(level),
+        }
+        .encode_to_vec();
+
+        let (resource, action) = action_permission(sync_action::INVITE_USER)?;
+        let mut required = Permissions::new();
+        required[resource] = GrantedActions::from(action);
+
+        let organisation = action_organisation(conn, sync_action::INVITE_USER, actor.id, &payload)?;
+        authorize_user(conn, actor, organisation, required)?;
+
+        execute_action(conn, actor, sync_action::INVITE_USER, &payload)
+    }
+
+    fn expect_user_upsert(row: &ActionRow) -> &UserInsert {
+        assert_eq!(row.table, TBL_USERS);
+        assert_eq!(row.operation, 0);
+        let data = row.data.as_ref().expect("expected upsert data");
+        match data.row.as_ref().expect("expected row payload") {
+            insert_data::Row::User(user) => user,
+            _ => panic!("expected user row"),
+        }
+    }
+
+    fn assert_delete_row(row: &ActionRow, table: i32, row_key: &str) {
+        assert_eq!(row.table, table);
+        assert_eq!(row.operation, 2);
+        assert_eq!(row.row_key, row_key);
+        assert!(row.data.is_none());
+    }
+
+    #[test]
+    fn task_c1_action_permission_invite_user_requires_users_create() {
+        let permission = action_permission(sync_action::INVITE_USER).unwrap();
+        assert_eq!(permission, (Resource::Users, Action::Create));
+    }
+
+    #[test]
+    fn task_c1_super_user_can_invite_every_allowed_level() {
+        let mut conn = setup_conn();
+        let actor = make_user(Level::Super, Status::Active, "0710000001", "Super Actor");
+
+        for (phone, level) in [
+            ("+254710000101", Level::Normal),
+            ("+254710000102", Level::System),
+            ("+254710000103", Level::Super),
+        ] {
+            let requested_id = Id::default().to_string();
+            let result = execute_standalone_invite(
+                &mut conn,
+                &actor,
+                &requested_id,
+                phone,
+                "Invited User",
+                level,
+            )
+            .unwrap();
+
+            assert_eq!(result.rows.len(), 1);
+            let user = expect_user_upsert(&result.rows[0]);
+            assert_eq!(user.id, requested_id);
+            assert_eq!(user.phone, phone.parse::<Phone>().unwrap().to_string());
+            assert_eq!(user.level, i32::from(level));
+            assert_eq!(user.status, i32::from(Status::Invited));
+        }
+    }
+
+    #[test]
+    fn task_c1_normal_user_cannot_use_standalone_invite() {
+        let mut conn = setup_conn();
+        let actor = make_user(Level::Normal, Status::Active, "0710000002", "Normal Actor");
+        persist_user(&mut conn, &actor);
+
+        let err = execute_standalone_invite(
+            &mut conn,
+            &actor,
+            &Id::default().to_string(),
+            "+254710000201",
+            "Denied Invite",
+            Level::Normal,
+        )
+        .err()
+        .unwrap();
+
+        assert!(matches!(err, Error::Forbidden));
+    }
+
+    #[test]
+    fn task_c1_system_user_standalone_invite_matrix() {
+        let mut conn = setup_conn();
+        let actor = make_user(Level::System, Status::Active, "0710000003", "System Actor");
+        persist_user(&mut conn, &actor);
+        grant_users_create(&mut conn, &actor);
+
+        let ok = execute_standalone_invite(
+            &mut conn,
+            &actor,
+            &Id::default().to_string(),
+            "+254710000301",
+            "System Invite",
+            Level::System,
+        )
+        .unwrap();
+        let user = expect_user_upsert(&ok.rows[0]);
+        assert_eq!(user.level, i32::from(Level::System));
+        assert_eq!(user.status, i32::from(Status::Invited));
+
+        let err = execute_standalone_invite(
+            &mut conn,
+            &actor,
+            &Id::default().to_string(),
+            "+254710000302",
+            "Normal Invite",
+            Level::Normal,
+        )
+        .err()
+        .unwrap();
+        assert!(matches!(err, Error::Forbidden));
+
+        let err = execute_standalone_invite(
+            &mut conn,
+            &actor,
+            &Id::default().to_string(),
+            "+254710000303",
+            "Super Invite",
+            Level::Super,
+        )
+        .err()
+        .unwrap();
+        assert!(matches!(err, Error::Forbidden));
+    }
+
+    #[test]
+    fn task_c1_deleted_phone_cannot_be_reinvited() {
+        let mut conn = setup_conn();
+        let actor = make_user(Level::Super, Status::Active, "0710000004", "Super Actor");
+        let deleted_user = make_user(Level::Normal, Status::Deleted, "0710000400", "Deleted User");
+        persist_user(&mut conn, &deleted_user);
+
+        let err = execute_standalone_invite(
+            &mut conn,
+            &actor,
+            &Id::default().to_string(),
+            "0710000400",
+            "Replacement Invite",
+            Level::Normal,
+        )
+        .err()
+        .unwrap();
+
+        assert!(matches!(err, Error::UserNotFound));
+    }
+
+    #[test]
+    fn task_c1_existing_phone_reuses_authoritative_user_and_returns_cleanup_delete() {
+        let mut conn = setup_conn();
+        let actor = make_user(Level::Super, Status::Active, "0710000005", "Super Actor");
+        let existing_user = make_user(Level::Normal, Status::Active, "0710000500", "Existing User");
+        persist_user(&mut conn, &existing_user);
+
+        let provisional_id = Id::default().to_string();
+        let result = execute_standalone_invite(
+            &mut conn,
+            &actor,
+            &provisional_id,
+            "+254710000500",
+            "Conflicting Invite",
+            Level::Normal,
+        )
+        .unwrap();
+
+        assert_eq!(result.rows.len(), 2);
+        assert_delete_row(&result.rows[0], TBL_USERS, &provisional_id);
+
+        let user = expect_user_upsert(&result.rows[1]);
+        assert_eq!(user.id, existing_user.id.to_string());
+        assert_eq!(user.phone, existing_user.phone.to_string());
+        assert_eq!(user.name, existing_user.name);
+    }
+
+    #[test]
+    fn task_c1_legacy_invite_shaped_update_upgrades_to_invite_path() {
+        let mut conn = setup_conn();
+        let actor = make_user(Level::Super, Status::Active, "0710000006", "Super Actor");
+        let requested_id = Id::default().to_string();
+        let payload = UpdateUserPayload {
+            id: requested_id.clone(),
+            phone: Some("+254710000601".to_string()),
+            email: Some("ignored@example.com".to_string()),
+            name: Some("Legacy Invite".to_string()),
+            level: Some(i32::from(Level::System)),
+            status: Some(i32::from(Status::Invited)),
+        }
+        .encode_to_vec();
+
+        let result = handle_update_user(&mut conn, &actor, &payload).unwrap();
+
+        assert_eq!(result.rows.len(), 1);
+        let user = expect_user_upsert(&result.rows[0]);
+        assert_eq!(user.id, requested_id);
+        assert_eq!(user.phone, "0710000601");
+        assert_eq!(user.email, None);
+        assert_eq!(user.name, "Legacy Invite");
+        assert_eq!(user.level, i32::from(Level::System));
+        assert_eq!(user.status, i32::from(Status::Invited));
+    }
+
+    #[test]
+    fn task_c1_missing_row_non_invite_update_returns_user_not_found() {
+        let mut conn = setup_conn();
+        let actor = make_user(Level::Super, Status::Active, "0710000007", "Super Actor");
+        let payload = UpdateUserPayload {
+            id: Id::default().to_string(),
+            phone: None,
+            email: None,
+            name: Some("Missing User".to_string()),
+            level: None,
+            status: None,
+        }
+        .encode_to_vec();
+
+        let err = handle_update_user(&mut conn, &actor, &payload)
+            .err()
+            .unwrap();
+        assert!(matches!(err, Error::UserNotFound));
+    }
+
+    #[test]
+    fn task_c1_create_teacher_side_effect_invite_stays_normal_invited() {
+        let mut conn = setup_conn();
+        let actor = make_user(Level::Super, Status::Active, "0710000008", "Super Actor");
+        let school_id = Id::default().to_string();
+        persist_school(&mut conn, &school_id);
+
+        let payload = CreateTeacherPayload {
+            school: school_id.clone(),
+            user_id: Id::default().to_string(),
+            phone: "+254710000801".to_string(),
+            name: "Invited Teacher".to_string(),
+            email: Some("ignored@example.com".to_string()),
+            hired: None,
+            role: None,
+            department: None,
+        }
+        .encode_to_vec();
+
+        let result = handle_create_teacher(&mut conn, &actor, &payload).unwrap();
+
+        assert_eq!(result.rows.len(), 2);
+        let user = expect_user_upsert(&result.rows[0]);
+        assert_eq!(user.phone, "0710000801");
+        assert_eq!(user.email, None);
+        assert_eq!(user.level, i32::from(Level::Normal));
+        assert_eq!(user.status, i32::from(Status::Invited));
+
+        assert_eq!(result.rows[1].table, TBL_TEACHERS);
+        assert_eq!(result.rows[1].operation, 0);
+        assert_eq!(result.rows[1].row_key, format!("{}|{}", school_id, user.id));
+    }
+}
