@@ -3772,21 +3772,56 @@ fn handle_invite_user(conn: &mut Conn, actor: &User, payload: &[u8]) -> Result<A
     Ok(ActionResult::with_rows(rows))
 }
 
-fn handle_update_user(conn: &mut Conn, _actor: &User, payload: &[u8]) -> Result<ActionResult> {
+fn handle_update_user(conn: &mut Conn, actor: &User, payload: &[u8]) -> Result<ActionResult> {
     let p: UpdateUserPayload = decode(payload)?;
     let log_user = Id::system();
+    let is_legacy_invite = p.phone.is_some()
+        && p.name.is_some()
+        && p.level.is_some()
+        && p.status == Some(Status::Invited as i32);
 
-    update::update_user(conn, &p.id, &p)?;
-    append_log(log_user, TBL_USERS as u8, OP_UPDATE, 0)?;
+    match update::update_user(conn, &p.id, &p) {
+        Ok(()) => {
+            append_log(log_user, TBL_USERS as u8, OP_UPDATE, 0)?;
 
-    let row = fetch_user(conn, &p.id)?;
-    Ok(ActionResult::with_rows(vec![upsert_row(
-        TBL_USERS,
-        row.row_key(),
-        InsertData {
-            row: Some(insert_data::Row::User((&row).into())),
-        },
-    )]))
+            let row = fetch_user(conn, &p.id)?;
+            Ok(ActionResult::with_rows(vec![upsert_row(
+                TBL_USERS,
+                row.row_key(),
+                InsertData {
+                    row: Some(insert_data::Row::User((&row).into())),
+                },
+            )]))
+        }
+        Err(Error::UserNotFound) if is_legacy_invite => {
+            let InviteOutcome {
+                user,
+                inserted: _,
+                extra_rows,
+            } = handle_user_invite(
+                conn,
+                actor,
+                InviteMode::StandaloneInvite,
+                &p.id,
+                p.phone.as_deref().unwrap(),
+                p.name.as_deref().unwrap(),
+                p.level.unwrap(),
+            )?;
+
+            let mut rows = extra_rows;
+            rows.push(upsert_row(
+                TBL_USERS,
+                user.row_key(),
+                InsertData {
+                    row: Some(insert_data::Row::User((&user).into())),
+                },
+            ));
+
+            Ok(ActionResult::with_rows(rows))
+        }
+        Err(Error::UserNotFound) => Err(Error::UserNotFound),
+        Err(err) => Err(err),
+    }
 }
 
 fn handle_delete_user(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {

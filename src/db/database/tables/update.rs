@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use crate::proto::services::sync::*;
-use crate::types::error::Result;
+use crate::types::error::{Error, Result};
 use diesel::RunQueryDsl;
 use diesel::SqliteConnection as Conn;
 use diesel::sql_query;
@@ -13,7 +13,7 @@ use diesel::sql_types::{BigInt, Binary, Bool, Float, Integer, Nullable, SmallInt
 
 pub fn update_user(conn: &mut Conn, row_key: &str, row: &UpdateUserPayload) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
-    sql_query(
+    let rows_affected = sql_query(
         "UPDATE users SET \
          phone = COALESCE(?, phone), \
          email = COALESCE(?, email), \
@@ -31,6 +31,11 @@ pub fn update_user(conn: &mut Conn, row_key: &str, row: &UpdateUserPayload) -> R
     .bind::<BigInt, _>(now)
     .bind::<Text, _>(row_key)
     .execute(conn)?;
+
+    if rows_affected == 0 {
+        return Err(Error::UserNotFound);
+    }
+
     Ok(())
 }
 
