@@ -860,6 +860,44 @@ fn user_has_school_links(conn: &mut Conn, user_id: &str) -> Result<bool> {
     Ok(!rows.is_empty())
 }
 
+fn side_effect_requested_user_id(
+    conn: &mut Conn,
+    requested_id: Option<&str>,
+    phone: &str,
+) -> Result<String> {
+    use std::str::FromStr;
+
+    let normalized_phone = Phone::from_str(phone)?.to_string();
+
+    Ok(fetch_user_by_phone(conn, &normalized_phone)?
+        .map(|user| user.id)
+        .or_else(|| requested_id.map(str::to_owned))
+        .unwrap_or_else(|| Id::default().to_string()))
+}
+
+fn resolve_side_effect_invite_user(
+    conn: &mut Conn,
+    actor: &User,
+    requested_id: Option<&str>,
+    phone: &str,
+    name: &str,
+) -> Result<InviteOutcome> {
+    let requested_id = side_effect_requested_user_id(conn, requested_id, phone)?;
+    let outcome = handle_user_invite(
+        conn,
+        actor,
+        InviteMode::SideEffectInvite,
+        &requested_id,
+        phone,
+        name,
+        Level::Normal as i32,
+    )?;
+
+    debug_assert!(outcome.extra_rows.is_empty());
+
+    Ok(outcome)
+}
+
 /// Validates `phone_str` as a Kenyan phone number, looks up the user by the
 /// normalised phone, and creates a new Invited user when none exists.
 ///
@@ -867,35 +905,17 @@ fn user_has_school_links(conn: &mut Conn, user_id: &str) -> Result<bool> {
 /// `(existing_user_row, false)` if the phone matched an existing user.
 fn resolve_phone_to_user(
     conn: &mut Conn,
-    _actor: &User,
+    actor: &User,
     phone_str: &str,
     fallback_name: &str,
 ) -> Result<(UserRow, bool)> {
-    use std::str::FromStr;
+    let InviteOutcome {
+        user,
+        inserted,
+        extra_rows: _,
+    } = resolve_side_effect_invite_user(conn, actor, None, phone_str, fallback_name)?;
 
-    let phone = Phone::from_str(phone_str).map_err(|_| {
-        tracing::warn!("invalid phone in student user field: {phone_str}");
-        Error::InvalidPhone
-    })?;
-    let normalized = phone.to_string(); // "0XXXXXXXXX"
-
-    match fetch_user_by_phone(conn, &normalized)? {
-        Some(existing) => Ok((existing, false)),
-        None => {
-            let new_id = Id::default().to_string();
-            let user_insert = UserInsert {
-                id: new_id.clone(),
-                phone: normalized,
-                email: None,
-                name: fallback_name.to_string(),
-                level: 0,  // Normal
-                status: 0, // Invited
-            };
-            insert::insert_user(conn, &user_insert)?;
-            let row = fetch_user(conn, &new_id)?;
-            Ok((row, true))
-        }
-    }
+    Ok((user, inserted))
 }
 
 #[derive(Clone, Copy)]
@@ -1826,30 +1846,25 @@ pub fn execute_action(
 // Schools
 // ---------------------------------------------------------------------------
 
-fn handle_create_school(conn: &mut Conn, _actor: &User, payload: &[u8]) -> Result<ActionResult> {
+fn handle_create_school(conn: &mut Conn, actor: &User, payload: &[u8]) -> Result<ActionResult> {
     let p: CreateSchoolPayload = decode(payload)?;
 
     // Use a dummy user ID for changelog — the caller (push flow) will
     // overwrite with the real authenticated user once authorization is wired.
     let log_user = Id::system();
 
-    // 1. Look up owner by phone — if not found, create an invited user.
-    let owner_user = match fetch_user_by_phone(conn, &p.owner_phone)? {
-        Some(existing) => existing,
-        None => {
-            let user_insert = UserInsert {
-                id: p.owner_id.clone(),
-                phone: p.owner_phone.clone(),
-                email: p.owner_email.clone(),
-                name: p.owner_name.clone(),
-                level: 0,  // Normal
-                status: 0, // Invited
-            };
-            insert::insert_user(conn, &user_insert)?;
-            append_log(log_user, TBL_USERS as u8, OP_INSERT, 0)?;
-            fetch_user(conn, &p.owner_id)?
-        }
-    };
+    // 1. Resolve the invited owner through the shared side-effect helper.
+    let InviteOutcome {
+        user: owner_user,
+        inserted: _,
+        extra_rows: _,
+    } = resolve_side_effect_invite_user(
+        conn,
+        actor,
+        Some(&p.owner_id),
+        &p.owner_phone,
+        &p.owner_name,
+    )?;
 
     // 2. Insert school.
     let school_insert = SchoolInsert {
@@ -1956,27 +1971,15 @@ fn handle_delete_school(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult>
 // Teachers
 // ---------------------------------------------------------------------------
 
-fn handle_create_teacher(conn: &mut Conn, _actor: &User, payload: &[u8]) -> Result<ActionResult> {
+fn handle_create_teacher(conn: &mut Conn, actor: &User, payload: &[u8]) -> Result<ActionResult> {
     let p: CreateTeacherPayload = decode(payload)?;
     let log_user = Id::system();
 
-    // Invitation pattern: look up user by phone, create if not found.
-    let user_row = match fetch_user_by_phone(conn, &p.phone)? {
-        Some(existing) => existing,
-        None => {
-            let user_insert = UserInsert {
-                id: p.user_id.clone(),
-                phone: p.phone.clone(),
-                email: p.email.clone(),
-                name: p.name.clone(),
-                level: 0,  // Normal
-                status: 0, // Invited
-            };
-            insert::insert_user(conn, &user_insert)?;
-            append_log(log_user, TBL_USERS as u8, OP_INSERT, 0)?;
-            fetch_user(conn, &p.user_id)?
-        }
-    };
+    let InviteOutcome {
+        user: user_row,
+        inserted: _,
+        extra_rows: _,
+    } = resolve_side_effect_invite_user(conn, actor, Some(&p.user_id), &p.phone, &p.name)?;
 
     // Insert teacher record pointing to the resolved user.
     let teacher_insert = TeacherInsert {
@@ -2049,27 +2052,15 @@ fn handle_delete_teacher(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult
 // Staff
 // ---------------------------------------------------------------------------
 
-fn handle_create_staff(conn: &mut Conn, _actor: &User, payload: &[u8]) -> Result<ActionResult> {
+fn handle_create_staff(conn: &mut Conn, actor: &User, payload: &[u8]) -> Result<ActionResult> {
     let p: CreateStaffPayload = decode(payload)?;
     let log_user = Id::system();
 
-    // Invitation pattern: look up user by phone, create if not found.
-    let user_row = match fetch_user_by_phone(conn, &p.phone)? {
-        Some(existing) => existing,
-        None => {
-            let user_insert = UserInsert {
-                id: p.user_id.clone(),
-                phone: p.phone.clone(),
-                email: p.email.clone(),
-                name: p.name.clone(),
-                level: 0,  // Normal
-                status: 0, // Invited
-            };
-            insert::insert_user(conn, &user_insert)?;
-            append_log(log_user, TBL_USERS as u8, OP_INSERT, 0)?;
-            fetch_user(conn, &p.user_id)?
-        }
-    };
+    let InviteOutcome {
+        user: user_row,
+        inserted: _,
+        extra_rows: _,
+    } = resolve_side_effect_invite_user(conn, actor, Some(&p.user_id), &p.phone, &p.name)?;
 
     // Insert staff record pointing to the resolved user.
     let staff_insert = StaffInsert {
@@ -2141,27 +2132,15 @@ fn handle_delete_staff(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> 
 // Owners
 // ---------------------------------------------------------------------------
 
-fn handle_create_owner(conn: &mut Conn, _actor: &User, payload: &[u8]) -> Result<ActionResult> {
+fn handle_create_owner(conn: &mut Conn, actor: &User, payload: &[u8]) -> Result<ActionResult> {
     let p: CreateOwnerPayload = decode(payload)?;
     let log_user = Id::system();
 
-    // Invitation pattern: look up user by phone, create if not found.
-    let user_row = match fetch_user_by_phone(conn, &p.phone)? {
-        Some(existing) => existing,
-        None => {
-            let user_insert = UserInsert {
-                id: p.user_id.clone(),
-                phone: p.phone.clone(),
-                email: p.email.clone(),
-                name: p.name.clone(),
-                level: 0,  // Normal
-                status: 0, // Invited
-            };
-            insert::insert_user(conn, &user_insert)?;
-            append_log(log_user, TBL_USERS as u8, OP_INSERT, 0)?;
-            fetch_user(conn, &p.user_id)?
-        }
-    };
+    let InviteOutcome {
+        user: user_row,
+        inserted: _,
+        extra_rows: _,
+    } = resolve_side_effect_invite_user(conn, actor, Some(&p.user_id), &p.phone, &p.name)?;
 
     // Insert owner record pointing to the resolved user.
     let owner_insert = OwnerInsert {
@@ -2222,10 +2201,7 @@ fn handle_create_student(conn: &mut Conn, actor: &User, payload: &[u8]) -> Resul
         None => None,
         Some(phone_str) => {
             // On create, the value MUST be a valid phone. Invalid → reject.
-            let (user_row, was_created) = resolve_phone_to_user(conn, actor, phone_str, &p.name)?;
-            if was_created {
-                append_log(log_user, TBL_USERS as u8, OP_INSERT, 0)?;
-            }
+            let (user_row, _was_created) = resolve_phone_to_user(conn, actor, phone_str, &p.name)?;
             let user_id = user_row.id.clone();
             rows.push(upsert_row(
                 TBL_USERS,
@@ -2290,11 +2266,8 @@ fn handle_update_student(conn: &mut Conn, actor: &User, payload: &[u8]) -> Resul
 
                 let name = p.name.as_deref().unwrap_or(&old_student.name);
 
-                let (user_row, was_created) =
+                let (user_row, _was_created) =
                     resolve_phone_to_user(conn, actor, &phone.to_string(), name)?;
-                if was_created {
-                    append_log(log_user, TBL_USERS as u8, OP_INSERT, 0)?;
-                }
 
                 let new_user_id = user_row.id.clone();
                 rows.push(upsert_row(
@@ -2447,27 +2420,15 @@ fn handle_unenroll_student(conn: &mut Conn, payload: &[u8]) -> Result<ActionResu
 // Guardians
 // ---------------------------------------------------------------------------
 
-fn handle_create_guardian(conn: &mut Conn, _actor: &User, payload: &[u8]) -> Result<ActionResult> {
+fn handle_create_guardian(conn: &mut Conn, actor: &User, payload: &[u8]) -> Result<ActionResult> {
     let p: CreateGuardianPayload = decode(payload)?;
     let log_user = Id::system();
 
-    // Invitation pattern: look up user by phone, create if not found.
-    let user_row = match fetch_user_by_phone(conn, &p.phone)? {
-        Some(existing) => existing,
-        None => {
-            let user_insert = UserInsert {
-                id: p.user_id.clone(),
-                phone: p.phone.clone(),
-                email: p.email.clone(),
-                name: p.name.clone(),
-                level: 0,  // Normal
-                status: 0, // Invited
-            };
-            insert::insert_user(conn, &user_insert)?;
-            append_log(log_user, TBL_USERS as u8, OP_INSERT, 0)?;
-            fetch_user(conn, &p.user_id)?
-        }
-    };
+    let InviteOutcome {
+        user: user_row,
+        inserted: _,
+        extra_rows: _,
+    } = resolve_side_effect_invite_user(conn, actor, Some(&p.user_id), &p.phone, &p.name)?;
 
     // Insert guardian record pointing to the resolved user.
     let guardian_insert = GuardianInsert {
