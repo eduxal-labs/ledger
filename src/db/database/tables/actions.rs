@@ -8,9 +8,10 @@ use crate::db::changelog::{LOG, Record};
 use crate::proto::services::sync::*;
 use crate::types::error::{Error, Result};
 use crate::types::id::Id;
+use crate::types::phone::Phone;
 use crate::types::role::Organisation;
 use crate::types::role::{Action, Resource};
-use crate::types::user::User;
+use crate::types::user::{Level, Status, User};
 use diesel::RunQueryDsl;
 use diesel::SqliteConnection as Conn;
 use diesel::sql_query;
@@ -870,7 +871,6 @@ fn resolve_phone_to_user(
     phone_str: &str,
     fallback_name: &str,
 ) -> Result<(UserRow, bool)> {
-    use crate::types::phone::Phone;
     use std::str::FromStr;
 
     let phone = Phone::from_str(phone_str).map_err(|_| {
@@ -896,6 +896,77 @@ fn resolve_phone_to_user(
             Ok((row, true))
         }
     }
+}
+
+#[derive(Clone, Copy)]
+enum InviteMode {
+    StandaloneInvite,
+    SideEffectInvite,
+}
+
+struct InviteOutcome {
+    user: UserRow,
+    inserted: bool,
+    extra_rows: Vec<ActionRow>,
+}
+
+fn handle_user_invite(
+    conn: &mut Conn,
+    actor: &User,
+    mode: InviteMode,
+    requested_id: &str,
+    phone: &str,
+    name: &str,
+    level: i32,
+) -> Result<InviteOutcome> {
+    use std::str::FromStr;
+
+    let normalized_phone = Phone::from_str(phone)?.to_string();
+    let target_level = match mode {
+        InviteMode::StandaloneInvite => {
+            let target_level = Level::try_from(level)?;
+            match actor.level {
+                Level::Super => target_level,
+                Level::System if target_level == Level::System => target_level,
+                Level::System | Level::Normal => return Err(Error::Forbidden),
+            }
+        }
+        InviteMode::SideEffectInvite => Level::Normal,
+    };
+
+    if let Some(existing) = fetch_user_by_phone(conn, &normalized_phone)? {
+        if existing.status == Status::Deleted as i16 {
+            return Err(Error::UserNotFound);
+        }
+
+        let mut extra_rows = Vec::new();
+        if existing.id != requested_id {
+            extra_rows.push(delete_row(TBL_USERS, requested_id.to_string()));
+        }
+
+        return Ok(InviteOutcome {
+            user: existing,
+            inserted: false,
+            extra_rows,
+        });
+    }
+
+    let user_insert = UserInsert {
+        id: requested_id.to_string(),
+        phone: normalized_phone,
+        email: None,
+        name: name.to_string(),
+        level: target_level as i32,
+        status: Status::Invited as i32,
+    };
+    insert::insert_user(conn, &user_insert)?;
+    append_log(actor.id, TBL_USERS as u8, OP_INSERT, 0)?;
+
+    Ok(InviteOutcome {
+        user: fetch_user(conn, requested_id)?,
+        inserted: true,
+        extra_rows: Vec::new(),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -3673,10 +3744,32 @@ fn handle_unassign_role(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult>
 // Users
 // ---------------------------------------------------------------------------
 
-fn handle_invite_user(_conn: &mut Conn, _actor: &User, payload: &[u8]) -> Result<ActionResult> {
-    let _payload: InviteUserPayload = decode(payload)?;
-    tracing::error!("handle_invite_user is not implemented yet");
-    Err(Error::Internal)
+fn handle_invite_user(conn: &mut Conn, actor: &User, payload: &[u8]) -> Result<ActionResult> {
+    let p: InviteUserPayload = decode(payload)?;
+    let InviteOutcome {
+        user,
+        inserted: _,
+        extra_rows,
+    } = handle_user_invite(
+        conn,
+        actor,
+        InviteMode::StandaloneInvite,
+        &p.id,
+        &p.phone,
+        &p.name,
+        p.level,
+    )?;
+
+    let mut rows = extra_rows;
+    rows.push(upsert_row(
+        TBL_USERS,
+        user.row_key(),
+        InsertData {
+            row: Some(insert_data::Row::User((&user).into())),
+        },
+    ));
+
+    Ok(ActionResult::with_rows(rows))
 }
 
 fn handle_update_user(conn: &mut Conn, _actor: &User, payload: &[u8]) -> Result<ActionResult> {

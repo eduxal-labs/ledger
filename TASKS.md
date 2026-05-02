@@ -144,7 +144,7 @@ A1 → A2 → B1 → B2 → B3 → C1
   - the authoritative users upsert row.
 
 **Update after completion:**
-- [ ] Mark this task `[x]`
+- [x] Mark this task `[x]`
 - [ ] Orchestrator: git commit after this task
 
 ---
