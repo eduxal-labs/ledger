@@ -103,7 +103,7 @@ A1 → A2 → B1 → B2 → B3 → C1
 - The goal is to make the actor’s `id` and `level` available to the standalone invite path, the legacy fallback path, and the shared invite helper used by member/school side-effect invites.
 
 **Update after completion:**
-- [ ] Mark this task `[x]`
+- [x] Mark this task `[x]`
 - [ ] Orchestrator: git commit after this task
 
 ---

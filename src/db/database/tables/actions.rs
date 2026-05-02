@@ -10,6 +10,7 @@ use crate::types::error::{Error, Result};
 use crate::types::id::Id;
 use crate::types::role::Organisation;
 use crate::types::role::{Action, Resource};
+use crate::types::user::User;
 use diesel::RunQueryDsl;
 use diesel::SqliteConnection as Conn;
 use diesel::sql_query;
@@ -865,6 +866,7 @@ fn user_has_school_links(conn: &mut Conn, user_id: &str) -> Result<bool> {
 /// `(existing_user_row, false)` if the phone matched an existing user.
 fn resolve_phone_to_user(
     conn: &mut Conn,
+    _actor: &User,
     phone_str: &str,
     fallback_name: &str,
 ) -> Result<(UserRow, bool)> {
@@ -1576,37 +1578,42 @@ fn append_delete_log(table: u8, row_key: &str) -> Result<()> {
 /// Authorization is handled by the caller (the push flow in
 /// `services/sync.rs`). By the time we get here, permission has already
 /// been checked.
-pub fn execute_action(conn: &mut Conn, action_id: i32, payload: &[u8]) -> Result<ActionResult> {
+pub fn execute_action(
+    conn: &mut Conn,
+    user: &User,
+    action_id: i32,
+    payload: &[u8],
+) -> Result<ActionResult> {
     use sync_action::*;
     match action_id {
         // Schools
-        CREATE_SCHOOL => handle_create_school(conn, payload),
+        CREATE_SCHOOL => handle_create_school(conn, user, payload),
         UPDATE_SCHOOL => handle_update_school(conn, payload),
         DELETE_SCHOOL => handle_delete_school(conn, payload),
 
         // Teachers
-        CREATE_TEACHER => handle_create_teacher(conn, payload),
+        CREATE_TEACHER => handle_create_teacher(conn, user, payload),
         UPDATE_TEACHER => handle_update_teacher(conn, payload),
         DELETE_TEACHER => handle_delete_teacher(conn, payload),
 
         // Staff
-        CREATE_STAFF => handle_create_staff(conn, payload),
+        CREATE_STAFF => handle_create_staff(conn, user, payload),
         UPDATE_STAFF => handle_update_staff(conn, payload),
         DELETE_STAFF => handle_delete_staff(conn, payload),
 
         // Owners
-        CREATE_OWNER => handle_create_owner(conn, payload),
+        CREATE_OWNER => handle_create_owner(conn, user, payload),
         DELETE_OWNER => handle_delete_owner(conn, payload),
 
         // Students
-        CREATE_STUDENT => handle_create_student(conn, payload),
-        UPDATE_STUDENT => handle_update_student(conn, payload),
+        CREATE_STUDENT => handle_create_student(conn, user, payload),
+        UPDATE_STUDENT => handle_update_student(conn, user, payload),
         DELETE_STUDENT => handle_delete_student(conn, payload),
         ENROLL_STUDENT => handle_enroll_student(conn, payload),
         UNENROLL_STUDENT => handle_unenroll_student(conn, payload),
 
         // Guardians
-        CREATE_GUARDIAN => handle_create_guardian(conn, payload),
+        CREATE_GUARDIAN => handle_create_guardian(conn, user, payload),
         UPDATE_GUARDIAN => handle_update_guardian(conn, payload),
         DELETE_GUARDIAN => handle_delete_guardian(conn, payload),
 
@@ -1688,8 +1695,8 @@ pub fn execute_action(conn: &mut Conn, action_id: i32, payload: &[u8]) -> Result
         UNASSIGN_ROLE => handle_unassign_role(conn, payload),
 
         // Users
-        INVITE_USER => handle_invite_user(conn, payload),
-        UPDATE_USER => handle_update_user(conn, payload),
+        INVITE_USER => handle_invite_user(conn, user, payload),
+        UPDATE_USER => handle_update_user(conn, user, payload),
         DELETE_USER => handle_delete_user(conn, payload),
 
         // Plans
@@ -1748,7 +1755,7 @@ pub fn execute_action(conn: &mut Conn, action_id: i32, payload: &[u8]) -> Result
 // Schools
 // ---------------------------------------------------------------------------
 
-fn handle_create_school(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
+fn handle_create_school(conn: &mut Conn, _actor: &User, payload: &[u8]) -> Result<ActionResult> {
     let p: CreateSchoolPayload = decode(payload)?;
 
     // Use a dummy user ID for changelog — the caller (push flow) will
@@ -1878,7 +1885,7 @@ fn handle_delete_school(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult>
 // Teachers
 // ---------------------------------------------------------------------------
 
-fn handle_create_teacher(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
+fn handle_create_teacher(conn: &mut Conn, _actor: &User, payload: &[u8]) -> Result<ActionResult> {
     let p: CreateTeacherPayload = decode(payload)?;
     let log_user = Id::system();
 
@@ -1971,7 +1978,7 @@ fn handle_delete_teacher(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult
 // Staff
 // ---------------------------------------------------------------------------
 
-fn handle_create_staff(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
+fn handle_create_staff(conn: &mut Conn, _actor: &User, payload: &[u8]) -> Result<ActionResult> {
     let p: CreateStaffPayload = decode(payload)?;
     let log_user = Id::system();
 
@@ -2063,7 +2070,7 @@ fn handle_delete_staff(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> 
 // Owners
 // ---------------------------------------------------------------------------
 
-fn handle_create_owner(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
+fn handle_create_owner(conn: &mut Conn, _actor: &User, payload: &[u8]) -> Result<ActionResult> {
     let p: CreateOwnerPayload = decode(payload)?;
     let log_user = Id::system();
 
@@ -2133,7 +2140,7 @@ fn handle_delete_owner(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> 
 // Students
 // ---------------------------------------------------------------------------
 
-fn handle_create_student(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
+fn handle_create_student(conn: &mut Conn, actor: &User, payload: &[u8]) -> Result<ActionResult> {
     let p: CreateStudentPayload = decode(payload)?;
     let log_user = Id::system();
 
@@ -2144,7 +2151,7 @@ fn handle_create_student(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult
         None => None,
         Some(phone_str) => {
             // On create, the value MUST be a valid phone. Invalid → reject.
-            let (user_row, was_created) = resolve_phone_to_user(conn, phone_str, &p.name)?;
+            let (user_row, was_created) = resolve_phone_to_user(conn, actor, phone_str, &p.name)?;
             if was_created {
                 append_log(log_user, TBL_USERS as u8, OP_INSERT, 0)?;
             }
@@ -2186,7 +2193,7 @@ fn handle_create_student(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult
     Ok(ActionResult::with_rows(rows))
 }
 
-fn handle_update_student(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
+fn handle_update_student(conn: &mut Conn, actor: &User, payload: &[u8]) -> Result<ActionResult> {
     use crate::config::storage::sign;
     use crate::types::phone::Phone;
     use chrono::Utc;
@@ -2213,7 +2220,7 @@ fn handle_update_student(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult
                 let name = p.name.as_deref().unwrap_or(&old_student.name);
 
                 let (user_row, was_created) =
-                    resolve_phone_to_user(conn, &phone.to_string(), name)?;
+                    resolve_phone_to_user(conn, actor, &phone.to_string(), name)?;
                 if was_created {
                     append_log(log_user, TBL_USERS as u8, OP_INSERT, 0)?;
                 }
@@ -2369,7 +2376,7 @@ fn handle_unenroll_student(conn: &mut Conn, payload: &[u8]) -> Result<ActionResu
 // Guardians
 // ---------------------------------------------------------------------------
 
-fn handle_create_guardian(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
+fn handle_create_guardian(conn: &mut Conn, _actor: &User, payload: &[u8]) -> Result<ActionResult> {
     let p: CreateGuardianPayload = decode(payload)?;
     let log_user = Id::system();
 
@@ -3666,13 +3673,13 @@ fn handle_unassign_role(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult>
 // Users
 // ---------------------------------------------------------------------------
 
-fn handle_invite_user(_conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
+fn handle_invite_user(_conn: &mut Conn, _actor: &User, payload: &[u8]) -> Result<ActionResult> {
     let _payload: InviteUserPayload = decode(payload)?;
     tracing::error!("handle_invite_user is not implemented yet");
     Err(Error::Internal)
 }
 
-fn handle_update_user(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
+fn handle_update_user(conn: &mut Conn, _actor: &User, payload: &[u8]) -> Result<ActionResult> {
     let p: UpdateUserPayload = decode(payload)?;
     let log_user = Id::system();
 

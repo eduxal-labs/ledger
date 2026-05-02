@@ -345,7 +345,9 @@ fn process_action(user: &User, request: &ActionRequest) -> ActionResponse {
         authorize_user(conn, user, organisation, required)?;
 
         // 5. Execute inside a transaction
-        conn.transaction(|conn| actions::execute_action(conn, request.action, &request.payload))
+        conn.transaction(|conn| {
+            actions::execute_action(conn, user, request.action, &request.payload)
+        })
     });
 
     match result {
