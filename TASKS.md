@@ -82,7 +82,7 @@ A1 → A2 → B1 → B2 → B3 → C1
 - Add an inline comment near `sync_action` noting that these integers must stay aligned with the client’s `lib/database/tables/enums.dart` values.
 
 **Update after completion:**
-- [ ] Mark this task `[x]`
+- [x] Mark this task `[x]`
 - [ ] Orchestrator: git commit after this task
 
 ---

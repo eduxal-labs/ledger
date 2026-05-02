@@ -56,7 +56,7 @@ message FileUrl {
   int64 expiry = 4;
 }
 
-// ─── Action Payload Messages (77 total) ───
+// ─── Action Payload Messages (78 total) ───
 // Each action has a purpose-built payload message.
 // These replace the old per-table Insert/Update messages for the push direction.
 
@@ -676,7 +676,14 @@ message UnassignRolePayload {
   string role = 3;
 }
 
-// --- Users (2 actions) ---
+// --- Users (3 actions) ---
+
+message InviteUserPayload {
+  string id = 1;
+  string phone = 2;
+  string name = 3;
+  int32 level = 4;
+}
 
 message UpdateUserPayload {
   string id = 1;

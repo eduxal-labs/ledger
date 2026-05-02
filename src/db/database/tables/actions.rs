@@ -28,7 +28,8 @@ struct SchoolIdRow {
     school: Id,
 }
 
-/// SyncAction integer values — must match the client's SyncAction enum.
+/// SyncAction integer values — must stay aligned with the client's
+/// `lib/database/tables/enums.dart` values.
 pub mod sync_action {
     pub const CREATE_SCHOOL: i32 = 0;
     pub const UPDATE_SCHOOL: i32 = 1;
@@ -124,6 +125,7 @@ pub mod sync_action {
     pub const DELETE_SCHEME: i32 = 92;
     pub const UPLOAD_ANSWER_SHEET: i32 = 93;
     pub const DELETE_ANSWER_SHEET: i32 = 94;
+    pub const INVITE_USER: i32 = 95;
 }
 
 /// Result of executing a single action. Contains the rows to return to the
@@ -268,6 +270,7 @@ pub fn action_permission(action_id: i32) -> Result<(Resource, Action)> {
         UNASSIGN_ROLE => Ok((Resource::Roles, Action::Unassign)),
 
         // Users
+        INVITE_USER => Ok((Resource::Users, Action::Create)),
         UPDATE_USER => Ok((Resource::Users, Action::Update)),
         DELETE_USER => Ok((Resource::Users, Action::Delete)),
 
@@ -357,7 +360,7 @@ pub fn action_organisation(
         // ── Pure system-level: only System/Super users ──────────────────────
         CREATE_SCHOOL | CREATE_PLAN | UPDATE_PLAN | DELETE_PLAN | CREATE_SUBJECT
         | UPDATE_SUBJECT | DELETE_SUBJECT | CREATE_TOPIC | UPDATE_TOPIC | DELETE_TOPIC
-        | UPDATE_ROLE | DELETE_ROLE | DELETE_USER => Ok(Organisation::System),
+        | UPDATE_ROLE | DELETE_ROLE | DELETE_USER | INVITE_USER => Ok(Organisation::System),
 
         // ── Account: user editing their own profile ──────────────────────────
         UPDATE_USER => {
@@ -1685,6 +1688,7 @@ pub fn execute_action(conn: &mut Conn, action_id: i32, payload: &[u8]) -> Result
         UNASSIGN_ROLE => handle_unassign_role(conn, payload),
 
         // Users
+        INVITE_USER => handle_invite_user(conn, payload),
         UPDATE_USER => handle_update_user(conn, payload),
         DELETE_USER => handle_delete_user(conn, payload),
 
@@ -3661,6 +3665,12 @@ fn handle_unassign_role(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult>
 // ---------------------------------------------------------------------------
 // Users
 // ---------------------------------------------------------------------------
+
+fn handle_invite_user(_conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
+    let _payload: InviteUserPayload = decode(payload)?;
+    tracing::error!("handle_invite_user is not implemented yet");
+    Err(Error::Internal)
+}
 
 fn handle_update_user(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
     let p: UpdateUserPayload = decode(payload)?;
