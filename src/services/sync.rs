@@ -327,26 +327,28 @@ impl<C: Config + Send + ::std::marker::Sync + 'static> Sync for SyncService<C> {
 /// 3. Executes the action handler inside a database transaction.
 /// 4. Returns an `ActionResponse` with success/failure and any affected rows.
 fn process_action(user: &User, request: &ActionRequest) -> ActionResponse {
-    let result = CONN.with(|cell| {
-        let conn = &mut *cell.borrow_mut();
+    let result = crate::types::error::retry_on_busy(|| {
+        CONN.with(|cell| {
+            let conn = &mut *cell.borrow_mut();
 
-        // 1. Map action → required (Resource, Action)
-        let (resource, action) = actions::action_permission(request.action)?;
+            // 1. Map action → required (Resource, Action)
+            let (resource, action) = actions::action_permission(request.action)?;
 
-        // 2. Build a Permissions value containing only the one required action
-        let mut required = Permissions::new();
-        required[resource] = Actions::from(action);
+            // 2. Build a Permissions value containing only the one required action
+            let mut required = Permissions::new();
+            required[resource] = Actions::from(action);
 
-        // 3. Determine the organisation context from the payload
-        let organisation =
-            actions::action_organisation(conn, request.action, user.id, &request.payload)?;
+            // 3. Determine the organisation context from the payload
+            let organisation =
+                actions::action_organisation(conn, request.action, user.id, &request.payload)?;
 
-        // 4. Full authorization — Super bypass, owner bypass, role check
-        authorize_user(conn, user, organisation, required)?;
+            // 4. Full authorization — Super bypass, owner bypass, role check
+            authorize_user(conn, user, organisation, required)?;
 
-        // 5. Execute inside a transaction
-        conn.transaction(|conn| {
-            actions::execute_action(conn, user, request.action, &request.payload)
+            // 5. Execute inside a transaction
+            conn.transaction(|conn| {
+                actions::execute_action(conn, user, request.action, &request.payload)
+            })
         })
     });
 

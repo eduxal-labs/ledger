@@ -162,6 +162,10 @@ impl Error {
         Self::Internal(msg)
     }
 
+    pub fn is_busy(&self) -> bool {
+        matches!(self, Self::DatabaseLocked)
+    }
+
     pub fn invalid_token<E: Display>(_: E) -> Self {
         Self::InvalidToken
     }
@@ -272,4 +276,23 @@ impl<Ok, Error: Conflict> OnConflict for std::result::Result<Ok, Error> {
             },
         }
     }
+}
+
+/// Retry an operation up to 5 times when the database is locked (SQLITE_BUSY),
+/// with exponential backoff: 200ms, 400ms, 800ms, 1600ms.
+pub fn retry_on_busy<F, T>(mut f: F) -> Result<T>
+where
+    F: FnMut() -> Result<T>,
+{
+    for attempt in 0..4 {
+        match f() {
+            Ok(val) => return Ok(val),
+            Err(Error::DatabaseLocked) => {
+                let ms = 100 * (1 << (attempt + 1)); // 200, 400, 800, 1600
+                std::thread::sleep(std::time::Duration::from_millis(ms));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    f()
 }
