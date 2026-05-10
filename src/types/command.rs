@@ -26,14 +26,18 @@ impl Response {
     pub fn requested(self) -> Result<Verification> {
         match self {
             Response::Requested(result) => result,
-            _ => Err(Error::Internal("internal server error".into())),
+            _ => Err(Error::Internal(
+                "unexpected auth response variant: expected Requested".into(),
+            )),
         }
     }
 
     pub fn verified(self) -> Result<Verification> {
         match self {
             Response::Verified(result) => result,
-            _ => Err(Error::Internal("internal server error".into())),
+            _ => Err(Error::Internal(
+                "unexpected auth response variant: expected Verified".into(),
+            )),
         }
     }
 }

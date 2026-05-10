@@ -123,7 +123,7 @@ fn parse_school_id(s: Option<&str>) -> Option<Id> {
 /// `WHERE updated >= $1 OR created >= $1`; tables without use
 /// `WHERE created >= $1`.
 fn build_sql(base: &str, since: Option<i64>, has_updated: bool) -> Option<String> {
-    since.map(|_| {
+    since.map(|_since| {
         if has_updated {
             format!("{base} WHERE updated >= $1 OR created >= $1")
         } else {
@@ -149,14 +149,14 @@ where
     let rows: Vec<T> = match build_sql(base, since, has_updated) {
         None => diesel::sql_query(base).load(conn).map_err(|e| {
             error!("snapshot query failed for {table_name}: {e}");
-            Error::Internal("internal server error".into())
+            Error::internal(e)
         })?,
         Some(sql) => diesel::sql_query(&sql)
             .bind::<BigInt, _>(since.unwrap())
             .load(conn)
             .map_err(|e| {
                 error!("snapshot_since query failed for {table_name}: {e}");
-                Error::Internal("internal server error".into())
+                Error::internal(e)
             })?,
     };
     Ok(rows.iter().map(map).collect())
