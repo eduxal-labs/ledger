@@ -307,6 +307,34 @@ pub fn get_part_rubric_criteria(
     Ok(rows)
 }
 
+/// Bulk-insert rubric criteria for a specific question part.
+pub fn insert_part_rubric_criteria(
+    conn: &mut SqliteConnection,
+    question_id: i32,
+    part_position: i16,
+    criteria: &[(i16, String, i16, Option<i16>, bool)],
+) -> Result<()> {
+    if criteria.is_empty() {
+        return Ok(());
+    }
+    let rows: Vec<PartRubricCriterion> = criteria
+        .iter()
+        .map(|(pos, crit, marks, max_marks, required)| PartRubricCriterion {
+            question: question_id,
+            part: part_position,
+            position: *pos,
+            criterion: crit.clone(),
+            marks: *marks,
+            max_marks: *max_marks,
+            required: *required,
+        })
+        .collect();
+    diesel::insert_into(part_rubric_criteria::table)
+        .values(&rows)
+        .execute(conn)?;
+    Ok(())
+}
+
 // =========================================================================
 // Paper Questions
 // =========================================================================

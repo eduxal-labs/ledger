@@ -238,6 +238,16 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                         })
                         .collect();
                     question_bank::insert_question_parts(conn, qid, &parts)?;
+
+                    // Insert part rubric criteria
+                    for (part_idx, p) in req.parts.iter().enumerate() {
+                        if !p.rubric.is_empty() {
+                            let part_tuples: Vec<(i16, String, i16, Option<i16>, bool)> = p.rubric.iter().enumerate().map(|(ri, r)| {
+                                ((ri + 1) as i16, r.criterion.clone(), r.marks as i16, r.max_marks.map(|m| m as i16), r.required)
+                            }).collect();
+                            let _ = question_bank::insert_part_rubric_criteria(conn, qid, (part_idx + 1) as i16, &part_tuples);
+                        }
+                    }
                 }
 
                 load_full_question(conn, qid)
@@ -359,6 +369,40 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                             if !q.rubric.is_empty() {
                                 let tuples = rubric_input_tuples(&q.rubric);
                                 let _ = question_bank::insert_rubric_criteria(conn, qid, &tuples);
+                            }
+
+                            // Insert question parts and their rubric criteria
+                            if !q.parts.is_empty() {
+                                let parts: Vec<QuestionPart> = q.parts.iter().enumerate().map(|(i, p)| {
+                                    QuestionPart {
+                                        question: qid,
+                                        position: (i + 1) as i16,
+                                        label: p.label.clone(),
+                                        body: p.body.clone(),
+                                        body_format: (p.body_format as i16).try_into().unwrap_or(BodyFormat::Plain),
+                                        marks: p.marks as i16,
+                                        max_marks: p.max_marks.map(|m| m as i16),
+                                        answer_space_type: (p.answer_space_type as i16).try_into().unwrap_or(AnswerSpaceType::Lines),
+                                        answer_lines: p.answer_lines.map(|l| l as i16),
+                                        answer_box_height_mm: p.answer_box_height_mm.map(|h| h as i16),
+                                        example_answer: p.example_answer.clone(),
+                                        stimulus: p.stimulus.clone(),
+                                    }
+                                }).collect();
+
+                                if let Err(e) = question_bank::insert_question_parts(conn, qid, &parts) {
+                                    return Err(e);
+                                }
+
+                                // Insert part rubric criteria
+                                for (part_idx, p) in q.parts.iter().enumerate() {
+                                    if !p.rubric.is_empty() {
+                                        let part_tuples: Vec<(i16, String, i16, Option<i16>, bool)> = p.rubric.iter().enumerate().map(|(ri, r)| {
+                                            ((ri + 1) as i16, r.criterion.clone(), r.marks as i16, r.max_marks.map(|m| m as i16), r.required)
+                                        }).collect();
+                                        let _ = question_bank::insert_part_rubric_criteria(conn, qid, (part_idx + 1) as i16, &part_tuples);
+                                    }
+                                }
                             }
                             created_count += 1;
                         }
