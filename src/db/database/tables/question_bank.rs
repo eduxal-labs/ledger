@@ -147,7 +147,9 @@ pub fn find_or_insert_question(
 
     match existing {
         Some(row) => Ok((row.id, affected > 0)),
-        None => Err(Error::Internal),
+        None => Err(Error::Internal(format!(
+            "question lookup failed after insert: topic={topic} body={body}"
+        ))),
     }
 }
 

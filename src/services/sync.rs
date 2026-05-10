@@ -1115,7 +1115,7 @@ async fn watch_loop(
             Ok(r) => r,
             Err(e) => {
                 tracing::error!("changelog read failed: {e}");
-                let _ = tx.send(Err(Error::Internal)).await;
+                let _ = tx.send(Err(Error::Internal("internal server error".into()))).await;
                 return Err(());
             }
         };
@@ -1125,7 +1125,7 @@ async fn watch_loop(
                 Ok(r) => r,
                 Err(e) => {
                     tracing::error!("deletes read failed: {e}");
-                    let _ = tx.send(Err(Error::Internal)).await;
+                    let _ = tx.send(Err(Error::Internal("internal server error".into()))).await;
                     return Err(());
                 }
             };

@@ -330,13 +330,19 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
         let user_id = token.user.to_string();
         let mut created_count: i32 = 0;
         let mut duplicates_skipped: i32 = 0;
+        let mut errors: Vec<String> = Vec::new();
 
         let result = CONN.with(|cell| {
             let conn = &mut *cell.borrow_mut();
             conn.transaction(|conn| {
-                for q in &req.questions {
+                for (idx, q) in req.questions.iter().enumerate() {
                     if q.body.trim().is_empty() || q.marks <= 0 {
                         duplicates_skipped += 1;
+                        errors.push(format!(
+                            "Q{}: empty body or invalid marks (marks={})",
+                            idx + 1,
+                            q.marks
+                        ));
                         continue;
                     }
 
@@ -391,7 +397,14 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                                 }).collect();
 
                                 if let Err(e) = question_bank::insert_question_parts(conn, qid, &parts) {
-                                    return Err(e);
+                                    let msg = format!(
+                                        "Q{}: part insertion failed: {e}",
+                                        idx + 1
+                                    );
+                                    error!("bulk_import: {msg}");
+                                    errors.push(msg);
+                                    duplicates_skipped += 1;
+                                    continue;
                                 }
 
                                 // Insert part rubric criteria
@@ -406,7 +419,17 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                             }
                             created_count += 1;
                         }
-                        Err(_) => {
+                        Err(e) => {
+                            let msg = format!(
+                                "Q{}: {e}",
+                                idx + 1
+                            );
+                            error!(
+                                "bulk_import: question insert failed topic={} body={}: {e}",
+                                q.topic_id,
+                                &q.body
+                            );
+                            errors.push(msg);
                             duplicates_skipped += 1;
                         }
                     }
@@ -415,6 +438,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                 Ok::<_, Error>(BulkImportResponse {
                     created: created_count,
                     skipped: duplicates_skipped,
+                    errors,
                 })
             })
         })?;
@@ -763,13 +787,13 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
 
         let pdf_bytes = crate::pdf::generate_paper_pdf_typst(&pdf_input).map_err(|e| {
             error!("PDF generation failed: {}", e);
-            Error::Internal
+            Error::internal(e)
         })?;
 
         let scheme_bytes =
             crate::pdf::generate_marking_scheme_pdf_typst(&pdf_input).map_err(|e| {
                 error!("Marking scheme generation failed: {}", e);
-                Error::Internal
+                Error::internal(e)
             })?;
 
         // ── Phase 3: upload to R2 ────────────────────────────────────────
@@ -796,8 +820,9 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
             .map_err(Error::internal)?;
 
         if !resp.status().is_success() {
-            error!(status = %resp.status(), "R2 PDF upload failed");
-            return Err(Error::Internal);
+            let msg = format!("R2 PDF upload failed: HTTP {}", resp.status());
+            error!("{msg}");
+            return Err(Error::Internal(msg));
         }
 
         let ms_put_url = sign::presign(
@@ -820,8 +845,9 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
             .map_err(Error::internal)?;
 
         if !ms_resp.status().is_success() {
-            error!(status = %ms_resp.status(), "R2 marking scheme upload failed");
-            return Err(Error::Internal);
+            let msg = format!("R2 marking scheme upload failed: HTTP {}", ms_resp.status());
+            error!("{msg}");
+            return Err(Error::Internal(msg));
         }
 
         // ── Phase 4: persist keys + transition status ────────────────────

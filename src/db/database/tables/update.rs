@@ -83,7 +83,7 @@ pub fn update_student(conn: &mut Conn, row_key: &str, row: &UpdateStudentPayload
         parts[0],
         parts[1]
             .parse::<i32>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
     );
     sql_query(
         "UPDATE students SET \
@@ -123,7 +123,7 @@ pub fn update_guardian(conn: &mut Conn, row_key: &str, row: &UpdateGuardianPaylo
         parts[1],
         parts[2]
             .parse::<i32>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
     );
     sql_query(
         "UPDATE guardians SET \
@@ -235,10 +235,10 @@ pub fn update_term(conn: &mut Conn, row_key: &str, row: &UpdateTermPayload) -> R
         parts[0],
         parts[1]
             .parse::<i32>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
         parts[2]
             .parse::<i16>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
     );
     sql_query(
         "UPDATE terms SET \
@@ -275,16 +275,16 @@ pub fn update_class_teacher(
         parts[0],
         parts[1]
             .parse::<i32>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
         parts[2]
             .parse::<i16>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
         parts[3]
             .parse::<i16>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
         parts[4]
             .parse::<i16>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
         parts[5],
     );
     sql_query(
@@ -318,22 +318,22 @@ pub fn update_attendance(conn: &mut Conn, row_key: &str, status: i16) -> Result<
         parts[0],
         parts[1]
             .parse::<i32>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
         parts[2]
             .parse::<i16>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
         parts[3]
             .parse::<i16>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
         parts[4]
             .parse::<i16>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
         parts[5]
             .parse::<i32>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
         parts[6]
             .parse::<i32>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
     );
     sql_query(
         "UPDATE attendance SET \
@@ -369,25 +369,25 @@ pub fn update_timetable(
         parts[0],
         parts[1]
             .parse::<i32>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
         parts[2]
             .parse::<i16>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
         parts[3]
             .parse::<i16>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
         parts[4]
             .parse::<i16>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
         parts[5]
             .parse::<i16>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
         parts[6]
             .parse::<i16>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
         parts[7]
             .parse::<i32>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
     );
     sql_query(
         "UPDATE timetable SET \
@@ -453,26 +453,26 @@ pub fn update_paper(conn: &mut Conn, row_key: &str, row: &UpdatePaperPayload) ->
     let exam = parts[1];
     let subject = parts[2]
         .parse::<i32>()
-        .map_err(|_| crate::types::error::Error::Internal)?;
+        .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?;
     let paper: Option<i16> = if parts[3].is_empty() {
         None
     } else {
         Some(
             parts[3]
                 .parse::<i16>()
-                .map_err(|_| crate::types::error::Error::Internal)?,
+                .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
         )
     };
     let grade: i16 = parts[4]
         .parse::<i16>()
-        .map_err(|_| crate::types::error::Error::Internal)?;
+        .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?;
     let stream: Option<i16> = if parts[5].is_empty() {
         None
     } else {
         Some(
             parts[5]
                 .parse::<i16>()
-                .map_err(|_| crate::types::error::Error::Internal)?,
+                .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
         )
     };
     sql_query(
@@ -517,17 +517,17 @@ pub fn update_grade(conn: &mut Conn, row_key: &str, row: &UpdateGradePayload) ->
     let exam = parts[1];
     let student = parts[2]
         .parse::<i32>()
-        .map_err(|_| crate::types::error::Error::Internal)?;
+        .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?;
     let subject = parts[3]
         .parse::<i16>()
-        .map_err(|_| crate::types::error::Error::Internal)?;
+        .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?;
     let paper: Option<i16> = if parts[4].is_empty() {
         None
     } else {
         Some(
             parts[4]
                 .parse::<i16>()
-                .map_err(|_| crate::types::error::Error::Internal)?,
+                .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
         )
     };
     sql_query(
@@ -674,13 +674,13 @@ pub fn update_mastery(conn: &mut Conn, row_key: &str, row: &UpdateMasteryPayload
         parts[0],
         parts[1]
             .parse::<i32>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
         parts[2]
             .parse::<i32>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
         parts[3]
             .parse::<i32>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
     );
     sql_query(
         "UPDATE mastery SET \
@@ -709,13 +709,13 @@ pub fn update_ai_usage(conn: &mut Conn, row_key: &str, row: &UpdateAiUsagePayloa
         parts[0],
         parts[1]
             .parse::<i32>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
         parts[2]
             .parse::<i32>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
         parts[3]
             .parse::<i16>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
     );
     sql_query(
         "UPDATE aiusage SET \
@@ -803,13 +803,13 @@ pub fn update_subscription(
         parts[1],
         parts[2]
             .parse::<i32>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
         parts[3]
             .parse::<i16>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
         parts[4]
             .parse::<i32>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
     );
     sql_query(
         "UPDATE subscriptions SET \
@@ -936,13 +936,13 @@ pub fn update_discount(conn: &mut Conn, row_key: &str, row: &UpdateDiscountPaylo
         parts[1],
         parts[2]
             .parse::<i32>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
         parts[3]
             .parse::<i16>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
         parts[4]
             .parse::<i16>()
-            .map_err(|_| crate::types::error::Error::Internal)?,
+            .map_err(|_| crate::types::error::Error::Internal("internal server error".into()))?,
     );
     sql_query(
         "UPDATE discounts SET \

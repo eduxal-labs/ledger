@@ -157,7 +157,11 @@ message DeleteQuestionResponse {}
 // ── Bulk import ──────────────────────────────────────────────────────────────
 
 message BulkImportRequest  { repeated CreateQuestionRequest questions = 1; }
-message BulkImportResponse { int32 created = 1; int32 skipped = 2; }
+message BulkImportResponse {
+  int32 created = 1;
+  int32 skipped = 2;
+  repeated string errors = 3;
+}
 
 // ── Image upload ─────────────────────────────────────────────────────────────
 

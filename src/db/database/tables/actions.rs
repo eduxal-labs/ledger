@@ -326,7 +326,7 @@ pub fn action_permission(action_id: i32) -> Result<(Resource, Action)> {
         // 89, 90: reserved (removed exam_grade actions)
         _ => {
             tracing::error!("action_permission: unknown action {action_id}");
-            Err(Error::Internal)
+            Err(Error::Internal("internal server error".into()))
         }
     }
 }
@@ -353,7 +353,7 @@ pub fn action_organisation(
         let p: SchoolField = decode(payload)?;
         let id: Id = p.school.parse().map_err(|_| {
             tracing::error!("action_organisation: invalid school id in field 1");
-            Error::Internal
+            Error::Internal("internal server error".into())
         })?;
         Ok(Organisation::School(id))
     };
@@ -379,7 +379,7 @@ pub fn action_organisation(
             let p: IdField = decode(payload)?;
             let id: Id = p.id.parse().map_err(|_| {
                 tracing::error!("action_organisation: invalid school id for UPDATE/DELETE_SCHOOL");
-                Error::Internal
+                Error::Internal("internal server error".into())
             })?;
             Ok(Organisation::School(id))
         }
@@ -449,7 +449,7 @@ pub fn action_organisation(
             let p: IdSchoolField = decode(payload)?;
             let id: Id = p.school.parse().map_err(|_| {
                 tracing::error!("action_organisation: invalid school id in field 2");
-                Error::Internal
+                Error::Internal("internal server error".into())
             })?;
             Ok(Organisation::School(id))
         }
@@ -461,7 +461,7 @@ pub fn action_organisation(
                 Some(s) if !s.is_empty() => {
                     let id: Id = s.parse().map_err(|_| {
                         tracing::error!("action_organisation: invalid school id in CreateRole");
-                        Error::Internal
+                        Error::Internal("internal server error".into())
                     })?;
                     Ok(Organisation::School(id))
                 }
@@ -478,7 +478,7 @@ pub fn action_organisation(
                         tracing::error!(
                             "action_organisation: invalid school id in role assignment"
                         );
-                        Error::Internal
+                        Error::Internal("internal server error".into())
                     })?;
                     Ok(Organisation::School(id))
                 }
@@ -493,7 +493,7 @@ pub fn action_organisation(
                 Some(s) if !s.is_empty() => {
                     let id: Id = s.parse().map_err(|_| {
                         tracing::error!("action_organisation: invalid school id in CreatePayment");
-                        Error::Internal
+                        Error::Internal("internal server error".into())
                     })?;
                     Ok(Organisation::School(id))
                 }
@@ -529,7 +529,7 @@ pub fn action_organisation(
 
         _ => {
             tracing::error!("action_organisation: unknown action {action_id}");
-            Err(Error::Internal)
+            Err(Error::Internal("internal server error".into()))
         }
     }
 }
@@ -588,7 +588,7 @@ struct CreatePaymentField {
 fn decode<T: Message + Default>(payload: &[u8]) -> Result<T> {
     T::decode(payload).map_err(|e| {
         tracing::error!("failed to decode payload: {e}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })
 }
 
@@ -598,12 +598,12 @@ fn school_for_exam(conn: &mut Conn, id: &str) -> Result<Id> {
         .load::<SchoolIdRow>(conn)
         .map_err(|e| {
             tracing::error!("school_for_exam: {e}");
-            Error::Internal
+            Error::Internal("internal server error".into())
         })?
         .into_iter()
         .next()
         .map(|r| r.school)
-        .ok_or(Error::Internal)
+        .ok_or(Error::Internal("internal server error".into()))
 }
 
 fn school_for_fee(conn: &mut Conn, id: &str) -> Result<Id> {
@@ -612,12 +612,12 @@ fn school_for_fee(conn: &mut Conn, id: &str) -> Result<Id> {
         .load::<SchoolIdRow>(conn)
         .map_err(|e| {
             tracing::error!("school_for_fee: {e}");
-            Error::Internal
+            Error::Internal("internal server error".into())
         })?
         .into_iter()
         .next()
         .map(|r| r.school)
-        .ok_or(Error::Internal)
+        .ok_or(Error::Internal("internal server error".into()))
 }
 
 fn school_for_invoice(conn: &mut Conn, id: &str) -> Result<Id> {
@@ -626,12 +626,12 @@ fn school_for_invoice(conn: &mut Conn, id: &str) -> Result<Id> {
         .load::<SchoolIdRow>(conn)
         .map_err(|e| {
             tracing::error!("school_for_invoice: {e}");
-            Error::Internal
+            Error::Internal("internal server error".into())
         })?
         .into_iter()
         .next()
         .map(|r| r.school)
-        .ok_or(Error::Internal)
+        .ok_or(Error::Internal("internal server error".into()))
 }
 
 fn school_for_payment(conn: &mut Conn, id: &str) -> Result<Id> {
@@ -640,12 +640,12 @@ fn school_for_payment(conn: &mut Conn, id: &str) -> Result<Id> {
         .load::<SchoolIdRow>(conn)
         .map_err(|e| {
             tracing::error!("school_for_payment: {e}");
-            Error::Internal
+            Error::Internal("internal server error".into())
         })?
         .into_iter()
         .next()
         .map(|r| r.school)
-        .ok_or(Error::Internal)
+        .ok_or(Error::Internal("internal server error".into()))
 }
 
 fn school_for_announcement(conn: &mut Conn, id: &str) -> Result<Id> {
@@ -654,12 +654,12 @@ fn school_for_announcement(conn: &mut Conn, id: &str) -> Result<Id> {
         .load::<SchoolIdRow>(conn)
         .map_err(|e| {
             tracing::error!("school_for_announcement: {e}");
-            Error::Internal
+            Error::Internal("internal server error".into())
         })?
         .into_iter()
         .next()
         .map(|r| r.school)
-        .ok_or(Error::Internal)
+        .ok_or(Error::Internal("internal server error".into()))
 }
 
 // ---------------------------------------------------------------------------
@@ -720,7 +720,7 @@ fn fetch_user(conn: &mut Conn, id: &str) -> Result<UserRow> {
     .load::<UserRow>(conn)
     .map_err(|e| {
         tracing::error!("fetch_user failed: {e}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })?
     .into_iter()
     .next()
@@ -731,10 +731,10 @@ fn fetch_school(conn: &mut Conn, id: &str) -> Result<SchoolRow> {
     sql_query("SELECT id, name, motto, phone, email, county, domain, established, status, created, updated FROM schools WHERE id = ?")
         .bind::<Text, _>(id)
         .load::<SchoolRow>(conn)
-        .map_err(|e| { tracing::error!("fetch_school failed: {e}"); Error::Internal })?
+        .map_err(|e| { tracing::error!("fetch_school failed: {e}"); Error::Internal("internal server error".into()) })?
         .into_iter()
         .next()
-        .ok_or_else(|| { tracing::error!("school not found: {id}"); Error::Internal })
+        .ok_or_else(|| { tracing::error!("school not found: {id}"); Error::Internal("internal server error".into()) })
 }
 
 fn fetch_owner(conn: &mut Conn, school: &str, user: &str) -> Result<OwnerRow> {
@@ -744,13 +744,13 @@ fn fetch_owner(conn: &mut Conn, school: &str, user: &str) -> Result<OwnerRow> {
         .load::<OwnerRow>(conn)
         .map_err(|e| {
             tracing::error!("fetch_owner failed: {e}");
-            Error::Internal
+            Error::Internal("internal server error".into())
         })?
         .into_iter()
         .next()
         .ok_or_else(|| {
             tracing::error!("owner not found: {school}|{user}");
-            Error::Internal
+            Error::Internal("internal server error".into())
         })
 }
 
@@ -758,10 +758,10 @@ fn fetch_plan(conn: &mut Conn, id: &str) -> Result<PlanRow> {
     sql_query("SELECT id, name, description, amount, levels, status, features, created, updated FROM plans WHERE id = ?")
         .bind::<Text, _>(id)
         .load::<PlanRow>(conn)
-        .map_err(|e| { tracing::error!("fetch_plan failed: {e}"); Error::Internal })?
+        .map_err(|e| { tracing::error!("fetch_plan failed: {e}"); Error::Internal("internal server error".into()) })?
         .into_iter()
         .next()
-        .ok_or_else(|| { tracing::error!("plan not found: {id}"); Error::Internal })
+        .ok_or_else(|| { tracing::error!("plan not found: {id}"); Error::Internal("internal server error".into()) })
 }
 
 fn fetch_user_by_phone(conn: &mut Conn, phone: &str) -> Result<Option<UserRow>> {
@@ -772,7 +772,7 @@ fn fetch_user_by_phone(conn: &mut Conn, phone: &str) -> Result<Option<UserRow>> 
     .load::<UserRow>(conn)
     .map_err(|e| {
         tracing::error!("fetch_user_by_phone failed: {e}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })?;
     Ok(rows.into_iter().next())
 }
@@ -787,13 +787,13 @@ fn fetch_teacher(conn: &mut Conn, school: &str, user: &str) -> Result<TeacherRow
     .load::<TeacherRow>(conn)
     .map_err(|e| {
         tracing::error!("fetch_teacher failed: {e}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })?
     .into_iter()
     .next()
     .ok_or_else(|| {
         tracing::error!("teacher not found: {school}|{user}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })
 }
 
@@ -807,13 +807,13 @@ fn fetch_staff(conn: &mut Conn, school: &str, user: &str) -> Result<StaffRow> {
     .load::<StaffRow>(conn)
     .map_err(|e| {
         tracing::error!("fetch_staff failed: {e}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })?
     .into_iter()
     .next()
     .ok_or_else(|| {
         tracing::error!("staff not found: {school}|{user}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })
 }
 
@@ -828,13 +828,13 @@ fn fetch_guardian(conn: &mut Conn, school: &str, user: &str, student: i32) -> Re
     .load::<GuardianRow>(conn)
     .map_err(|e| {
         tracing::error!("fetch_guardian failed: {e}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })?
     .into_iter()
     .next()
     .ok_or_else(|| {
         tracing::error!("guardian not found: {school}|{user}|{student}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })
 }
 
@@ -855,7 +855,7 @@ fn user_has_school_links(conn: &mut Conn, user_id: &str) -> Result<bool> {
     .load::<FkCheckRow>(conn)
     .map_err(|e| {
         tracing::error!("user_has_school_links failed: {e}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })?;
     Ok(!rows.is_empty())
 }
@@ -1003,13 +1003,13 @@ fn fetch_student(conn: &mut Conn, school: &str, adm: i32) -> Result<StudentRow> 
     .load::<StudentRow>(conn)
     .map_err(|e| {
         tracing::error!("fetch_student failed: {e}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })?
     .into_iter()
     .next()
     .ok_or_else(|| {
         tracing::error!("student not found: {school}|{adm}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })
 }
 
@@ -1035,13 +1035,13 @@ fn fetch_enrollment(
     .load::<EnrollmentRow>(conn)
     .map_err(|e| {
         tracing::error!("fetch_enrollment failed: {e}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })?
     .into_iter()
     .next()
     .ok_or_else(|| {
         tracing::error!("enrollment not found: {school}|{year}|{term}|{grade}|{stream}|{student}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })
 }
 
@@ -1055,13 +1055,13 @@ fn fetch_department(conn: &mut Conn, school: &str, name: &str) -> Result<Departm
     .load::<DepartmentRow>(conn)
     .map_err(|e| {
         tracing::error!("fetch_department failed: {e}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })?
     .into_iter()
     .next()
     .ok_or_else(|| {
         tracing::error!("department not found: {school}|{name}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })
 }
 
@@ -1076,13 +1076,13 @@ fn fetch_term(conn: &mut Conn, school: &str, year: i32, term: i16) -> Result<Ter
     .load::<TermRow>(conn)
     .map_err(|e| {
         tracing::error!("fetch_term failed: {e}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })?
     .into_iter()
     .next()
     .ok_or_else(|| {
         tracing::error!("term not found: {school}|{year}|{term}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })
 }
 
@@ -1112,13 +1112,13 @@ fn fetch_class_teacher(
     .load::<ClassTeacherRow>(conn)
     .map_err(|e| {
         tracing::error!("fetch_class_teacher failed: {e}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })?
     .into_iter()
     .next()
     .ok_or_else(|| {
         tracing::error!("class_teacher not found: {school}|{year}|{term}|{grade}|{stream}|{teacher}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })
 }
 
@@ -1144,13 +1144,13 @@ fn fetch_subject_teacher(
     .load::<SubjectTeacherRow>(conn)
     .map_err(|e| {
         tracing::error!("fetch_subject_teacher failed: {e}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })?
     .into_iter()
     .next()
     .ok_or_else(|| {
         tracing::error!("subject_teacher not found: {school}|{year}|{term}|{grade}|{stream}|{subject}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })
 }
 
@@ -1181,13 +1181,13 @@ fn fetch_timetable(
     .load::<TimetableRow>(conn)
     .map_err(|e| {
         tracing::error!("fetch_timetable failed: {e}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })?
     .into_iter()
     .next()
     .ok_or_else(|| {
         tracing::error!("timetable not found: {school}|{year}|{term}|{grade}|{stream}|{subject}|{day}|{start}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })
 }
 
@@ -1216,7 +1216,7 @@ fn fetch_attendance(
     .load::<AttendanceRow>(conn)
     .map_err(|e| {
         tracing::error!("fetch_attendance failed: {e}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })?
     .into_iter()
     .next()
@@ -1224,7 +1224,7 @@ fn fetch_attendance(
         tracing::error!(
             "attendance not found: {school}|{year}|{term}|{grade}|{stream}|{student}|{date}"
         );
-        Error::Internal
+        Error::Internal("internal server error".into())
     })
 }
 
@@ -1255,7 +1255,7 @@ fn fetch_lesson(
     .load::<LessonRow>(conn)
     .map_err(|e| {
         tracing::error!("fetch_lesson failed: {e}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })?
     .into_iter()
     .next()
@@ -1263,7 +1263,7 @@ fn fetch_lesson(
         tracing::error!(
             "lesson not found: {school}|{year}|{term}|{grade}|{stream}|{date}|{subject}|{teacher}"
         );
-        Error::Internal
+        Error::Internal("internal server error".into())
     })
 }
 
@@ -1276,13 +1276,13 @@ fn fetch_exam(conn: &mut Conn, id: &str) -> Result<ExamRow> {
     .load::<ExamRow>(conn)
     .map_err(|e| {
         tracing::error!("fetch_exam failed: {e}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })?
     .into_iter()
     .next()
     .ok_or_else(|| {
         tracing::error!("exam not found: {id}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })
 }
 
@@ -1309,13 +1309,13 @@ fn fetch_paper(
     .load::<PaperRow>(conn)
     .map_err(|e| {
         tracing::error!("fetch_paper failed: {e}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })?
     .into_iter()
     .next()
     .ok_or_else(|| {
         tracing::error!("paper not found: {school}|{exam}|{subject}|{paper:?}|{grade}|{stream:?}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })
 }
 
@@ -1339,13 +1339,13 @@ fn fetch_grade(
     .load::<GradeRow>(conn)
     .map_err(|e| {
         tracing::error!("fetch_grade failed: {e}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })?
     .into_iter()
     .next()
     .ok_or_else(|| {
         tracing::error!("grade not found: {school}|{exam}|{student}|{subject}|{paper:?}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })
 }
 
@@ -1367,13 +1367,13 @@ fn fetch_mastery(
     .load::<MasteryRow>(conn)
     .map_err(|e| {
         tracing::error!("fetch_mastery failed: {e}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })?
     .into_iter()
     .next()
     .ok_or_else(|| {
         tracing::error!("mastery not found: {school}|{student}|{subject}|{topic}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })
 }
 
@@ -1383,13 +1383,13 @@ fn fetch_subject_catalog(conn: &mut Conn, id: i32) -> Result<SubjectCatalogRow> 
         .load::<SubjectCatalogRow>(conn)
         .map_err(|e| {
             tracing::error!("fetch_subject_catalog failed: {e}");
-            Error::Internal
+            Error::Internal("internal server error".into())
         })?
         .into_iter()
         .next()
         .ok_or_else(|| {
             tracing::error!("subject not found: {id}");
-            Error::Internal
+            Error::Internal("internal server error".into())
         })
 }
 
@@ -1399,13 +1399,13 @@ fn fetch_topic(conn: &mut Conn, id: i32) -> Result<TopicRow> {
         .load::<TopicRow>(conn)
         .map_err(|e| {
             tracing::error!("fetch_topic failed: {e}");
-            Error::Internal
+            Error::Internal("internal server error".into())
         })?
         .into_iter()
         .next()
         .ok_or_else(|| {
             tracing::error!("topic not found: {id}");
-            Error::Internal
+            Error::Internal("internal server error".into())
         })
 }
 
@@ -1417,10 +1417,10 @@ fn fetch_stream(conn: &mut Conn, school: &str, grade: i16, stream: i16) -> Resul
     .bind::<diesel::sql_types::SmallInt, _>(grade)
     .bind::<diesel::sql_types::SmallInt, _>(stream)
     .load::<StreamRow>(conn)
-    .map_err(|e| { tracing::error!("fetch_stream failed: {e}"); Error::Internal })?
+    .map_err(|e| { tracing::error!("fetch_stream failed: {e}"); Error::Internal("internal server error".into()) })?
     .into_iter()
     .next()
-    .ok_or_else(|| { tracing::error!("stream not found: {school}|{grade}|{stream}"); Error::Internal })
+    .ok_or_else(|| { tracing::error!("stream not found: {school}|{grade}|{stream}"); Error::Internal("internal server error".into()) })
 }
 
 fn fetch_mpesa(conn: &mut Conn, school: &str) -> Result<MpesaRow> {
@@ -1429,10 +1429,10 @@ fn fetch_mpesa(conn: &mut Conn, school: &str) -> Result<MpesaRow> {
     )
     .bind::<Text, _>(school)
     .load::<MpesaRow>(conn)
-    .map_err(|e| { tracing::error!("fetch_mpesa failed: {e}"); Error::Internal })?
+    .map_err(|e| { tracing::error!("fetch_mpesa failed: {e}"); Error::Internal("internal server error".into()) })?
     .into_iter()
     .next()
-    .ok_or_else(|| { tracing::error!("mpesa not found: {school}"); Error::Internal })
+    .ok_or_else(|| { tracing::error!("mpesa not found: {school}"); Error::Internal("internal server error".into()) })
 }
 
 // ---------------------------------------------------------------------------
@@ -1446,10 +1446,10 @@ fn fetch_fee(conn: &mut Conn, id: &str) -> Result<FeeRow> {
     )
     .bind::<Text, _>(id)
     .load::<FeeRow>(conn)
-    .map_err(|e| { tracing::error!("fetch_fee failed: {e}"); Error::Internal })?
+    .map_err(|e| { tracing::error!("fetch_fee failed: {e}"); Error::Internal("internal server error".into()) })?
     .into_iter()
     .next()
-    .ok_or_else(|| { tracing::error!("fee not found: {id}"); Error::Internal })
+    .ok_or_else(|| { tracing::error!("fee not found: {id}"); Error::Internal("internal server error".into()) })
 }
 
 fn fetch_invoice(conn: &mut Conn, id: &str) -> Result<InvoiceRow> {
@@ -1459,10 +1459,10 @@ fn fetch_invoice(conn: &mut Conn, id: &str) -> Result<InvoiceRow> {
     )
     .bind::<Text, _>(id)
     .load::<InvoiceRow>(conn)
-    .map_err(|e| { tracing::error!("fetch_invoice failed: {e}"); Error::Internal })?
+    .map_err(|e| { tracing::error!("fetch_invoice failed: {e}"); Error::Internal("internal server error".into()) })?
     .into_iter()
     .next()
-    .ok_or_else(|| { tracing::error!("invoice not found: {id}"); Error::Internal })
+    .ok_or_else(|| { tracing::error!("invoice not found: {id}"); Error::Internal("internal server error".into()) })
 }
 
 fn fetch_payment(conn: &mut Conn, id: &str) -> Result<PaymentRow> {
@@ -1472,10 +1472,10 @@ fn fetch_payment(conn: &mut Conn, id: &str) -> Result<PaymentRow> {
     )
     .bind::<Text, _>(id)
     .load::<PaymentRow>(conn)
-    .map_err(|e| { tracing::error!("fetch_payment failed: {e}"); Error::Internal })?
+    .map_err(|e| { tracing::error!("fetch_payment failed: {e}"); Error::Internal("internal server error".into()) })?
     .into_iter()
     .next()
-    .ok_or_else(|| { tracing::error!("payment not found: {id}"); Error::Internal })
+    .ok_or_else(|| { tracing::error!("payment not found: {id}"); Error::Internal("internal server error".into()) })
 }
 
 fn fetch_announcement(conn: &mut Conn, id: &str) -> Result<AnnouncementRow> {
@@ -1487,13 +1487,13 @@ fn fetch_announcement(conn: &mut Conn, id: &str) -> Result<AnnouncementRow> {
     .load::<AnnouncementRow>(conn)
     .map_err(|e| {
         tracing::error!("fetch_announcement failed: {e}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })?
     .into_iter()
     .next()
     .ok_or_else(|| {
         tracing::error!("announcement not found: {id}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })
 }
 
@@ -1506,13 +1506,13 @@ fn fetch_role(conn: &mut Conn, id: &str) -> Result<RoleRow> {
     .load::<RoleRow>(conn)
     .map_err(|e| {
         tracing::error!("fetch_role failed: {e}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })?
     .into_iter()
     .next()
     .ok_or_else(|| {
         tracing::error!("role not found: {id}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })
 }
 
@@ -1535,13 +1535,13 @@ fn fetch_scope(conn: &mut Conn, school: Option<&str>, user: &str, role: &str) ->
     };
     rows.map_err(|e| {
         tracing::error!("fetch_scope failed: {e}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })?
     .into_iter()
     .next()
     .ok_or_else(|| {
         tracing::error!("scope not found: {user}/{role}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })
 }
 
@@ -1563,13 +1563,13 @@ fn fetch_ai_usage(
     .load::<AiUsageRow>(conn)
     .map_err(|e| {
         tracing::error!("fetch_ai_usage failed: {e}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })?
     .into_iter()
     .next()
     .ok_or_else(|| {
         tracing::error!("ai_usage not found: {school}/{student}/{year}/{term}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })
 }
 
@@ -1591,10 +1591,10 @@ fn fetch_subscription(
     .bind::<diesel::sql_types::SmallInt, _>(term)
     .bind::<diesel::sql_types::Integer, _>(student)
     .load::<SubscriptionRow>(conn)
-    .map_err(|e| { tracing::error!("fetch_subscription failed: {e}"); Error::Internal })?
+    .map_err(|e| { tracing::error!("fetch_subscription failed: {e}"); Error::Internal("internal server error".into()) })?
     .into_iter()
     .next()
-    .ok_or_else(|| { tracing::error!("subscription not found"); Error::Internal })
+    .ok_or_else(|| { tracing::error!("subscription not found"); Error::Internal("internal server error".into()) })
 }
 
 fn fetch_discount(
@@ -1617,13 +1617,13 @@ fn fetch_discount(
     .load::<DiscountRow>(conn)
     .map_err(|e| {
         tracing::error!("fetch_discount failed: {e}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })?
     .into_iter()
     .next()
     .ok_or_else(|| {
         tracing::error!("discount not found");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })
 }
 
@@ -1650,7 +1650,7 @@ fn append_log(user: Id, table: u8, op: u8, columns: u16) -> Result<()> {
     LOG.with(|cell| cell.borrow_mut().append(&record))
         .map_err(|e| {
             tracing::error!("changelog append failed: {e}");
-            Error::Internal
+            Error::Internal("internal server error".into())
         })?;
     Ok(())
 }
@@ -1659,7 +1659,7 @@ fn append_delete_log(table: u8, row_key: &str) -> Result<()> {
     LOG.with(|cell| cell.borrow_mut().append_delete(table, row_key))
         .map_err(|e| {
             tracing::error!("changelog append_delete failed: {e}");
-            Error::Internal
+            Error::Internal("internal server error".into())
         })?;
     Ok(())
 }
@@ -1837,7 +1837,7 @@ pub fn execute_action(
         // 89, 90: reserved (removed exam_grade actions)
         _ => {
             tracing::error!("execute_action: unknown action {action_id}");
-            Err(Error::Internal)
+            Err(Error::Internal("internal server error".into()))
         }
     }
 }
@@ -2307,7 +2307,7 @@ fn handle_update_student(conn: &mut Conn, actor: &User, payload: &[u8]) -> Resul
             .execute(conn)
             .map_err(|e| {
                 tracing::error!("clear student user link failed: {e}");
-                Error::Internal
+                Error::Internal("internal server error".into())
             })?;
     }
 
@@ -4072,7 +4072,7 @@ fn handle_create_subject(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult
     .execute(conn)
     .map_err(|e| {
         tracing::error!("insert_subject failed: {e}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })?;
 
     append_log(log_user, TBL_SUBJECT_CATALOG as u8, OP_INSERT, 0)?;
@@ -4084,10 +4084,10 @@ fn handle_create_subject(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult
     .bind::<diesel::sql_types::Text, _>(&p.name)
     .bind::<diesel::sql_types::SmallInt, _>(p.curriculum as i16)
     .load::<SubjectCatalogRow>(conn)
-    .map_err(|e| { tracing::error!("fetch after insert_subject failed: {e}"); Error::Internal })?
+    .map_err(|e| { tracing::error!("fetch after insert_subject failed: {e}"); Error::Internal("internal server error".into()) })?
     .into_iter()
     .next()
-    .ok_or_else(|| { tracing::error!("subject not found after insert"); Error::Internal })?;
+    .ok_or_else(|| { tracing::error!("subject not found after insert"); Error::Internal("internal server error".into()) })?;
 
     Ok(ActionResult::with_rows(vec![upsert_row(
         TBL_SUBJECT_CATALOG,
@@ -4150,7 +4150,7 @@ fn handle_create_topic(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> 
     .execute(conn)
     .map_err(|e| {
         tracing::error!("insert_topic failed: {e}");
-        Error::Internal
+        Error::Internal("internal server error".into())
     })?;
 
     append_log(log_user, TBL_TOPICS as u8, OP_INSERT, 0)?;
@@ -4162,10 +4162,10 @@ fn handle_create_topic(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> 
     .bind::<diesel::sql_types::SmallInt, _>(p.grade as i16)
     .bind::<diesel::sql_types::Text, _>(&p.name)
     .load::<TopicRow>(conn)
-    .map_err(|e| { tracing::error!("fetch after insert_topic failed: {e}"); Error::Internal })?
+    .map_err(|e| { tracing::error!("fetch after insert_topic failed: {e}"); Error::Internal("internal server error".into()) })?
     .into_iter()
     .next()
-    .ok_or_else(|| { tracing::error!("topic not found after insert"); Error::Internal })?;
+    .ok_or_else(|| { tracing::error!("topic not found after insert"); Error::Internal("internal server error".into()) })?;
 
     Ok(ActionResult::with_rows(vec![upsert_row(
         TBL_TOPICS,

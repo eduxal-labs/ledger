@@ -149,14 +149,14 @@ where
     let rows: Vec<T> = match build_sql(base, since, has_updated) {
         None => diesel::sql_query(base).load(conn).map_err(|e| {
             error!("snapshot query failed for {table_name}: {e}");
-            Error::Internal
+            Error::Internal("internal server error".into())
         })?,
         Some(sql) => diesel::sql_query(&sql)
             .bind::<BigInt, _>(since.unwrap())
             .load(conn)
             .map_err(|e| {
                 error!("snapshot_since query failed for {table_name}: {e}");
-                Error::Internal
+                Error::Internal("internal server error".into())
             })?,
     };
     Ok(rows.iter().map(map).collect())

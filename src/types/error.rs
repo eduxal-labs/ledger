@@ -112,8 +112,8 @@ pub enum Error {
     InvalidStatusTransition,
     #[error("coverage not confirmed")]
     CoverageNotConfirmed,
-    #[error("internal server error")]
-    Internal,
+    #[error("{0}")]
+    Internal(String),
 }
 
 impl From<DieselError> for Error {
@@ -138,8 +138,9 @@ impl From<DieselError> for Error {
             },
             _ => {}
         }
-        error!("{}", err);
-        Error::Internal
+        let msg = err.to_string();
+        error!("{msg}");
+        Error::Internal(format!("internal server error: {msg}"))
     }
 }
 
@@ -147,15 +148,18 @@ impl<T> From<TrySendError<T>> for Error {
     fn from(err: TrySendError<T>) -> Self {
         match err {
             TrySendError::Full(_) => Error::SlowDown,
-            TrySendError::Disconnected(_) => Error::Internal,
+            TrySendError::Disconnected(_) => {
+                Error::Internal("channel disconnected".into())
+            }
         }
     }
 }
 
 impl Error {
     pub fn internal<E: Display>(err: E) -> Self {
-        error!("{}", err);
-        Self::Internal
+        let msg = err.to_string();
+        error!("{msg}");
+        Self::Internal(msg)
     }
 
     pub fn invalid_token<E: Display>(_: E) -> Self {
@@ -228,7 +232,7 @@ impl From<Error> for Status {
             Error::CoverageNotConfirmed => {
                 Status::failed_precondition("exam coverage not confirmed by admin")
             }
-            Error::Internal => Status::internal("internal server error"),
+            Error::Internal(msg) => Status::internal(msg),
         }
     }
 }

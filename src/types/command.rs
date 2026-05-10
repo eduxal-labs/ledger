@@ -26,14 +26,14 @@ impl Response {
     pub fn requested(self) -> Result<Verification> {
         match self {
             Response::Requested(result) => result,
-            _ => Err(Error::Internal),
+            _ => Err(Error::Internal("internal server error".into())),
         }
     }
 
     pub fn verified(self) -> Result<Verification> {
         match self {
             Response::Verified(result) => result,
-            _ => Err(Error::Internal),
+            _ => Err(Error::Internal("internal server error".into())),
         }
     }
 }

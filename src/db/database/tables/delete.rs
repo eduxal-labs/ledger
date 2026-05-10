@@ -33,7 +33,7 @@ pub fn delete_school(conn: &mut Conn, row_key: &str) -> Result<()> {
 pub fn delete_owner(conn: &mut Conn, row_key: &str) -> Result<()> {
     let pk = pk_parts(row_key);
     if pk.len() < 2 {
-        return Err(Error::Internal);
+        return Err(Error::Internal("internal server error".into()));
     }
     sql_query("DELETE FROM owners WHERE school = ? AND user = ?")
         .bind::<Text, _>(pk[0])
@@ -45,9 +45,9 @@ pub fn delete_owner(conn: &mut Conn, row_key: &str) -> Result<()> {
 pub fn delete_student(conn: &mut Conn, row_key: &str) -> Result<()> {
     let pk = pk_parts(row_key);
     if pk.len() < 2 {
-        return Err(Error::Internal);
+        return Err(Error::Internal("internal server error".into()));
     }
-    let adm: i32 = pk[1].parse().map_err(|_| Error::Internal)?;
+    let adm: i32 = pk[1].parse().map_err(|_| Error::Internal("internal server error".into()))?;
     sql_query("DELETE FROM students WHERE school = ? AND adm = ?")
         .bind::<Text, _>(pk[0])
         .bind::<Integer, _>(adm)
@@ -58,9 +58,9 @@ pub fn delete_student(conn: &mut Conn, row_key: &str) -> Result<()> {
 pub fn delete_guardian(conn: &mut Conn, row_key: &str) -> Result<()> {
     let pk = pk_parts(row_key);
     if pk.len() < 3 {
-        return Err(Error::Internal);
+        return Err(Error::Internal("internal server error".into()));
     }
-    let student: i32 = pk[2].parse().map_err(|_| Error::Internal)?;
+    let student: i32 = pk[2].parse().map_err(|_| Error::Internal("internal server error".into()))?;
     sql_query("DELETE FROM guardians WHERE school = ? AND user = ? AND student = ?")
         .bind::<Text, _>(pk[0])
         .bind::<Text, _>(pk[1])
@@ -72,7 +72,7 @@ pub fn delete_guardian(conn: &mut Conn, row_key: &str) -> Result<()> {
 pub fn delete_department(conn: &mut Conn, row_key: &str) -> Result<()> {
     let pk = pk_parts(row_key);
     if pk.len() < 2 {
-        return Err(Error::Internal);
+        return Err(Error::Internal("internal server error".into()));
     }
     sql_query("DELETE FROM departments WHERE school = ? AND name = ?")
         .bind::<Text, _>(pk[0])
@@ -84,7 +84,7 @@ pub fn delete_department(conn: &mut Conn, row_key: &str) -> Result<()> {
 pub fn delete_teacher(conn: &mut Conn, row_key: &str) -> Result<()> {
     let pk = pk_parts(row_key);
     if pk.len() < 2 {
-        return Err(Error::Internal);
+        return Err(Error::Internal("internal server error".into()));
     }
     sql_query("DELETE FROM teachers WHERE school = ? AND user = ?")
         .bind::<Text, _>(pk[0])
@@ -96,7 +96,7 @@ pub fn delete_teacher(conn: &mut Conn, row_key: &str) -> Result<()> {
 pub fn delete_staff(conn: &mut Conn, row_key: &str) -> Result<()> {
     let pk = pk_parts(row_key);
     if pk.len() < 2 {
-        return Err(Error::Internal);
+        return Err(Error::Internal("internal server error".into()));
     }
     sql_query("DELETE FROM staff WHERE school = ? AND user = ?")
         .bind::<Text, _>(pk[0])
@@ -108,10 +108,10 @@ pub fn delete_staff(conn: &mut Conn, row_key: &str) -> Result<()> {
 pub fn delete_term(conn: &mut Conn, row_key: &str) -> Result<()> {
     let pk = pk_parts(row_key);
     if pk.len() < 3 {
-        return Err(Error::Internal);
+        return Err(Error::Internal("internal server error".into()));
     }
-    let year: i32 = pk[1].parse().map_err(|_| Error::Internal)?;
-    let term: i16 = pk[2].parse().map_err(|_| Error::Internal)?;
+    let year: i32 = pk[1].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let term: i16 = pk[2].parse().map_err(|_| Error::Internal("internal server error".into()))?;
     sql_query("DELETE FROM terms WHERE school = ? AND year = ? AND term = ?")
         .bind::<Text, _>(pk[0])
         .bind::<Integer, _>(year)
@@ -123,12 +123,12 @@ pub fn delete_term(conn: &mut Conn, row_key: &str) -> Result<()> {
 pub fn delete_class_teacher(conn: &mut Conn, row_key: &str) -> Result<()> {
     let pk = pk_parts(row_key);
     if pk.len() < 6 {
-        return Err(Error::Internal);
+        return Err(Error::Internal("internal server error".into()));
     }
-    let year: i32 = pk[1].parse().map_err(|_| Error::Internal)?;
-    let term: i16 = pk[2].parse().map_err(|_| Error::Internal)?;
-    let grade: i16 = pk[3].parse().map_err(|_| Error::Internal)?;
-    let stream: i16 = pk[4].parse().map_err(|_| Error::Internal)?;
+    let year: i32 = pk[1].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let term: i16 = pk[2].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let grade: i16 = pk[3].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let stream: i16 = pk[4].parse().map_err(|_| Error::Internal("internal server error".into()))?;
     sql_query(
         "DELETE FROM class_teachers WHERE school = ? AND year = ? AND term = ? AND grade = ? AND stream = ? AND teacher = ?",
     )
@@ -145,13 +145,13 @@ pub fn delete_class_teacher(conn: &mut Conn, row_key: &str) -> Result<()> {
 pub fn delete_enrollment(conn: &mut Conn, row_key: &str) -> Result<()> {
     let pk = pk_parts(row_key);
     if pk.len() < 6 {
-        return Err(Error::Internal);
+        return Err(Error::Internal("internal server error".into()));
     }
-    let year: i32 = pk[1].parse().map_err(|_| Error::Internal)?;
-    let term: i16 = pk[2].parse().map_err(|_| Error::Internal)?;
-    let grade: i16 = pk[3].parse().map_err(|_| Error::Internal)?;
-    let stream: i16 = pk[4].parse().map_err(|_| Error::Internal)?;
-    let student: i32 = pk[5].parse().map_err(|_| Error::Internal)?;
+    let year: i32 = pk[1].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let term: i16 = pk[2].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let grade: i16 = pk[3].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let stream: i16 = pk[4].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let student: i32 = pk[5].parse().map_err(|_| Error::Internal("internal server error".into()))?;
     sql_query(
         "DELETE FROM enrollments WHERE school = ? AND year = ? AND term = ? AND grade = ? AND stream = ? AND student = ?",
     )
@@ -168,13 +168,13 @@ pub fn delete_enrollment(conn: &mut Conn, row_key: &str) -> Result<()> {
 pub fn delete_subject_teacher(conn: &mut Conn, row_key: &str) -> Result<()> {
     let pk = pk_parts(row_key);
     if pk.len() < 6 {
-        return Err(Error::Internal);
+        return Err(Error::Internal("internal server error".into()));
     }
-    let year: i32 = pk[1].parse().map_err(|_| Error::Internal)?;
-    let term: i16 = pk[2].parse().map_err(|_| Error::Internal)?;
-    let grade: i16 = pk[3].parse().map_err(|_| Error::Internal)?;
-    let stream: i16 = pk[4].parse().map_err(|_| Error::Internal)?;
-    let subject: i32 = pk[5].parse().map_err(|_| Error::Internal)?;
+    let year: i32 = pk[1].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let term: i16 = pk[2].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let grade: i16 = pk[3].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let stream: i16 = pk[4].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let subject: i32 = pk[5].parse().map_err(|_| Error::Internal("internal server error".into()))?;
     sql_query(
         "DELETE FROM subject_teachers WHERE school = ? AND year = ? AND term = ? AND grade = ? AND stream = ? AND subject = ?",
     )
@@ -191,14 +191,14 @@ pub fn delete_subject_teacher(conn: &mut Conn, row_key: &str) -> Result<()> {
 pub fn delete_attendance(conn: &mut Conn, row_key: &str) -> Result<()> {
     let pk = pk_parts(row_key);
     if pk.len() < 7 {
-        return Err(Error::Internal);
+        return Err(Error::Internal("internal server error".into()));
     }
-    let year: i32 = pk[1].parse().map_err(|_| Error::Internal)?;
-    let term: i16 = pk[2].parse().map_err(|_| Error::Internal)?;
-    let grade: i16 = pk[3].parse().map_err(|_| Error::Internal)?;
-    let stream: i16 = pk[4].parse().map_err(|_| Error::Internal)?;
-    let student: i32 = pk[5].parse().map_err(|_| Error::Internal)?;
-    let date: i32 = pk[6].parse().map_err(|_| Error::Internal)?;
+    let year: i32 = pk[1].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let term: i16 = pk[2].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let grade: i16 = pk[3].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let stream: i16 = pk[4].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let student: i32 = pk[5].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let date: i32 = pk[6].parse().map_err(|_| Error::Internal("internal server error".into()))?;
     sql_query(
         "DELETE FROM attendance WHERE school = ? AND year = ? AND term = ? AND grade = ? \
          AND stream = ? AND student = ? AND date = ?",
@@ -217,15 +217,15 @@ pub fn delete_attendance(conn: &mut Conn, row_key: &str) -> Result<()> {
 pub fn delete_timetable(conn: &mut Conn, row_key: &str) -> Result<()> {
     let pk = pk_parts(row_key);
     if pk.len() < 8 {
-        return Err(Error::Internal);
+        return Err(Error::Internal("internal server error".into()));
     }
-    let year: i32 = pk[1].parse().map_err(|_| Error::Internal)?;
-    let term: i16 = pk[2].parse().map_err(|_| Error::Internal)?;
-    let grade: i16 = pk[3].parse().map_err(|_| Error::Internal)?;
-    let stream: i16 = pk[4].parse().map_err(|_| Error::Internal)?;
-    let subject: i16 = pk[5].parse().map_err(|_| Error::Internal)?;
-    let day: i16 = pk[6].parse().map_err(|_| Error::Internal)?;
-    let start: i32 = pk[7].parse().map_err(|_| Error::Internal)?;
+    let year: i32 = pk[1].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let term: i16 = pk[2].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let grade: i16 = pk[3].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let stream: i16 = pk[4].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let subject: i16 = pk[5].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let day: i16 = pk[6].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let start: i32 = pk[7].parse().map_err(|_| Error::Internal("internal server error".into()))?;
     sql_query(
         "DELETE FROM timetable WHERE school = ? AND year = ? AND term = ? AND grade = ? \
          AND stream = ? AND subject = ? AND day = ? AND start = ?",
@@ -245,14 +245,14 @@ pub fn delete_timetable(conn: &mut Conn, row_key: &str) -> Result<()> {
 pub fn delete_lesson(conn: &mut Conn, row_key: &str) -> Result<()> {
     let pk = pk_parts(row_key);
     if pk.len() < 8 {
-        return Err(Error::Internal);
+        return Err(Error::Internal("internal server error".into()));
     }
-    let year: i32 = pk[1].parse().map_err(|_| Error::Internal)?;
-    let term: i16 = pk[2].parse().map_err(|_| Error::Internal)?;
-    let grade: i16 = pk[3].parse().map_err(|_| Error::Internal)?;
-    let stream: i16 = pk[4].parse().map_err(|_| Error::Internal)?;
-    let date: i32 = pk[5].parse().map_err(|_| Error::Internal)?;
-    let subject: i16 = pk[6].parse().map_err(|_| Error::Internal)?;
+    let year: i32 = pk[1].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let term: i16 = pk[2].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let grade: i16 = pk[3].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let stream: i16 = pk[4].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let date: i32 = pk[5].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let subject: i16 = pk[6].parse().map_err(|_| Error::Internal("internal server error".into()))?;
     sql_query(
         "DELETE FROM lessons WHERE school = ? AND year = ? AND term = ? AND grade = ? \
          AND stream = ? AND date = ? AND subject = ? AND teacher = ?",
@@ -279,19 +279,19 @@ pub fn delete_exam(conn: &mut Conn, row_key: &str) -> Result<()> {
 pub fn delete_paper(conn: &mut Conn, row_key: &str) -> Result<()> {
     let pk = pk_parts(row_key);
     if pk.len() < 6 {
-        return Err(Error::Internal);
+        return Err(Error::Internal("internal server error".into()));
     }
-    let subject: i32 = pk[2].parse().map_err(|_| Error::Internal)?;
+    let subject: i32 = pk[2].parse().map_err(|_| Error::Internal("internal server error".into()))?;
     let paper: Option<i16> = if pk[3].is_empty() {
         None
     } else {
-        Some(pk[3].parse().map_err(|_| Error::Internal)?)
+        Some(pk[3].parse().map_err(|_| Error::Internal("internal server error".into()))?)
     };
-    let grade: i16 = pk[4].parse().map_err(|_| Error::Internal)?;
+    let grade: i16 = pk[4].parse().map_err(|_| Error::Internal("internal server error".into()))?;
     let stream: Option<i16> = if pk[5].is_empty() {
         None
     } else {
-        Some(pk[5].parse().map_err(|_| Error::Internal)?)
+        Some(pk[5].parse().map_err(|_| Error::Internal("internal server error".into()))?)
     };
     sql_query("DELETE FROM papers WHERE school = ? AND exam = ? AND subject = ? AND paper IS ? AND grade = ? AND stream IS ?")
         .bind::<Text, _>(pk[0])
@@ -307,14 +307,14 @@ pub fn delete_paper(conn: &mut Conn, row_key: &str) -> Result<()> {
 pub fn delete_grade(conn: &mut Conn, row_key: &str) -> Result<()> {
     let pk = pk_parts(row_key);
     if pk.len() < 5 {
-        return Err(Error::Internal);
+        return Err(Error::Internal("internal server error".into()));
     }
-    let student: i32 = pk[2].parse().map_err(|_| Error::Internal)?;
-    let subject: i32 = pk[3].parse().map_err(|_| Error::Internal)?;
+    let student: i32 = pk[2].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let subject: i32 = pk[3].parse().map_err(|_| Error::Internal("internal server error".into()))?;
     let paper: Option<i16> = if pk[4].is_empty() {
         None
     } else {
-        Some(pk[4].parse().map_err(|_| Error::Internal)?)
+        Some(pk[4].parse().map_err(|_| Error::Internal("internal server error".into()))?)
     };
     sql_query(
         "DELETE FROM grades WHERE school = ? AND exam = ? AND student = ? AND subject = ? AND paper IS ?",
@@ -359,11 +359,11 @@ pub fn delete_announcement(conn: &mut Conn, row_key: &str) -> Result<()> {
 pub fn delete_mastery(conn: &mut Conn, row_key: &str) -> Result<()> {
     let pk = pk_parts(row_key);
     if pk.len() < 4 {
-        return Err(Error::Internal);
+        return Err(Error::Internal("internal server error".into()));
     }
-    let student: i32 = pk[1].parse().map_err(|_| Error::Internal)?;
-    let subject: i32 = pk[2].parse().map_err(|_| Error::Internal)?;
-    let topic: i32 = pk[3].parse().map_err(|_| Error::Internal)?;
+    let student: i32 = pk[1].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let subject: i32 = pk[2].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let topic: i32 = pk[3].parse().map_err(|_| Error::Internal("internal server error".into()))?;
     sql_query("DELETE FROM mastery WHERE school = ? AND student = ? AND subject = ? AND topic = ?")
         .bind::<Text, _>(pk[0])
         .bind::<Integer, _>(student)
@@ -376,11 +376,11 @@ pub fn delete_mastery(conn: &mut Conn, row_key: &str) -> Result<()> {
 pub fn delete_aiusage(conn: &mut Conn, row_key: &str) -> Result<()> {
     let pk = pk_parts(row_key);
     if pk.len() < 4 {
-        return Err(Error::Internal);
+        return Err(Error::Internal("internal server error".into()));
     }
-    let student: i32 = pk[1].parse().map_err(|_| Error::Internal)?;
-    let year: i32 = pk[2].parse().map_err(|_| Error::Internal)?;
-    let term: i16 = pk[3].parse().map_err(|_| Error::Internal)?;
+    let student: i32 = pk[1].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let year: i32 = pk[2].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let term: i16 = pk[3].parse().map_err(|_| Error::Internal("internal server error".into()))?;
     sql_query("DELETE FROM aiusage WHERE school = ? AND student = ? AND year = ? AND term = ?")
         .bind::<Text, _>(pk[0])
         .bind::<Integer, _>(student)
@@ -400,7 +400,7 @@ pub fn delete_role(conn: &mut Conn, row_key: &str) -> Result<()> {
 pub fn delete_scope(conn: &mut Conn, row_key: &str) -> Result<()> {
     let pk = pk_parts(row_key);
     if pk.len() < 3 {
-        return Err(Error::Internal);
+        return Err(Error::Internal("internal server error".into()));
     }
     // school can be empty string for NULL (system-scoped roles)
     if pk[0].is_empty() {
@@ -428,11 +428,11 @@ pub fn delete_plan(conn: &mut Conn, row_key: &str) -> Result<()> {
 pub fn delete_subscription(conn: &mut Conn, row_key: &str) -> Result<()> {
     let pk = pk_parts(row_key);
     if pk.len() < 5 {
-        return Err(Error::Internal);
+        return Err(Error::Internal("internal server error".into()));
     }
-    let year: i32 = pk[2].parse().map_err(|_| Error::Internal)?;
-    let term: i16 = pk[3].parse().map_err(|_| Error::Internal)?;
-    let student: i32 = pk[4].parse().map_err(|_| Error::Internal)?;
+    let year: i32 = pk[2].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let term: i16 = pk[3].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let student: i32 = pk[4].parse().map_err(|_| Error::Internal("internal server error".into()))?;
     sql_query(
         "DELETE FROM subscriptions WHERE school = ? AND plan = ? AND year = ? AND term = ? AND student = ?",
     )
@@ -448,11 +448,11 @@ pub fn delete_subscription(conn: &mut Conn, row_key: &str) -> Result<()> {
 pub fn delete_discount(conn: &mut Conn, row_key: &str) -> Result<()> {
     let pk = pk_parts(row_key);
     if pk.len() < 5 {
-        return Err(Error::Internal);
+        return Err(Error::Internal("internal server error".into()));
     }
-    let year: i32 = pk[2].parse().map_err(|_| Error::Internal)?;
-    let term: i16 = pk[3].parse().map_err(|_| Error::Internal)?;
-    let grade: i16 = pk[4].parse().map_err(|_| Error::Internal)?;
+    let year: i32 = pk[2].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let term: i16 = pk[3].parse().map_err(|_| Error::Internal("internal server error".into()))?;
+    let grade: i16 = pk[4].parse().map_err(|_| Error::Internal("internal server error".into()))?;
     sql_query(
         "DELETE FROM discounts WHERE school = ? AND plan = ? AND year = ? AND term = ? AND grade = ?",
     )

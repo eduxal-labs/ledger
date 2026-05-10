@@ -183,7 +183,7 @@ impl<C: Send + Sync + 'static> AiMarking for AiMarkingService<C> {
             }
             mpsc::error::TrySendError::Closed(_) => {
                 tracing::error!("mark_paper: worker channel closed");
-                Error::Internal
+                Error::Internal("internal server error".into())
             }
         })?;
 
