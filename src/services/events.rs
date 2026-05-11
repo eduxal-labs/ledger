@@ -42,8 +42,7 @@ impl<C: Send + Sync + 'static> EventService for EventServiceImpl<C> {
         req: CreateEventRequest,
     ) -> Result<CreateEventResponse> {
         let now = chrono::Utc::now().timestamp();
-        let event = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        let event = CONN.with(|conn| {
             let new_event = Event {
                 id: Id::default(),
                 school: req.school.clone(),
@@ -66,8 +65,7 @@ impl<C: Send + Sync + 'static> EventService for EventServiceImpl<C> {
 
     async fn get_event(&self, _token: Token, req: GetEventRequest) -> Result<GetEventResponse> {
         let event = CONN
-            .with(|cell| {
-                let conn = &mut *cell.borrow_mut();
+            .with(|conn| {
                 events_db::get_event(conn, &req.event_id)
             })?
             .ok_or(Error::NotFound)?;
@@ -81,8 +79,7 @@ impl<C: Send + Sync + 'static> EventService for EventServiceImpl<C> {
         _token: Token,
         req: ListEventsRequest,
     ) -> Result<ListEventsResponse> {
-        let events = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        let events = CONN.with(|conn| {
             events_db::list_events(conn, &req.school, req.year, req.term.map(|t| t as i16))
         })?;
         Ok(ListEventsResponse {
@@ -95,8 +92,7 @@ impl<C: Send + Sync + 'static> EventService for EventServiceImpl<C> {
         _token: Token,
         req: UpdateEventRequest,
     ) -> Result<UpdateEventResponse> {
-        let event = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        let event = CONN.with(|conn| {
             let update = EventUpdate {
                 name: req.name.clone(),
                 type_: req.r#type.and_then(|t| (t as i16).try_into().ok()),
@@ -119,8 +115,7 @@ impl<C: Send + Sync + 'static> EventService for EventServiceImpl<C> {
         _token: Token,
         req: DeleteEventRequest,
     ) -> Result<DeleteEventResponse> {
-        CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        CONN.with(|conn| {
             events_db::delete_event(conn, &req.event_id)
         })?;
         Ok(DeleteEventResponse {})

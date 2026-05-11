@@ -95,8 +95,7 @@ impl<C: Send + Sync + 'static> AiMarking for AiMarkingService<C> {
             .collect();
 
         // Record scheme + answer page keys in DB
-        CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        CONN.with(|conn| {
             for (i, su) in scheme_urls.iter().enumerate() {
                 let _ = question_bank::insert_scheme_page(conn, paper_id, i as i16, &su.key);
             }
@@ -141,8 +140,7 @@ impl<C: Send + Sync + 'static> AiMarking for AiMarkingService<C> {
         );
 
         // Look up school for batch display name
-        let school = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        let school = CONN.with(|conn| {
             papers_db::get_paper(conn, &paper_id)
                 .ok()
                 .flatten()
@@ -598,9 +596,8 @@ async fn route_marking(
     gemini: &GeminiClient,
     prepared: PreparedRequest,
 ) -> std::result::Result<usize, Box<dyn std::error::Error + Send + Sync>> {
-    let has_paper_questions = CONN.with(|cell| {
-        let mut conn = cell.borrow_mut();
-        match question_bank::get_paper_questions(&mut conn, &prepared.mark_req.paper_id, None) {
+    let has_paper_questions = CONN.with(|conn| {
+        match question_bank::get_paper_questions(conn, &prepared.mark_req.paper_id, None) {
             Ok(pqs) => !pqs.is_empty(),
             Err(_) => false,
         }
@@ -636,9 +633,8 @@ async fn mark_and_write_per_question(
     );
 
     // 1. Load paper_questions
-    let paper_qs = match CONN.with(|cell| {
-        let mut conn = cell.borrow_mut();
-        question_bank::get_paper_questions(&mut conn, &paper_id, None)
+    let paper_qs = match CONN.with(|conn| {
+        question_bank::get_paper_questions(conn, &paper_id, None)
     }) {
         Ok(pqs) => pqs,
         Err(e) => return Err(format!("Failed to load paper questions: {:?}", e).into()),
@@ -654,11 +650,10 @@ async fn mark_and_write_per_question(
     );
 
     // 2. Init marking queue
-    CONN.with(|cell| {
-        let mut conn = cell.borrow_mut();
-        let _ = question_bank::upsert_marking_queue(&mut conn, &paper_id);
+    CONN.with(|conn| {
+        let _ = question_bank::upsert_marking_queue(conn, &paper_id);
         let _ = question_bank::update_marking_status(
-            &mut conn,
+            conn,
             &paper_id,
             1,
             "Downloading images...",
@@ -677,13 +672,12 @@ async fn mark_and_write_per_question(
         images_b64: Vec<(String, Option<String>)>,
     }
 
-    let raw_data = match CONN.with(|cell| -> crate::types::error::Result<Vec<_>> {
-        let mut conn = cell.borrow_mut();
+    let raw_data = match CONN.with(|conn| -> crate::types::error::Result<Vec<_>> {
         let mut out = Vec::with_capacity(paper_qs.len());
         for pq in &paper_qs {
-            let q = question_bank::get_question(&mut conn, pq.question)?.ok_or(Error::NotFound)?;
-            let rubric = question_bank::get_rubric_criteria(&mut conn, pq.question)?;
-            let images = question_bank::get_question_images(&mut conn, pq.question)?;
+            let q = question_bank::get_question(conn, pq.question)?.ok_or(Error::NotFound)?;
+            let rubric = question_bank::get_rubric_criteria(conn, pq.question)?;
+            let images = question_bank::get_question_images(conn, pq.question)?;
             out.push((q, rubric, images));
         }
         Ok(out)
@@ -725,10 +719,9 @@ async fn mark_and_write_per_question(
     }
 
     // 4. Ensure context cache
-    CONN.with(|cell| {
-        let mut conn = cell.borrow_mut();
+    CONN.with(|conn| {
         let _ = question_bank::update_marking_status(
-            &mut conn,
+            conn,
             &paper_id,
             2,
             "Creating cache...",
@@ -747,10 +740,9 @@ async fn mark_and_write_per_question(
             match create_cache_with_retry(gemini, &scheme_parts).await {
                 Some(cn) => cn,
                 None => {
-                    CONN.with(|cell| {
-                        let mut conn = cell.borrow_mut();
+                    CONN.with(|conn| {
                         let _ = question_bank::update_marking_status(
-                            &mut conn,
+                            conn,
                             &paper_id,
                             6,
                             "Cache creation failed",
@@ -800,10 +792,9 @@ async fn mark_and_write_per_question(
         match handle.await {
             Ok(Ok(question_scores)) => {
                 for (question_id, score) in &question_scores {
-                    let _ = CONN.with(|cell| {
-                        let mut conn = cell.borrow_mut();
+                    let _ = CONN.with(|conn| {
                         question_bank::upsert_question_grade(
-                            &mut conn,
+                            conn,
                             &paper_id,
                             adm,
                             *question_id,
@@ -821,10 +812,9 @@ async fn mark_and_write_per_question(
                 }
                 marked_count += 1;
                 let progress = format!("{}/{} students marked", marked_count, total_students);
-                let _ = CONN.with(|cell| {
-                    let mut conn = cell.borrow_mut();
+                let _ = CONN.with(|conn| {
                     question_bank::update_marking_status(
-                        &mut conn,
+                        conn,
                         &paper_id,
                         3,
                         &progress,
@@ -844,10 +834,9 @@ async fn mark_and_write_per_question(
     }
 
     // 6. Aggregate per-question grades into paper total
-    CONN.with(|cell| {
-        let mut conn = cell.borrow_mut();
+    CONN.with(|conn| {
         let _ = question_bank::update_marking_status(
-            &mut conn,
+            conn,
             &paper_id,
             4,
             "Aggregating scores...",
@@ -862,9 +851,8 @@ async fn mark_and_write_per_question(
         Vec::with_capacity(total_students);
 
     for (adm, _) in &prepared.student_images {
-        let grades = match CONN.with(|cell| {
-            let mut conn = cell.borrow_mut();
-            question_bank::get_question_grades_for_student(&mut conn, &paper_id, *adm)
+        let grades = match CONN.with(|conn| {
+            question_bank::get_question_grades_for_student(conn, &paper_id, *adm)
         }) {
             Ok(g) => g,
             Err(e) => {
@@ -910,10 +898,9 @@ async fn mark_and_write_per_question(
     };
 
     // 7. Complete
-    CONN.with(|cell| {
-        let mut conn = cell.borrow_mut();
+    CONN.with(|conn| {
         let _ = question_bank::update_marking_status(
-            &mut conn,
+            conn,
             &paper_id,
             5,
             "Complete",
@@ -1035,8 +1022,7 @@ fn write_grades_to_db(paper_id: &str, scores: &[crate::ai::gemini::StudentScore]
     let mut written = 0usize;
 
     for score in scores {
-        let result = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        let result = CONN.with(|conn| {
             papers_db::upsert_grade(conn, paper_id, score.adm, score.score as f32)
         });
 

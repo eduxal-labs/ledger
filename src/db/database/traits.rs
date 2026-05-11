@@ -3,8 +3,7 @@
 use crate::types::error::Result;
 use crate::types::paginated::Paginated;
 use crate::types::token::Token;
-use std::cell::RefCell;
-use std::thread::LocalKey;
+// (RefCell and LocalKey are no longer needed — Db uses Mutex instead)
 
 pub trait Create<I, O = I> {
     fn create(&mut self, record: I) -> Result<O>;
@@ -106,35 +105,35 @@ pub trait Database {
         Self::Conn: Purge<F, T, O>;
 }
 
-impl<C> Database for LocalKey<RefCell<C>> {
-    type Conn = C;
+impl Database for super::Db {
+    type Conn = diesel::SqliteConnection;
 
     fn create<I, O>(&'static self, record: I) -> Result<O>
     where
         Self::Conn: Create<I, O>,
     {
-        self.with(|cell| cell.borrow_mut().create(record))
+        self.with(|conn| conn.create(record))
     }
 
     fn find<K, V>(&'static self, key: K) -> Result<Option<V>>
     where
         Self::Conn: Find<K, V>,
     {
-        self.with(|cell| cell.borrow_mut().find(key))
+        self.with(|conn| conn.find(key))
     }
 
     fn update<K, U, V>(&'static self, key: K, record: U) -> Result<V>
     where
         Self::Conn: Update<K, U, V>,
     {
-        self.with(|cell| cell.borrow_mut().update(key, record))
+        self.with(|conn| conn.update(key, record))
     }
 
     fn load<I, O>(&'static self, input: I) -> Result<Vec<O>>
     where
         Self::Conn: Load<I, O>,
     {
-        self.with(|cell| cell.borrow_mut().load(input))
+        self.with(|conn| conn.load(input))
     }
 
     fn authorize(
@@ -146,10 +145,7 @@ impl<C> Database for LocalKey<RefCell<C>> {
     where
         Self::Conn: Authorize,
     {
-        self.with(|cell| {
-            cell.borrow_mut()
-                .authorize(token, organisation, permissions)
-        })
+        self.with(|conn| conn.authorize(token, organisation, permissions))
     }
 
     fn list<F, O, V>(
@@ -161,7 +157,7 @@ impl<C> Database for LocalKey<RefCell<C>> {
     where
         Self::Conn: List<F, O, V>,
     {
-        self.with(|cell| cell.borrow_mut().list(filter, offset, limit))
+        self.with(|conn| conn.list(filter, offset, limit))
     }
 
     fn search<Q, O, V>(
@@ -173,20 +169,20 @@ impl<C> Database for LocalKey<RefCell<C>> {
     where
         Self::Conn: Search<Q, O, V>,
     {
-        self.with(|cell| cell.borrow_mut().search(query, offset, limit))
+        self.with(|conn| conn.search(query, offset, limit))
     }
 
     fn delete<F, T, O>(&'static self, filter: F) -> Result<O>
     where
         Self::Conn: Delete<F, T, O>,
     {
-        self.with(|cell| cell.borrow_mut().delete(filter))
+        self.with(|conn| conn.delete(filter))
     }
 
     fn purge<F, T, O>(&'static self, filter: F) -> Result<O>
     where
         Self::Conn: Purge<F, T, O>,
     {
-        self.with(|cell| cell.borrow_mut().purge(filter))
+        self.with(|conn| conn.purge(filter))
     }
 }

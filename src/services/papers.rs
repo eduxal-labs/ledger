@@ -52,8 +52,7 @@ impl<C: Send + Sync + 'static> PaperService for PaperServiceImpl<C> {
     ) -> Result<CreatePaperResponse> {
         let user_id = token.user.to_string();
         let now = chrono::Utc::now().timestamp();
-        let paper = CONN.with(|cell| -> Result<Paper> {
-            let conn = &mut *cell.borrow_mut();
+        let paper = CONN.with(|conn| -> Result<Paper> {
             let new_paper = Paper {
                 id: Id::default(),
                 school: req.school.clone(),
@@ -93,8 +92,7 @@ impl<C: Send + Sync + 'static> PaperService for PaperServiceImpl<C> {
 
     async fn get_paper(&self, _token: Token, req: GetPaperRequest) -> Result<GetPaperResponse> {
         let paper = CONN
-            .with(|cell| {
-                let conn = &mut *cell.borrow_mut();
+            .with(|conn| {
                 papers_db::get_paper(conn, &req.paper_id)
             })?
             .ok_or(Error::PaperNotFound)?;
@@ -108,8 +106,7 @@ impl<C: Send + Sync + 'static> PaperService for PaperServiceImpl<C> {
         _token: Token,
         req: ListPapersRequest,
     ) -> Result<ListPapersResponse> {
-        let papers = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        let papers = CONN.with(|conn| {
             papers_db::list_papers(
                 conn,
                 &req.school,
@@ -128,8 +125,7 @@ impl<C: Send + Sync + 'static> PaperService for PaperServiceImpl<C> {
         _token: Token,
         req: UpdatePaperRequest,
     ) -> Result<UpdatePaperResponse> {
-        let paper = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        let paper = CONN.with(|conn| {
             let existing =
                 papers_db::get_paper(conn, &req.paper_id)?.ok_or(Error::PaperNotFound)?;
             if existing.status >= PaperStatus::Finalized {
@@ -158,8 +154,7 @@ impl<C: Send + Sync + 'static> PaperService for PaperServiceImpl<C> {
         req: GetPaperPdfUrlRequest,
     ) -> Result<GetPaperPdfUrlResponse> {
         let paper = CONN
-            .with(|cell| {
-                let conn = &mut *cell.borrow_mut();
+            .with(|conn| {
                 papers_db::get_paper(conn, &req.paper_id)
             })?
             .ok_or(Error::PaperNotFound)?;
@@ -175,8 +170,7 @@ impl<C: Send + Sync + 'static> PaperService for PaperServiceImpl<C> {
         req: GetMarkingSchemeUrlRequest,
     ) -> Result<GetMarkingSchemeUrlResponse> {
         let paper = CONN
-            .with(|cell| {
-                let conn = &mut *cell.borrow_mut();
+            .with(|conn| {
                 papers_db::get_paper(conn, &req.paper_id)
             })?
             .ok_or(Error::PaperNotFound)?;
@@ -191,8 +185,7 @@ impl<C: Send + Sync + 'static> PaperService for PaperServiceImpl<C> {
         _token: Token,
         req: ForceSetPaperStatusRequest,
     ) -> Result<ForceSetPaperStatusResponse> {
-        let paper = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        let paper = CONN.with(|conn| {
             let status: PaperStatus = (req.status as i16)
                 .try_into()
                 .map_err(|_| Error::NotFound)?;

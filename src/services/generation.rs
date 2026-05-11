@@ -46,8 +46,7 @@ fn load_pdf_questions(
     paper_id: &str,
     student: Option<i32>,
 ) -> crate::types::error::Result<Vec<PdfQuestion>> {
-    CONN.with(|cell| {
-        let conn = &mut *cell.borrow_mut();
+    CONN.with(|conn| {
         let pqs = qb::get_paper_questions(conn, paper_id, student)?;
         let mut result: Vec<PdfQuestion> = Vec::with_capacity(pqs.len());
 
@@ -136,7 +135,7 @@ pub async fn run_generation_scheduler() {
 
         // ── Poll 1: pending exam paper generation ────────────────────────────
         let due_schedules =
-            CONN.with(|cell| pm_db::get_pending_generation(&mut *cell.borrow_mut()));
+            CONN.with(|conn| pm_db::get_pending_generation(conn));
 
         match due_schedules {
             Ok(schedules) => {
@@ -149,14 +148,14 @@ pub async fn run_generation_scheduler() {
 
         // ── Poll 2: auto-reveal papers past their reveal_at ──────────────────
         let reveal_due =
-            CONN.with(|cell| papers_db::get_papers_due_for_reveal(&mut *cell.borrow_mut()));
+            CONN.with(|conn| papers_db::get_papers_due_for_reveal(conn));
 
         match reveal_due {
             Ok(paper_ids) => {
                 for paper_id in paper_ids {
-                    if let Err(e) = CONN.with(|cell| {
+                    if let Err(e) = CONN.with(|conn| {
                         papers_db::transition_paper_status(
-                            &mut *cell.borrow_mut(),
+                            conn,
                             &paper_id,
                             PaperStatus::Revealed,
                         )
@@ -179,9 +178,9 @@ async fn generate_exam_paper(schedule: PaperSchedule) {
     let schedule_id = schedule.id.to_string();
 
     // Mark as Generating
-    if let Err(e) = CONN.with(|cell| {
+    if let Err(e) = CONN.with(|conn| {
         pm_db::set_generation_status(
-            &mut *cell.borrow_mut(),
+            conn,
             &schedule_id,
             GenerationStatus::Generating,
             None,
@@ -197,9 +196,9 @@ async fn generate_exam_paper(schedule: PaperSchedule) {
         }
         Err(e) => {
             error!("generate_exam_paper: failed for schedule {schedule_id}: {e}");
-            let _ = CONN.with(|cell| {
+            let _ = CONN.with(|conn| {
                 pm_db::set_generation_status(
-                    &mut *cell.borrow_mut(),
+                    conn,
                     &schedule_id,
                     GenerationStatus::Failed,
                     Some(&e.to_string()),
@@ -229,15 +228,14 @@ async fn do_generate_exam_paper(
 
     // 1. Confirmed exam coverage topics
     let topic_ids =
-        CONN.with(|cell| pm_db::get_exam_coverage(&mut *cell.borrow_mut(), &schedule_id))?;
+        CONN.with(|conn| pm_db::get_exam_coverage(conn, &schedule_id))?;
 
     if topic_ids.is_empty() {
         return Err("no exam coverage confirmed for this schedule".into());
     }
 
     // 2. Resolve school from the event
-    let school = CONN.with(|cell| {
-        let conn = &mut *cell.borrow_mut();
+    let school = CONN.with(|conn| {
         let row: Option<EventSchoolRow> = sql_query("SELECT school FROM events WHERE id = ?")
             .bind::<Text, _>(&schedule.event)
             .get_result(conn)
@@ -247,8 +245,7 @@ async fn do_generate_exam_paper(
     })?;
 
     // 3. Load school name / motto and subject name for the PDF header
-    let (school_name, school_motto, subject_name) = CONN.with(|cell| {
-        let conn = &mut *cell.borrow_mut();
+    let (school_name, school_motto, subject_name) = CONN.with(|conn| {
 
         let school_info: Option<SchoolInfoRow> =
             sql_query("SELECT name, motto FROM schools WHERE id = ?")
@@ -281,7 +278,7 @@ async fn do_generate_exam_paper(
     let paper_id_str = paper_id_val.to_string();
     let paper_name = format!("{subject_name} Paper");
 
-    let paper = CONN.with(|cell| {
+    let paper = CONN.with(|conn| {
         let new_paper = Paper {
             id: paper_id_val,
             school: school.clone(),
@@ -303,7 +300,7 @@ async fn do_generate_exam_paper(
             created: now,
             updated: now,
         };
-        papers_db::insert_paper(&mut *cell.borrow_mut(), &new_paper)
+        papers_db::insert_paper(conn, &new_paper)
     })?;
 
     // 5. Allocate marks equally across topics and select questions
@@ -314,8 +311,7 @@ async fn do_generate_exam_paper(
         0
     };
 
-    let all_questions: Vec<(i32, i16)> = CONN.with(|cell| {
-        let conn = &mut *cell.borrow_mut();
+    let all_questions: Vec<(i32, i16)> = CONN.with(|conn| {
         let mut questions: Vec<(i32, i16)> = Vec::new();
         let mut position: i16 = 0;
 
@@ -337,14 +333,14 @@ async fn do_generate_exam_paper(
     }
 
     // 6. Insert paper questions (class-wide, student = None)
-    CONN.with(|cell| {
-        qb::insert_paper_questions(&mut *cell.borrow_mut(), &paper_id_str, None, &all_questions)
+    CONN.with(|conn| {
+        qb::insert_paper_questions(conn, &paper_id_str, None, &all_questions)
     })?;
 
     // 7. Transition → QuestionsSet
-    CONN.with(|cell| {
+    CONN.with(|conn| {
         papers_db::transition_paper_status(
-            &mut *cell.borrow_mut(),
+            conn,
             &paper_id_str,
             PaperStatus::QuestionsSet,
         )
@@ -377,8 +373,7 @@ async fn do_generate_exam_paper(
     upload_to_r2(&ms_key, ms_bytes).await?;
 
     // 10. Store keys on paper and transition → Finalized
-    CONN.with(|cell| {
-        let conn = &mut *cell.borrow_mut();
+    CONN.with(|conn| {
         let now2 = chrono::Utc::now().timestamp();
         papers_db::update_paper(
             conn,
@@ -394,14 +389,14 @@ async fn do_generate_exam_paper(
     })?;
 
     // 11. Link paper to schedule
-    CONN.with(|cell| {
-        pm_db::link_paper_to_schedule(&mut *cell.borrow_mut(), &schedule_id, &paper_id_str)
+    CONN.with(|conn| {
+        pm_db::link_paper_to_schedule(conn, &schedule_id, &paper_id_str)
     })?;
 
     // 12. Mark schedule as Generated
-    CONN.with(|cell| {
+    CONN.with(|conn| {
         pm_db::set_generation_status(
-            &mut *cell.borrow_mut(),
+            conn,
             &schedule_id,
             GenerationStatus::Generated,
             None,
@@ -431,13 +426,13 @@ async fn do_generate_per_student_paper(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Load paper metadata
     let paper = CONN
-        .with(|cell| papers_db::get_paper(&mut *cell.borrow_mut(), paper_id))?
+        .with(|conn| papers_db::get_paper(conn, paper_id))?
         .ok_or(Error::PaperNotFound)?;
 
     // Determine whether per-student question overrides exist; fall back to
     // class-wide questions if none have been set for this student.
-    let per_student_qs = CONN.with(|cell| {
-        qb::get_paper_questions(&mut *cell.borrow_mut(), paper_id, Some(student_adm))
+    let per_student_qs = CONN.with(|conn| {
+        qb::get_paper_questions(conn, paper_id, Some(student_adm))
     })?;
     let effective_student = if per_student_qs.is_empty() {
         None
@@ -446,8 +441,7 @@ async fn do_generate_per_student_paper(
     };
 
     // Load school name / motto and subject name
-    let (school_name, school_motto, subject_name) = CONN.with(|cell| {
-        let conn = &mut *cell.borrow_mut();
+    let (school_name, school_motto, subject_name) = CONN.with(|conn| {
 
         let school_info: Option<SchoolInfoRow> =
             sql_query("SELECT name, motto FROM schools WHERE id = ?")
@@ -498,8 +492,8 @@ async fn do_generate_per_student_paper(
     upload_to_r2(&key, pdf_bytes).await?;
 
     // Record the key in the DB
-    CONN.with(|cell| {
-        papers_db::upsert_student_pdf_key(&mut *cell.borrow_mut(), paper_id, student_adm, &key)
+    CONN.with(|conn| {
+        papers_db::upsert_student_pdf_key(conn, paper_id, student_adm, &key)
     })?;
 
     info!("per-student PDF stored: paper={paper_id} student={student_adm} key={key}");
@@ -513,8 +507,7 @@ async fn do_generate_per_student_paper(
 pub async fn enqueue_assessment(paper_id: &str) {
     let paper_id = paper_id.to_string();
     tokio::spawn(async move {
-        let students = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        let students = CONN.with(|conn| {
             let paper = papers_db::get_paper(conn, &paper_id)?.ok_or(Error::PaperNotFound)?;
             papers_db::get_enrolled_students(conn, &paper.school, paper.grade, paper.stream)
         });
@@ -545,8 +538,7 @@ pub async fn enqueue_assignment(paper_id: &str) {
 pub async fn finalize_student_papers_job(paper_id: &str) {
     let paper_id = paper_id.to_string();
     tokio::spawn(async move {
-        let students = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        let students = CONN.with(|conn| {
             let paper = papers_db::get_paper(conn, &paper_id)?.ok_or(Error::PaperNotFound)?;
             papers_db::get_enrolled_students(conn, &paper.school, paper.grade, paper.stream)
         });

@@ -1,7 +1,10 @@
 use crate::db::database::traits::Create;
 use crate::types::error::OnConflict;
+use diesel::Connection;
 use diesel::RunQueryDsl;
 use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
+use std::cell::RefCell;
+use std::sync::{LazyLock, Mutex};
 
 pub mod authorize;
 pub mod tables;
@@ -9,39 +12,46 @@ pub mod traits;
 
 pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!();
 
-type Database = std::cell::RefCell<diesel::SqliteConnection>;
-
 pub const URL: &str = url();
 
-thread_local! {
-    pub static CONN: Database = <Database as New>::new(URL).unwrap();
-}
+/// Shared database handle — a single `SqliteConnection` protected by a
+/// global mutex so that concurrent gRPC handlers never contend at the
+/// SQLite file level (which would produce "database is locked" errors).
+pub struct Db(Mutex<RefCell<diesel::SqliteConnection>>);
 
-pub trait New: Sized {
-    fn new(url: &'static str) -> Result<Self, Box<dyn std::error::Error + 'static + Send + Sync>>;
-}
+impl Db {
+    fn init() -> Self {
+        let conn =
+            diesel::SqliteConnection::establish(URL).expect("Failed to open database");
+        let conn = setup_conn(conn).expect("Failed to initialise database");
+        Db(Mutex::new(RefCell::new(conn)))
+    }
 
-impl New for diesel::SqliteConnection {
-    fn new(url: &'static str) -> Result<Self, Box<dyn std::error::Error + 'static + Send + Sync>> {
-        use diesel::Connection;
-        let mut conn = Self::establish(url)?;
-        conn.run_pending_migrations(MIGRATIONS)?;
-        diesel::sql_query(PRAMGMAS).execute(&mut conn)?;
-        let user = crate::types::user::User::invite_super(
-            "0759762268",
-            "Abdihakim Osman",
-            Some("abdulhakimuthman100@gmail.com"),
-        )?;
-        conn.create(user).resolve()?;
-
-        Ok(conn)
+    /// Run a closure with a mutable reference to the underlying connection.
+    /// Blocks if another thread is currently using the connection.
+    pub fn with<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut diesel::SqliteConnection) -> R,
+    {
+        let guard = self.0.lock().unwrap();
+        f(&mut *guard.borrow_mut())
     }
 }
 
-impl<T: New> New for std::cell::RefCell<T> {
-    fn new(url: &'static str) -> Result<Self, Box<dyn std::error::Error + 'static + Send + Sync>> {
-        Ok(Self::new(T::new(url)?))
-    }
+pub static CONN: LazyLock<Db> = LazyLock::new(Db::init);
+
+fn setup_conn(
+    mut conn: diesel::SqliteConnection,
+) -> Result<diesel::SqliteConnection, Box<dyn std::error::Error + Send + Sync>> {
+    conn.run_pending_migrations(MIGRATIONS)?;
+    diesel::sql_query(PRAMGMAS).execute(&mut conn)?;
+    let user = crate::types::user::User::invite_super(
+        "0759762268",
+        "Abdihakim Osman",
+        Some("abdulhakimuthman100@gmail.com"),
+    )?;
+    conn.create(user).resolve()?;
+    Ok(conn)
 }
 
 const PRAMGMAS: &str = r#"
@@ -63,6 +73,5 @@ const fn url() -> &'static str {
 
 #[cfg(test)]
 pub fn test_conn() -> diesel::SqliteConnection {
-    use diesel::Connection;
     diesel::SqliteConnection::establish(":memory:").expect("failed to open in-memory SQLite")
 }

@@ -182,8 +182,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
             return Err(Error::InvalidQuestionMarks);
         }
 
-        let question = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        let question = CONN.with(|conn| {
             conn.transaction(|conn| {
                 let qid = question_bank::insert_question(
                     conn,
@@ -287,8 +286,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
             updated: Some(chrono::Utc::now().timestamp()),
         };
 
-        let question = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        let question = CONN.with(|conn| {
             conn.transaction(|conn| {
                 question_bank::update_question(conn, qid, changeset)?;
 
@@ -313,8 +311,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
         _token: Token,
         req: DeleteQuestionRequest,
     ) -> Result<DeleteQuestionResponse> {
-        CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        CONN.with(|conn| {
             question_bank::delete_question(conn, req.question_id)
         })?;
         Ok(DeleteQuestionResponse {})
@@ -332,8 +329,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
         let mut duplicates_skipped: i32 = 0;
         let mut errors: Vec<String> = Vec::new();
 
-        let result = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        let result = CONN.with(|conn| {
             conn.transaction(|conn| {
                 for (idx, q) in req.questions.iter().enumerate() {
                     if q.body.trim().is_empty() || q.marks <= 0 {
@@ -453,8 +449,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
         _token: Token,
         req: ImageUploadUrlsRequest,
     ) -> Result<ImageUploadUrlsResponse> {
-        let urls = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        let urls = CONN.with(|conn| {
             let mut result = Vec::with_capacity(req.count as usize);
 
             for i in 0..req.count {
@@ -486,8 +481,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
         _token: Token,
         req: GeneratePaperRequest,
     ) -> Result<GeneratePaperResponse> {
-        let result = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        let result = CONN.with(|conn| {
 
             // Load paper
             let paper = papers_db::get_paper(conn, &req.paper_id)?.ok_or(Error::PaperNotFound)?;
@@ -549,8 +543,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
         token: Token,
         req: GetPaperQuestionsRequest,
     ) -> Result<GetPaperQuestionsResponse> {
-        let questions = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        let questions = CONN.with(|conn| {
 
             // Check paper status
             let paper = papers_db::get_paper(conn, &req.paper_id)?.ok_or(Error::PaperNotFound)?;
@@ -590,8 +583,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
         _token: Token,
         req: RegenerateQuestionRequest,
     ) -> Result<RegenerateQuestionResponse> {
-        let question = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        let question = CONN.with(|conn| {
 
             let current_pqs = question_bank::get_paper_questions(conn, &req.paper_id, req.student)?;
 
@@ -646,8 +638,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
         _token: Token,
         req: ClearPaperQuestionsRequest,
     ) -> Result<ClearPaperQuestionsResponse> {
-        CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        CONN.with(|conn| {
             question_bank::delete_paper_questions(conn, &req.paper_id, req.student)
         })?;
 
@@ -675,8 +666,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
             ms_key: String,
         }
 
-        let data = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        let data = CONN.with(|conn| {
 
             let paper = papers_db::get_paper(conn, &req.paper_id)?.ok_or(Error::PaperNotFound)?;
 
@@ -852,8 +842,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
 
         // ── Phase 4: persist keys + transition status ────────────────────
 
-        CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        CONN.with(|conn| {
             let update = crate::types::paper::PaperUpdate {
                 pdf_key: Some(Some(pdf_key.clone())),
                 ms_key: Some(Some(ms_key.clone())),
@@ -882,8 +871,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
             req.page_size as i64
         };
 
-        let (questions, total) = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        let (questions, total) = CONN.with(|conn| {
 
             let total = question_bank::count_questions(conn, req.topic_id)?;
 
@@ -911,8 +899,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
         _token: Token,
         req: GetQuestionRequest,
     ) -> Result<GetQuestionResponse> {
-        let question = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        let question = CONN.with(|conn| {
             load_full_question(conn, req.question_id)
         })?;
 
@@ -928,8 +915,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
         _token: Token,
         req: GetQuestionGradesRequest,
     ) -> Result<GetQuestionGradesResponse> {
-        let grades = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        let grades = CONN.with(|conn| {
 
             let grade_rows =
                 question_bank::get_question_grades_for_student(conn, &req.paper_id, req.student)?;
@@ -956,8 +942,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
         _token: Token,
         req: MarkingStatusRequest,
     ) -> Result<MarkingStatusResponse> {
-        let row = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        let row = CONN.with(|conn| {
             question_bank::get_marking_status(conn, &req.paper_id)
         })?;
 

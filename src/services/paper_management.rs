@@ -52,8 +52,7 @@ impl<C: Send + Sync + 'static> PaperManagement for PaperManagementServiceImpl<C>
         let _user_id = token.user.to_string();
         let now = chrono::Utc::now().timestamp();
 
-        let schedule = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        let schedule = CONN.with(|conn| {
             let new_schedule = PaperSchedule {
                 id: Id::default(),
                 event: req.event_id.clone(),
@@ -84,8 +83,7 @@ impl<C: Send + Sync + 'static> PaperManagement for PaperManagementServiceImpl<C>
         _token: Token,
         req: AssignInvigilatorRequest,
     ) -> Result<AssignInvigilatorResponse> {
-        CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        CONN.with(|conn| {
             pm_db::assign_invigilator(conn, &req.schedule_id, req.invigilator.as_deref())
         })?;
 
@@ -97,8 +95,7 @@ impl<C: Send + Sync + 'static> PaperManagement for PaperManagementServiceImpl<C>
         _token: Token,
         req: ListSchedulesRequest,
     ) -> Result<ListSchedulesResponse> {
-        let schedules = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        let schedules = CONN.with(|conn| {
             pm_db::list_schedules(conn, &req.event_id)
         })?;
 
@@ -112,8 +109,7 @@ impl<C: Send + Sync + 'static> PaperManagement for PaperManagementServiceImpl<C>
         _token: Token,
         req: UpdateScheduleRequest,
     ) -> Result<UpdateScheduleResponse> {
-        let schedule = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        let schedule = CONN.with(|conn| {
 
             let existing =
                 pm_db::get_schedule(conn, &req.schedule_id)?.ok_or(Error::PaperScheduleNotFound)?;
@@ -148,8 +144,7 @@ impl<C: Send + Sync + 'static> PaperManagement for PaperManagementServiceImpl<C>
         let user_id = token.user.to_string();
         let now = chrono::Utc::now().timestamp();
 
-        CONN.with(|cell| -> Result<()> {
-            let conn = &mut *cell.borrow_mut();
+        CONN.with(|conn| -> Result<()> {
             for topic_proto in &req.topics {
                 let status = match topic_proto.status {
                     0 => TaughtStatus::NotStarted,
@@ -181,8 +176,7 @@ impl<C: Send + Sync + 'static> PaperManagement for PaperManagementServiceImpl<C>
         _token: Token,
         req: GetTaughtTopicsRequest,
     ) -> Result<GetTaughtTopicsResponse> {
-        let topics = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        let topics = CONN.with(|conn| {
             pm_db::get_taught_topics(
                 conn,
                 &req.school,
@@ -213,8 +207,7 @@ impl<C: Send + Sync + 'static> PaperManagement for PaperManagementServiceImpl<C>
     ) -> Result<ConfirmExamCoverageResponse> {
         let confirmed_by = token.user.to_string();
 
-        let count = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        let count = CONN.with(|conn| {
 
             let topic_ids = if req.topic_ids.is_empty() {
                 pm_db::get_completed_topics_for_schedule(conn, &req.schedule_id)?
@@ -235,8 +228,7 @@ impl<C: Send + Sync + 'static> PaperManagement for PaperManagementServiceImpl<C>
         _token: Token,
         req: GetExamCoverageRequest,
     ) -> Result<GetExamCoverageResponse> {
-        let topic_ids = CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        let topic_ids = CONN.with(|conn| {
             pm_db::get_exam_coverage(conn, &req.schedule_id)
         })?;
 
@@ -296,8 +288,7 @@ impl<C: Send + Sync + 'static> PaperManagement for PaperManagementServiceImpl<C>
         req: GetStudentPapersStatusRequest,
     ) -> Result<GetStudentPapersStatusResponse> {
         let (job_id, total, generated_count, statuses) = CONN.with(
-            |cell| -> Result<(String, i32, i32, Vec<StudentPdfStatus>)> {
-                let conn = &mut *cell.borrow_mut();
+            |conn| -> Result<(String, i32, i32, Vec<StudentPdfStatus>)> {
 
                 let paper =
                     papers_db::get_paper(conn, &req.paper_id)?.ok_or(Error::PaperNotFound)?;
@@ -346,8 +337,7 @@ impl<C: Send + Sync + 'static> PaperManagement for PaperManagementServiceImpl<C>
         req: GetStudentPaperPdfRequest,
     ) -> Result<GetStudentPaperPdfResponse> {
         let key = CONN
-            .with(|cell| {
-                let conn = &mut *cell.borrow_mut();
+            .with(|conn| {
                 papers_db::get_student_pdf_key(conn, &req.paper_id, req.student)
             })?
             .ok_or(Error::PaperNotFound)?;

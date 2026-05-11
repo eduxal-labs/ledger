@@ -328,8 +328,7 @@ impl<C: Config + Send + ::std::marker::Sync + 'static> Sync for SyncService<C> {
 /// 4. Returns an `ActionResponse` with success/failure and any affected rows.
 fn process_action(user: &User, request: &ActionRequest) -> ActionResponse {
     let result = crate::types::error::retry_on_busy(|| {
-        CONN.with(|cell| {
-            let conn = &mut *cell.borrow_mut();
+        CONN.with(|conn| {
 
             // 1. Map action → required (Resource, Action)
             let (resource, action) = actions::action_permission(request.action)?;
@@ -674,7 +673,7 @@ async fn send_full_snapshot(
             continue;
         }
 
-        let rows = CONN.with(|cell| snapshot_table(&mut *cell.borrow_mut(), table_num));
+        let rows = CONN.with(|conn| snapshot_table(conn, table_num));
 
         let rows = match rows {
             Ok(r) => r,
@@ -762,7 +761,7 @@ async fn send_school_backfill(
     // Load all user IDs that are members of the newly-added schools so
     // we can backfill their user rows too.
     let new_member_ids: HashSet<Id> = CONN
-        .with(|cell| Load::<&HashSet<Id>, Id>::load(&mut *cell.borrow_mut(), new_schools))
+        .with(|conn| Load::<&HashSet<Id>, Id>::load(conn, new_schools))
         .unwrap_or_default()
         .into_iter()
         .collect();
@@ -775,7 +774,7 @@ async fn send_school_backfill(
             None => continue,
         };
 
-        let rows = CONN.with(|cell| snapshot_table(&mut *cell.borrow_mut(), table_num));
+        let rows = CONN.with(|conn| snapshot_table(conn, table_num));
 
         let rows = match rows {
             Ok(r) => r,
@@ -887,7 +886,7 @@ async fn send_school_purge(
             _ => {}
         }
 
-        let rows = CONN.with(|cell| snapshot_table(&mut *cell.borrow_mut(), table_num));
+        let rows = CONN.with(|conn| snapshot_table(conn, table_num));
 
         let rows = match rows {
             Ok(r) => r,
@@ -970,7 +969,7 @@ async fn send_level_upgrade_backfill(
             continue;
         }
 
-        let rows = CONN.with(|cell| snapshot_table(&mut *cell.borrow_mut(), table_num));
+        let rows = CONN.with(|conn| snapshot_table(conn, table_num));
 
         let rows = match rows {
             Ok(r) => r,
@@ -1327,8 +1326,8 @@ async fn watch_loop(
                 None => continue,
             };
 
-            let rows = CONN.with(|cell| {
-                snapshot_table_since(&mut *cell.borrow_mut(), table_num as i32, min_ts)
+            let rows = CONN.with(|conn| {
+                snapshot_table_since(conn, table_num as i32, min_ts)
             });
 
             let rows = match rows {
@@ -1602,6 +1601,7 @@ fn file_urls_for_delta(
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
 
 #[cfg(test)]
 mod tests {
