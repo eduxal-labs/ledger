@@ -155,6 +155,101 @@ struct SubjectNameRow {
     pub name: String,
 }
 
+/// Resolve a topic by natural key, auto-creating the subject and/or topic
+/// if they don't exist yet on the server. Returns the server-side topic ID.
+fn resolve_topic(
+    conn: &mut diesel::SqliteConnection,
+    subject_name: &str,
+    curriculum: i32,
+    grade: i32,
+    topic_name: &str,
+) -> Result<i32> {
+    use diesel::sql_types::{BigInt, Integer, SmallInt, Text};
+
+    #[derive(diesel::QueryableByName)]
+    struct IdRow {
+        #[diesel(sql_type = Integer)]
+        id: i32,
+    }
+
+    let now = chrono::Utc::now().timestamp();
+
+    // 1. Look up or auto-create the subject
+    let subject_id: i32 = match sql_query(
+        "SELECT id FROM subjects WHERE name = ? AND curriculum = ? LIMIT 1",
+    )
+    .bind::<Text, _>(subject_name)
+    .bind::<SmallInt, _>(curriculum as i16)
+    .get_result::<IdRow>(conn)
+    .optional()
+    .map_err(|e| Error::internal(e))?
+    {
+        Some(row) => row.id,
+        None => {
+            sql_query(
+                "INSERT INTO subjects (name, curriculum, created, updated) VALUES (?, ?, ?, ?)",
+            )
+            .bind::<Text, _>(subject_name)
+            .bind::<SmallInt, _>(curriculum as i16)
+            .bind::<BigInt, _>(now)
+            .bind::<BigInt, _>(now)
+            .execute(conn)
+            .map_err(|e| Error::internal(e))?;
+
+            sql_query(
+                "SELECT id FROM subjects WHERE name = ? AND curriculum = ? LIMIT 1",
+            )
+            .bind::<Text, _>(subject_name)
+            .bind::<SmallInt, _>(curriculum as i16)
+            .get_result::<IdRow>(conn)
+            .map(|r| r.id)
+            .map_err(|e| {
+                Error::internal(format!("subject not found after auto-create: {e}"))
+            })?
+        }
+    };
+
+    // 2. Look up or auto-create the topic
+    let topic_id: i32 = match sql_query(
+        "SELECT id FROM topics WHERE subject = ? AND grade = ? AND name = ? LIMIT 1",
+    )
+    .bind::<Integer, _>(subject_id)
+    .bind::<SmallInt, _>(grade as i16)
+    .bind::<Text, _>(topic_name)
+    .get_result::<IdRow>(conn)
+    .optional()
+    .map_err(|e| Error::internal(e))?
+    {
+        Some(row) => row.id,
+        None => {
+            sql_query(
+                "INSERT INTO topics (subject, grade, name, created, updated) VALUES (?, ?, ?, ?, ?)",
+            )
+            .bind::<Integer, _>(subject_id)
+            .bind::<SmallInt, _>(grade as i16)
+            .bind::<Text, _>(topic_name)
+            .bind::<BigInt, _>(now)
+            .bind::<BigInt, _>(now)
+            .execute(conn)
+            .map_err(|e| Error::internal(e))?;
+
+            sql_query(
+                "SELECT id FROM topics WHERE subject = ? AND grade = ? AND name = ? LIMIT 1",
+            )
+            .bind::<Integer, _>(subject_id)
+            .bind::<SmallInt, _>(grade as i16)
+            .bind::<Text, _>(topic_name)
+            .get_result::<IdRow>(conn)
+            .map(|r| r.id)
+            .map_err(|e| {
+                Error::internal(format!("topic not found after auto-create: {e}"))
+            })?
+        }
+    };
+
+    Ok(topic_id)
+}
+
 // =========================================================================
 // QuestionBank trait implementation
 // =========================================================================
@@ -331,6 +426,16 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
 
         let result = CONN.with(|conn| {
             conn.transaction(|conn| {
+                // Resolve topic by natural key instead of trusting per-question
+                // topic_id values, which are client-local auto-increment IDs.
+                let topic_id = resolve_topic(
+                    conn,
+                    &req.subject_name,
+                    req.curriculum,
+                    req.grade,
+                    &req.topic_name,
+                )?;
+
                 for (idx, q) in req.questions.iter().enumerate() {
                     if q.body.trim().is_empty() || q.marks <= 0 {
                         duplicates_skipped += 1;
@@ -344,7 +449,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
 
                     match question_bank::find_or_insert_question(
                         conn,
-                        q.topic_id,
+                        topic_id,
                         &q.body,
                         (q.body_format as i16)
                             .try_into()
@@ -422,7 +527,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                             );
                             error!(
                                 "bulk_import: question insert failed topic={} body={}: {e}",
-                                q.topic_id,
+                                topic_id,
                                 &q.body
                             );
                             errors.push(msg);

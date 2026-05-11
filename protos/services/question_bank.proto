@@ -156,7 +156,17 @@ message DeleteQuestionResponse {}
 
 // ── Bulk import ──────────────────────────────────────────────────────────────
 
-message BulkImportRequest  { repeated CreateQuestionRequest questions = 1; }
+message BulkImportRequest {
+  // Natural key for topic resolution — the server resolves the correct
+  // topic_id from these fields instead of trusting per-question topic_id
+  // values, which are client-local auto-increment IDs that don't match
+  // server-side IDs.
+  string subject_name = 2;
+  int32 curriculum = 3;
+  int32 grade = 4;
+  string topic_name = 5;
+  repeated CreateQuestionRequest questions = 1;
+}
 message BulkImportResponse {
   int32 created = 1;
   int32 skipped = 2;
