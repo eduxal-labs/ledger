@@ -426,17 +426,23 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
 
         let result = CONN.with(|conn| {
             conn.transaction(|conn| {
-                // Resolve topic by natural key instead of trusting per-question
-                // topic_id values, which are client-local auto-increment IDs.
-                let topic_id = resolve_topic(
-                    conn,
-                    &req.subject_name,
-                    req.curriculum,
-                    req.grade,
-                    &req.topic_name,
-                )?;
+                // Resolve topic by natural key when provided; otherwise
+                // fall back to per-question topic_id for backwards compat.
+                let resolved_topic_id: Option<i32> =
+                    if !req.subject_name.is_empty() {
+                        Some(resolve_topic(
+                            conn,
+                            &req.subject_name,
+                            req.curriculum,
+                            req.grade,
+                            &req.topic_name,
+                        )?)
+                    } else {
+                        None
+                    };
 
                 for (idx, q) in req.questions.iter().enumerate() {
+                    let topic_id = resolved_topic_id.unwrap_or(q.topic_id);
                     if q.body.trim().is_empty() || q.marks <= 0 {
                         duplicates_skipped += 1;
                         errors.push(format!(
