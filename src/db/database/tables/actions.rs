@@ -4069,7 +4069,7 @@ fn handle_create_subject(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult
     let now = chrono::Utc::now().timestamp();
 
     diesel::sql_query(
-        "INSERT INTO subjects (name, curriculum, created, updated) VALUES (?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO subjects (name, curriculum, created, updated) VALUES (?, ?, ?, ?)",
     )
     .bind::<diesel::sql_types::Text, _>(&p.name)
     .bind::<diesel::sql_types::SmallInt, _>(p.curriculum as i16)
@@ -4148,24 +4148,56 @@ fn handle_create_topic(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> 
     // Resolve subject by natural key (name + curriculum) instead of trusting
     // a client-local numeric ID, which would diverge from server-side IDs and
     // cause topics to be associated with the wrong subject.
-    let subject_id: i32 = sql_query(
+    // If the subject doesn't exist yet (e.g. CreateSubject log was skipped
+    // because the subject already existed in the client's local DB), auto-create
+    // it here so the topic can still be inserted.
+    let subject_id: i32 = match sql_query(
         "SELECT id FROM subjects WHERE name = ? AND curriculum = ? LIMIT 1",
     )
     .bind::<diesel::sql_types::Text, _>(&p.subject_name)
     .bind::<diesel::sql_types::SmallInt, _>(p.curriculum as i16)
     .get_result::<SubjectIdRow>(conn)
-    .map(|r| r.id)
-    .map_err(|e| {
-        tracing::error!(
-            "create_topic: subject not found by name='{}' curriculum={}: {e}",
-            p.subject_name,
-            p.curriculum
-        );
-        Error::internal(format!(
-            "subject '{}' (curriculum={}) not found",
-            p.subject_name, p.curriculum
-        ))
-    })?;
+    {
+        Ok(row) => row.id,
+        Err(_) => {
+            tracing::warn!(
+                "create_topic: subject '{}' (curriculum={}) not found, auto-creating",
+                p.subject_name,
+                p.curriculum
+            );
+            diesel::sql_query(
+                "INSERT INTO subjects (name, curriculum, created, updated) VALUES (?, ?, ?, ?)",
+            )
+            .bind::<diesel::sql_types::Text, _>(&p.subject_name)
+            .bind::<diesel::sql_types::SmallInt, _>(p.curriculum as i16)
+            .bind::<diesel::sql_types::BigInt, _>(now)
+            .bind::<diesel::sql_types::BigInt, _>(now)
+            .execute(conn)
+            .map_err(|e| {
+                tracing::error!("create_topic: auto-create subject failed: {e}");
+                Error::internal(e)
+            })?;
+
+            append_log(log_user, TBL_SUBJECT_CATALOG as u8, OP_INSERT, 0)?;
+
+            sql_query(
+                "SELECT id FROM subjects WHERE name = ? AND curriculum = ? LIMIT 1",
+            )
+            .bind::<diesel::sql_types::Text, _>(&p.subject_name)
+            .bind::<diesel::sql_types::SmallInt, _>(p.curriculum as i16)
+            .get_result::<SubjectIdRow>(conn)
+            .map(|r| r.id)
+            .map_err(|e| {
+                tracing::error!(
+                    "create_topic: subject not found after auto-create: {e}"
+                );
+                Error::internal(format!(
+                    "subject '{}' (curriculum={}) not found after auto-create",
+                    p.subject_name, p.curriculum
+                ))
+            })?
+        }
+    };
 
     diesel::sql_query(
         "INSERT INTO topics (subject, grade, name, created, updated) VALUES (?, ?, ?, ?, ?)",
