@@ -30,6 +30,12 @@ struct SchoolIdRow {
     school: Id,
 }
 
+#[derive(diesel::QueryableByName)]
+struct SubjectIdRow {
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    id: i32,
+}
+
 /// SyncAction integer values — must stay aligned with the client's
 /// `lib/database/tables/enums.dart` values.
 pub mod sync_action {
@@ -4139,10 +4145,32 @@ fn handle_create_topic(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> 
     let log_user = Id::system();
     let now = chrono::Utc::now().timestamp();
 
+    // Resolve subject by natural key (name + curriculum) instead of trusting
+    // a client-local numeric ID, which would diverge from server-side IDs and
+    // cause topics to be associated with the wrong subject.
+    let subject_id: i32 = sql_query(
+        "SELECT id FROM subjects WHERE name = ? AND curriculum = ? LIMIT 1",
+    )
+    .bind::<diesel::sql_types::Text, _>(&p.subject_name)
+    .bind::<diesel::sql_types::SmallInt, _>(p.curriculum as i16)
+    .get_result::<SubjectIdRow>(conn)
+    .map(|r| r.id)
+    .map_err(|e| {
+        tracing::error!(
+            "create_topic: subject not found by name='{}' curriculum={}: {e}",
+            p.subject_name,
+            p.curriculum
+        );
+        Error::internal(format!(
+            "subject '{}' (curriculum={}) not found",
+            p.subject_name, p.curriculum
+        ))
+    })?;
+
     diesel::sql_query(
         "INSERT INTO topics (subject, grade, name, created, updated) VALUES (?, ?, ?, ?, ?)",
     )
-    .bind::<diesel::sql_types::Integer, _>(p.subject)
+    .bind::<diesel::sql_types::Integer, _>(subject_id)
     .bind::<diesel::sql_types::SmallInt, _>(p.grade as i16)
     .bind::<diesel::sql_types::Text, _>(&p.name)
     .bind::<diesel::sql_types::BigInt, _>(now)
@@ -4158,7 +4186,7 @@ fn handle_create_topic(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> 
     let row = sql_query(
         "SELECT id, subject, grade, name, created, updated FROM topics WHERE subject = ? AND grade = ? AND name = ? ORDER BY id DESC LIMIT 1",
     )
-    .bind::<diesel::sql_types::Integer, _>(p.subject)
+    .bind::<diesel::sql_types::Integer, _>(subject_id)
     .bind::<diesel::sql_types::SmallInt, _>(p.grade as i16)
     .bind::<diesel::sql_types::Text, _>(&p.name)
     .load::<TopicRow>(conn)

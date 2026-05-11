@@ -718,9 +718,10 @@ message DeleteSubjectPayload {
 // --- Topics (global catalog, 3 actions) ---
 
 message CreateTopicPayload {
-  int32 subject = 1;
+  string subject_name = 1;
   int32 grade = 2;
   string name = 3;
+  int32 curriculum = 4;
 }
 
 message UpdateTopicPayload {
