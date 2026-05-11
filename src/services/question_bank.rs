@@ -885,9 +885,10 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
         let (questions, total) = CONN.with(|cell| {
             let conn = &mut *cell.borrow_mut();
 
+            let total = question_bank::count_questions(conn, req.topic_id)?;
+
             let rows =
                 question_bank::list_questions(conn, req.topic_id, page * page_size, page_size)?;
-            let total = rows.len() as i32;
 
             let mut questions = Vec::with_capacity(rows.len());
             for row in &rows {

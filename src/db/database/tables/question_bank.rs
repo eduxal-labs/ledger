@@ -187,6 +187,15 @@ pub fn get_question(conn: &mut SqliteConnection, id: i32) -> Result<Option<Quest
 }
 
 /// List questions for a topic with pagination.
+pub fn count_questions(conn: &mut SqliteConnection, topic_id: i32) -> Result<i32> {
+    use crate::db::schema::questions::dsl;
+    let count: i64 = dsl::questions
+        .filter(dsl::topic.eq(topic_id))
+        .count()
+        .get_result(conn)?;
+    Ok(count as i32)
+}
+
 pub fn list_questions(
     conn: &mut SqliteConnection,
     topic_id: i32,
