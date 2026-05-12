@@ -497,7 +497,13 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                                 continue;
                             }
                             if !q.rubric.is_empty() {
-                                validate_rubric_marks(q.marks as i16, &q.rubric)?;
+                                if let Err(e) = validate_rubric_marks(q.marks as i16, &q.rubric) {
+                                    let msg = format!("Q{}: {e}", idx + 1);
+                                    error!("bulk_import: {msg}");
+                                    errors.push(msg);
+                                    duplicates_skipped += 1;
+                                    continue;
+                                }
                                 let tuples = rubric_input_tuples(&q.rubric);
                                 let _ = question_bank::insert_rubric_criteria(conn, qid, &tuples);
                             }
@@ -535,7 +541,12 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                                 // Insert part rubric criteria
                                 for (part_idx, p) in q.parts.iter().enumerate() {
                                     if !p.rubric.is_empty() {
-                                        validate_rubric_marks(p.marks as i16, &p.rubric)?;
+                                        if let Err(e) = validate_rubric_marks(p.marks as i16, &p.rubric) {
+                                            let msg = format!("Q{} part {}: {e}", idx + 1, part_idx + 1);
+                                            error!("bulk_import: {msg}");
+                                            errors.push(msg);
+                                            continue;
+                                        }
                                         let part_tuples: Vec<(i16, String, i16, Option<i16>, bool)> = p.rubric.iter().enumerate().map(|(ri, r)| {
                                             ((ri + 1) as i16, r.criterion.clone(), r.marks as i16, r.max_marks.map(|m| m as i16), r.required)
                                         }).collect();
