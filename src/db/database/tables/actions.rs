@@ -4199,8 +4199,10 @@ fn handle_create_topic(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> 
         }
     };
 
+    // INSERT OR IGNORE so this is idempotent — the topic may already
+    // exist if it was created via a direct gRPC call (e.g. bulk_import).
     diesel::sql_query(
-        "INSERT INTO topics (subject, grade, name, created, updated) VALUES (?, ?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO topics (subject, grade, name, created, updated) VALUES (?, ?, ?, ?, ?)",
     )
     .bind::<diesel::sql_types::Integer, _>(subject_id)
     .bind::<diesel::sql_types::SmallInt, _>(p.grade as i16)
