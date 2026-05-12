@@ -692,6 +692,7 @@ message UpdateUserPayload {
   optional string name = 4;
   optional int32 level = 5;
   optional int32 status = 6;
+  bool profile_image = 7;
 }
 
 message DeleteUserPayload {

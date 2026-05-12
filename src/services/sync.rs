@@ -1955,6 +1955,7 @@ mod tests {
             name: Some("Missing User".to_string()),
             level: None,
             status: None,
+            profile_image: false,
         }
         .encode_to_vec();
 

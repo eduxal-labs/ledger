@@ -3747,18 +3747,37 @@ fn handle_update_user(conn: &mut Conn, actor: &User, payload: &[u8]) -> Result<A
         && p.level.is_some()
         && p.status == Some(Status::Invited as i32);
 
+    // Build file URLs if this is a profile image change so the originating
+    // client can upload the new image to S3 and other devices can download it.
+    let file_urls = if p.profile_image {
+        use crate::config::storage::sign;
+        use chrono::Utc;
+        let path = format!("users/{}/profile", p.id);
+        let put_url = sign::url(&path, sign::PUT_TTL, true);
+        let get_url = sign::url(&path, sign::GET_TTL, false);
+        let expiry_ms = (Utc::now().timestamp() + sign::GET_TTL as i64) * 1000;
+        vec![FileUrl {
+            path,
+            put_url: Some(put_url),
+            get_url: Some(get_url),
+            expiry: expiry_ms,
+        }]
+    } else {
+        vec![]
+    };
+
     match update::update_user(conn, &p.id, &p) {
         Ok(()) => {
             append_log(log_user, TBL_USERS as u8, OP_UPDATE, 0)?;
 
             let row = fetch_user(conn, &p.id)?;
-            Ok(ActionResult::with_rows(vec![upsert_row(
+            Ok(ActionResult::with_rows_and_urls(vec![upsert_row(
                 TBL_USERS,
                 row.row_key(),
                 InsertData {
                     row: Some(insert_data::Row::User((&row).into())),
                 },
-            )]))
+            )], file_urls))
         }
         Err(Error::UserNotFound) if is_legacy_invite => {
             let InviteOutcome {
@@ -3784,7 +3803,7 @@ fn handle_update_user(conn: &mut Conn, actor: &User, payload: &[u8]) -> Result<A
                 },
             ));
 
-            Ok(ActionResult::with_rows(rows))
+            Ok(ActionResult::with_rows_and_urls(rows, file_urls))
         }
         Err(Error::UserNotFound) => Err(Error::UserNotFound),
         Err(err) => Err(err),
@@ -3803,6 +3822,7 @@ fn handle_delete_user(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
         name: None,
         level: None,
         status: Some(2), // Deleted
+        profile_image: false,
     };
     update::update_user(conn, &p.id, &soft_delete)?;
     append_log(log_user, TBL_USERS as u8, OP_UPDATE, 0)?;
@@ -4932,6 +4952,7 @@ mod tests {
             name: Some("Legacy Invite".to_string()),
             level: Some(i32::from(Level::System)),
             status: Some(i32::from(Status::Invited)),
+            profile_image: false,
         }
         .encode_to_vec();
 
@@ -4958,6 +4979,7 @@ mod tests {
             name: Some("Missing User".to_string()),
             level: None,
             status: None,
+            profile_image: false,
         }
         .encode_to_vec();
 
