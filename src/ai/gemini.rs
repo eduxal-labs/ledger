@@ -254,6 +254,12 @@ For English, Kiswahili, and essay-based questions in any subject:
 - Award marks within the rubric's band descriptors.
 - Do not penalise for dialect variations that are acceptable in the Kenyan curriculum context.
 
+## Rubric Marks vs Question Marks (CRITICAL)
+
+Rubric criteria marks are GUIDELINES only, not a cap on what a student can earn. They may exceed a question's total allocated marks to provide variety in acceptable answers. The MAXIMUM marks a student can earn for any question is the question's own allocated marks — NOT the sum of rubric criteria marks.
+
+Example: A question worth 3 marks may have rubric criteria listing 8 possible mark points. A student who hits 3 of those points earns the full 3 marks. A student cannot earn more than 3 marks for this question, even if they satisfy every rubric criterion.
+
 ## Output Format
 
 Return ONLY a JSON object with exactly one entry in the results array (for the single student you are marking):
@@ -335,7 +341,7 @@ impl GeminiClient {
         let mut parts = Vec::with_capacity(scheme_urls.len() + 1);
 
         parts.push(serde_json::json!({
-            "text": "## MARKING SCHEME\n\nThe following images contain the marking scheme for this paper. Study them carefully to identify every question, sub-question, mark allocation, expected answer, and any rubric notes (such as FT, Accept, OR, etc.). Determine the total marks for the paper by summing all mark allocations."
+            "text": "## MARKING SCHEME\n\nThe following images contain the marking scheme for this paper. Study them carefully to identify every question, sub-question, mark allocation, expected answer, and any rubric notes (such as FT, Accept, OR, etc.). Determine the total marks for the paper by summing all QUESTION mark allocations. Note: rubric criteria marks are guides that may exceed a question's allocated marks — a question's max score is its own mark allocation, not the sum of its rubric criteria."
         }));
 
         for (i, url) in scheme_urls.iter().enumerate() {
@@ -379,7 +385,7 @@ Remember:
 - Apply follow-through (FT) marking: only deduct at the point of error, not at every subsequent step.
 - Accept equivalent forms unless the rubric explicitly requires a specific form.
 - Give benefit of the doubt on ambiguous handwriting.
-- The total marks must be determined from the marking scheme (sum of all mark allocations).
+- The total marks must be determined from the marking scheme (sum of all QUESTION mark allocations, NOT the sum of rubric criteria marks — rubric marks are guides that may exceed a question's allocated marks).
 
 Return ONLY valid JSON with exactly one result entry for this student:
 
@@ -557,7 +563,7 @@ Remember:
 - Apply follow-through (FT) marking: only deduct at the point of error, not at every subsequent step.
 - Accept equivalent forms unless the rubric explicitly requires a specific form.
 - Give benefit of the doubt on ambiguous handwriting.
-- The total marks must be determined from the marking scheme (sum of all mark allocations).
+- The total marks must be determined from the marking scheme (sum of all QUESTION mark allocations, NOT the sum of rubric criteria marks — rubric marks are guides that may exceed a question's allocated marks).
 
 Return ONLY valid JSON with exactly one result entry for this student:
 
@@ -1118,7 +1124,7 @@ Return ONLY valid JSON with exactly one result entry for this student:
 
         // Step C — Push the final instruction text part
         parts.push(serde_json::json!({
-            "text": "Mark every question listed above for this student. Find each question's answer in the student's answer sheets shown, then score it against its rubric criteria.\n\nReturn ONLY valid JSON:\n{\"results\": [\n  {\"question_id\": <integer>, \"score\": <number>, \"feedback\": \"<one-sentence justification>\"},\n  ...\n]}\n\nRules:\n- Every question_id listed above MUST appear exactly once in results.\n- score for each question MUST be >= 0 and MUST NOT exceed that question's total marks.\n- Partial credit is allowed and expected for partially correct answers."
+            "text": "Mark every question listed above for this student. Find each question's answer in the student's answer sheets shown, then score it against its rubric criteria.\n\nReturn ONLY valid JSON:\n{\"results\": [\n  {\"question_id\": <integer>, \"score\": <number>, \"feedback\": \"<one-sentence justification>\"},\n  ...\n]}\n\nRules:\n- Every question_id listed above MUST appear exactly once in results.\n- score for each question MUST be >= 0 and MUST NOT exceed that question's total marks (the question's own allocated marks, NOT the sum of rubric criteria marks — rubric marks are guides only and may exceed the question's marks to provide variety).\n- Partial credit is allowed and expected for partially correct answers."
         }));
 
         // Step D — Build the request body (cachedContent pattern)

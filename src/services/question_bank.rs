@@ -124,6 +124,21 @@ fn rubric_input_tuples(
 }
 
 // ---------------------------------------------------------------------------
+// Helper: validate rubric marks against question marks
+// ---------------------------------------------------------------------------
+
+fn validate_rubric_marks(question_marks: i16, rubric: &[RubricCriterionInput]) -> Result<()> {
+    if rubric.is_empty() {
+        return Ok(());
+    }
+    let rubric_sum: i32 = rubric.iter().map(|r| r.marks).sum();
+    if rubric_sum < question_marks as i32 {
+        return Err(Error::InvalidRubricMarks);
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Helper: map MarkingQueueRow → proto
 // ---------------------------------------------------------------------------
 
@@ -303,6 +318,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                 .on_conflict(Error::QuestionAlreadyExists)?;
 
                 if !req.rubric.is_empty() {
+                    validate_rubric_marks(req.marks as i16, &req.rubric)?;
                     let tuples = rubric_input_tuples(&req.rubric);
                     question_bank::insert_rubric_criteria(conn, qid, &tuples)?;
                 }
@@ -336,6 +352,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                     // Insert part rubric criteria
                     for (part_idx, p) in req.parts.iter().enumerate() {
                         if !p.rubric.is_empty() {
+                            validate_rubric_marks(p.marks as i16, &p.rubric)?;
                             let part_tuples: Vec<(i16, String, i16, Option<i16>, bool)> = p.rubric.iter().enumerate().map(|(ri, r)| {
                                 ((ri + 1) as i16, r.criterion.clone(), r.marks as i16, r.max_marks.map(|m| m as i16), r.required)
                             }).collect();
@@ -480,6 +497,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                                 continue;
                             }
                             if !q.rubric.is_empty() {
+                                validate_rubric_marks(q.marks as i16, &q.rubric)?;
                                 let tuples = rubric_input_tuples(&q.rubric);
                                 let _ = question_bank::insert_rubric_criteria(conn, qid, &tuples);
                             }
@@ -517,6 +535,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                                 // Insert part rubric criteria
                                 for (part_idx, p) in q.parts.iter().enumerate() {
                                     if !p.rubric.is_empty() {
+                                        validate_rubric_marks(p.marks as i16, &p.rubric)?;
                                         let part_tuples: Vec<(i16, String, i16, Option<i16>, bool)> = p.rubric.iter().enumerate().map(|(ri, r)| {
                                             ((ri + 1) as i16, r.criterion.clone(), r.marks as i16, r.max_marks.map(|m| m as i16), r.required)
                                         }).collect();
