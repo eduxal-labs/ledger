@@ -285,7 +285,13 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
     ) -> Result<CreateQuestionResponse> {
         let user_id = token.user.to_string();
 
-        if req.body.trim().is_empty() {
+        // A question with a stimulus (passage/poem/narrative) is valid even without body.
+        if req.body.trim().is_empty()
+            && req
+                .stimulus
+                .as_ref()
+                .map_or(true, |s| s.trim().is_empty())
+        {
             return Err(Error::InvalidQuestionText);
         }
         if req.marks <= 0 {
@@ -460,7 +466,13 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
 
                 for (idx, q) in req.questions.iter().enumerate() {
                     let topic_id = resolved_topic_id.unwrap_or(q.topic_id);
-                    if q.body.trim().is_empty() || q.marks <= 0 {
+                    // A question with a stimulus (passage/poem/narrative) is valid even without body.
+                    let body_empty = q.body.trim().is_empty();
+                    let stimulus_empty = q
+                        .stimulus
+                        .as_ref()
+                        .map_or(true, |s| s.trim().is_empty());
+                    if (body_empty && stimulus_empty) || q.marks <= 0 {
                         duplicates_skipped += 1;
                         errors.push(format!(
                             "Q{}: empty body or invalid marks (marks={})",
