@@ -725,9 +725,10 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
             let user_id = token.user.to_string();
             let is_teacher = paper.teacher == user_id;
 
-            // Teachers can see from Finalized(2) onward; others only from Revealed(3)
+            // Teachers can see from QuestionsSet(1) onward (right after generation);
+            // others only from Revealed(3).
             let min_status = if is_teacher {
-                PaperStatus::Finalized
+                PaperStatus::QuestionsSet
             } else {
                 PaperStatus::Revealed
             };
