@@ -135,37 +135,48 @@ pub fn build_exam_paper_typst(input: &PaperPdfInput) -> String {
     doc.push_str("#set text(font: \"New Computer Modern\", size: 11pt)\n");
     doc.push_str("#set par(justify: true)\n\n");
 
-    // Header
-    doc.push_str("#align(center)[\n");
+    // Header — clean centred layout with horizontal rules
     doc.push_str(&format!(
-        "  #text(weight: \"bold\", size: 14pt)[{}]\n",
+        "#align(center, text(weight: \"bold\", size: 14pt)[{}])\n",
         escape_typst(input.school_name)
     ));
     if let Some(motto) = input.school_motto {
         doc.push_str(&format!(
-            "  \\\\ #text(style: \"italic\", size: 10pt)[{}]\n",
+            "#align(center, text(style: \"italic\", size: 10pt)[{}])\n",
             escape_typst(motto)
         ));
     }
+    doc.push_str("#v(2mm)\n");
+    doc.push_str("#align(center, line(length: 40%, stroke: 0.5pt))\n");
+    doc.push_str("#v(2mm)\n");
     doc.push_str(&format!(
-        "  \\\\ #text(weight: \"bold\")[{}]\n",
+        "#align(center, text(weight: \"bold\", size: 13pt)[{}])\n",
         escape_typst(input.paper_name)
     ));
     let paper_num_str = input
         .paper_number
-        .map(|n| format!(" — Paper {}", n))
+        .map(|n| format!("Paper {}", n))
         .unwrap_or_default();
-    doc.push_str(&format!(
-        "  \\\\ {} — Grade {}{}\n",
-        escape_typst(input.subject_name),
-        input.grade,
-        paper_num_str
-    ));
+    let grade_label = format_grade_display(input.grade);
+    let subject_line = if paper_num_str.is_empty() {
+        format!("{} — {}", escape_typst(input.subject_name), grade_label)
+    } else {
+        format!(
+            "{} — {} — {}",
+            escape_typst(input.subject_name),
+            grade_label,
+            paper_num_str
+        )
+    };
+    doc.push_str(&format!("#align(center)[{}]\n", subject_line));
     if let Some(dur) = input.duration_minutes {
-        doc.push_str(&format!("  \\\\ Time Allowed: {} minutes\n", dur));
+        doc.push_str(&format!(
+            "#align(center, text(size: 10pt))[Time Allowed: {} minutes]\n",
+            dur
+        ));
     }
-    doc.push_str("]\n");
-    doc.push_str("#line(length: 100%)\n");
+    doc.push_str("#v(2mm)\n");
+    doc.push_str("#line(length: 100%, stroke: 1.5pt)\n");
 
     // Instructions
     if let Some(instrs) = input.instructions {
@@ -276,22 +287,24 @@ pub fn build_marking_scheme_typst(input: &PaperPdfInput) -> String {
     doc.push_str("#set par(justify: true)\n\n");
 
     // Header with MARKING SCHEME title
-    doc.push_str("#align(center)[\n");
     doc.push_str(&format!(
-        "  #text(weight: \"bold\", size: 14pt)[{}]\n",
+        "#align(center, text(weight: \"bold\", size: 14pt)[{}])\n",
         escape_typst(input.school_name)
     ));
+    doc.push_str("#v(2mm)\n");
+    doc.push_str("#align(center, line(length: 40%, stroke: 0.5pt))\n");
+    doc.push_str("#v(2mm)\n");
     doc.push_str(&format!(
-        "  \\\\ #text(weight: \"bold\")[MARKING SCHEME — {}]\n",
+        "#align(center, text(weight: \"bold\", size: 13pt)[MARKING SCHEME — {}])\n",
         escape_typst(input.paper_name)
     ));
     doc.push_str(&format!(
-        "  \\\\ {} — Grade {}\n",
+        "#align(center)[{} — {}]\n",
         escape_typst(input.subject_name),
-        input.grade
+        format_grade_display(input.grade)
     ));
-    doc.push_str("]\n");
-    doc.push_str("#line(length: 100%)\n#v(5mm)\n\n");
+    doc.push_str("#v(2mm)\n");
+    doc.push_str("#line(length: 100%, stroke: 1.5pt)\n#v(5mm)\n\n");
 
     // Questions with rubric
     for (i, q) in input.questions.iter().enumerate() {
@@ -518,6 +531,40 @@ fn strip_html(s: &str) -> String {
         }
     }
     result
+}
+
+/// Convert a raw grade integer to a human-readable display label.
+///
+/// Follows the same mapping as the Flutter client:
+/// - CBC:  1=PP1, 2=PP2, 3–14=Grade 1–12
+/// - 8-4-4: 1–8=Standard 1–8, 41–44=Form 1–4
+fn format_grade_display(grade: i16) -> String {
+    match grade {
+        // CBC labels
+        1 => "PP1".into(),
+        2 => "PP2".into(),
+        3 => "Grade 1".into(),
+        4 => "Grade 2".into(),
+        5 => "Grade 3".into(),
+        6 => "Grade 4".into(),
+        7 => "Grade 5".into(),
+        8 => "Grade 6".into(),
+        9 => "Grade 7".into(),
+        10 => "Grade 8".into(),
+        11 => "Grade 9".into(),
+        12 => "Grade 10".into(),
+        13 => "Grade 11".into(),
+        14 => "Grade 12".into(),
+        // 8-4-4 labels
+        41 => "Form 1".into(),
+        42 => "Form 2".into(),
+        43 => "Form 3".into(),
+        44 => "Form 4".into(),
+        // Standard 1–8 (8-4-4 primary) — same numbers as CBC Grade 1–8,
+        // but the curriculum context disambiguates. If we reach the match
+        // default, we return the raw form as a last resort.
+        other => format!("Grade {}", other),
+    }
 }
 
 /// Escape text for safe inclusion in Typst source.

@@ -33,6 +33,12 @@ struct SubjectNameRow {
 }
 
 #[derive(diesel::QueryableByName)]
+struct StudentNameRow {
+    #[diesel(sql_type = Text)]
+    pub name: String,
+}
+
+#[derive(diesel::QueryableByName)]
 struct EventSchoolRow {
     #[diesel(sql_type = Text)]
     pub school: String,
@@ -440,8 +446,8 @@ async fn do_generate_per_student_paper(
         Some(student_adm)
     };
 
-    // Load school name / motto and subject name
-    let (school_name, school_motto, subject_name) = CONN.with(|conn| {
+    // Load school name / motto, subject name, and student name
+    let (school_name, school_motto, subject_name, student_name) = CONN.with(|conn| {
 
         let school_info: Option<SchoolInfoRow> =
             sql_query("SELECT name, motto FROM schools WHERE id = ?")
@@ -465,7 +471,18 @@ async fn do_generate_per_student_paper(
             .map(|s| s.name)
             .unwrap_or_else(|| "Subject".into());
 
-        Ok::<_, Error>((school_name, school_motto, subject_name))
+        let student_info: Option<StudentNameRow> =
+            sql_query("SELECT name FROM students WHERE school = ? AND adm = ?")
+                .bind::<Text, _>(&paper.school)
+                .bind::<Integer, _>(student_adm)
+                .get_result(conn)
+                .optional()
+                .map_err(Error::internal)?;
+        let student_name = student_info
+            .map(|s| s.name)
+            .unwrap_or_else(|| "Student".to_string());
+
+        Ok::<_, Error>((school_name, school_motto, subject_name, student_name))
     })?;
 
     // Build the PDF question list
@@ -483,8 +500,8 @@ async fn do_generate_per_student_paper(
         questions: &pdf_questions,
     };
 
-    // Generate personalised PDF (with student name placeholder + adm number)
-    let pdf_bytes = crate::pdf::generate_student_paper_pdf(&pdf_input, "Student", student_adm)
+    // Generate personalised PDF with the actual student name
+    let pdf_bytes = crate::pdf::generate_student_paper_pdf(&pdf_input, &student_name, student_adm)
         .map_err(|e| format!("per-student PDF generation failed: {e}"))?;
 
     // Upload to R2
