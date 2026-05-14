@@ -647,12 +647,25 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
             );
 
             let alloc_sum: i32 = req.topic_allocations.iter().map(|ta| ta.total_marks).sum();
-            if alloc_sum != paper.total_marks as i32 {
+            if alloc_sum != req.total_marks {
                 error!(
-                    "generate_paper: alloc_sum ({}) != paper.total_marks ({}) — check failed",
-                    alloc_sum, paper.total_marks,
+                    "generate_paper: alloc_sum ({}) != req.total_marks ({}) — check failed",
+                    alloc_sum, req.total_marks,
                 );
                 return Err(Error::NotEnoughQuestionsForAllocation);
+            }
+
+            // Keep paper.total_marks in sync with the last generation request.
+            if paper.total_marks as i32 != req.total_marks {
+                let _ = papers_db::update_paper(
+                    conn,
+                    &req.paper_id,
+                    crate::types::paper::PaperUpdate {
+                        total_marks: Some(req.total_marks as i16),
+                        updated: Some(chrono::Utc::now().timestamp()),
+                        ..Default::default()
+                    },
+                );
             }
 
             // Clear existing class-wide questions
