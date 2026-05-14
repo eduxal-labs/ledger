@@ -15,7 +15,7 @@ use diesel::sql_query;
 use diesel::sql_types::{Integer, Text};
 use diesel::{Connection, OptionalExtension, RunQueryDsl};
 use std::sync::Arc;
-use tracing::error;
+use tracing::{error, info};
 
 pub struct QuestionBankService<C> {
     #[allow(dead_code)]
