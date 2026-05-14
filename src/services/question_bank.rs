@@ -652,7 +652,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                     "generate_paper: alloc_sum ({}) != req.total_marks ({}) — check failed",
                     alloc_sum, req.total_marks,
                 );
-                return Err(Error::NotEnoughQuestionsForAllocation);
+                return Err(Error::PaperMarksMismatch);
             }
 
             // Keep paper.total_marks in sync with the last generation request.

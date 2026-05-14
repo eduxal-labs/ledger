@@ -106,6 +106,8 @@ pub enum Error {
     PaperNotRevealed,
     #[error("not enough questions for topic allocation")]
     NotEnoughQuestionsForAllocation,
+    #[error("total marks mismatch: the sum of topic allocations must equal the paper's total marks")]
+    PaperMarksMismatch,
     #[error("generation in progress")]
     GenerationInProgress,
     #[error("invalid paper status transition")]
@@ -226,6 +228,9 @@ impl From<Error> for Status {
             }
             Error::NotEnoughQuestionsForAllocation => Status::failed_precondition(
                 "not enough questions in the bank for this topic/mark allocation",
+            ),
+            Error::PaperMarksMismatch => Status::invalid_argument(
+                "paper marks mismatch: the sum of topic allocation marks must equal the paper's total marks",
             ),
             Error::GenerationInProgress => {
                 Status::failed_precondition("generation already in progress")

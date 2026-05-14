@@ -112,10 +112,12 @@ impl typst::World for SingleDocWorld {
 }
 
 fn compile_typst(source: String) -> Result<Vec<u8>> {
-    let world = SingleDocWorld::new(source);
+    let world = SingleDocWorld::new(source.clone());
     let document: typst::layout::PagedDocument = typst::compile(&world).output.map_err(|errs| {
         let msgs: Vec<String> = errs.iter().map(|e| e.message.to_string()).collect();
-        crate::types::error::Error::internal(msgs.join("; "))
+        let msg = msgs.join("; ");
+        tracing::error!("Typst compilation failed: {msg}\n--- Typst source ---\n{source}\n--- end source ---");
+        crate::types::error::Error::internal(msg)
     })?;
     let options = typst_pdf::PdfOptions::default();
     typst_pdf::pdf(&document, &options).map_err(|errs| {
