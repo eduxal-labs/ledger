@@ -548,7 +548,6 @@ pub fn get_marking_status(
 pub fn select_questions_for_paper(
     conn: &mut SqliteConnection,
     topic_id: i32,
-    marks: i16,
     exclude_ids: &[i32],
     exclude_recent_student: Option<(i32, usize)>,
 ) -> Result<Vec<QuestionRow>> {
@@ -573,14 +572,13 @@ pub fn select_questions_for_paper(
     };
 
     let sql = format!(
-        "SELECT * FROM questions WHERE topic = ? AND marks = ?{}{} \
+        "SELECT * FROM questions WHERE topic = ?{}{} \
          ORDER BY RANDOM() LIMIT 30",
         exclude_clause, student_clause
     );
 
     let rows: Vec<QuestionRow> = sql_query(&sql)
         .bind::<Integer, _>(topic_id)
-        .bind::<SmallInt, _>(marks)
         .load(conn)?;
     Ok(rows)
 }

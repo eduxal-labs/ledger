@@ -309,21 +309,14 @@ async fn do_generate_exam_paper(
         papers_db::insert_paper(conn, &new_paper)
     })?;
 
-    // 5. Allocate marks equally across topics and select questions
-    let topic_count = topic_ids.len() as i16;
-    let per_topic_marks = if topic_count > 0 {
-        paper.total_marks / topic_count
-    } else {
-        0
-    };
-
+    // 5. Select questions for each topic.
     let all_questions: Vec<(i32, i16)> = CONN.with(|conn| {
         let mut questions: Vec<(i32, i16)> = Vec::new();
         let mut position: i16 = 0;
 
         for topic_id in &topic_ids {
             let selected =
-                qb::select_questions_for_paper(conn, *topic_id, per_topic_marks, &[], None)?;
+                qb::select_questions_for_paper(conn, *topic_id, &[], None)?;
             for q in &selected {
                 if let Some(id) = q.id {
                     questions.push((id, position));

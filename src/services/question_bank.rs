@@ -654,7 +654,6 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                 let selected = question_bank::select_questions_for_paper(
                     conn,
                     alloc.topic_id,
-                    alloc.total_marks as i16,
                     &[],
                     None,
                 )?;
@@ -746,7 +745,6 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
             let candidates = question_bank::select_questions_for_paper(
                 conn,
                 req.topic_id,
-                req.marks as i16,
                 &exclude,
                 None,
             )?;
