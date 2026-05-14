@@ -965,8 +965,12 @@ message InsertData {
     // ExamGradeInsert exam_grade = 35;  // REMOVED
     SchemePageInsert scheme_page = 36;
     AnswerPageInsert answer_page = 37;
+    EventInsert event = 38;
+    PaperV2Insert paper_v2 = 39;
+    PaperScheduleInsert paper_schedule = 40;
+    TaughtTopicInsert taught_topic = 41;
   }
-  reserved 35;
+  reserved 25, 35;
 }
 
 // ===========================================================================
@@ -1318,4 +1322,83 @@ message DiscountInsert {
   int32 grade = 5;
   float amount = 6;
   int32 unit = 7;
+}
+
+// table 38 — events
+// type_: 0=exam, 1=mock, 2=holiday_revision
+// status: 0=draft, 1=active, 2=completed, 3=cancelled
+message EventInsert {
+  string id = 1;
+  string school = 2;
+  string name = 3;
+  int32 type_ = 4;
+  int32 term = 5;
+  int32 year = 6;
+  int32 start_date = 7;
+  int32 end_date = 8;
+  int32 status = 9;
+  int64 created = 10;
+  int64 updated = 11;
+}
+
+// table 39 — papers (v2, UUID PK)
+// type_:            0=exam, 1=cat, 2=assessment, 3=assignment,
+//                   4=practical, 5=adaptive
+// status:           0=draft, 1=questions_set, 2=finalized, 3=revealed,
+//                   4=active, 5=completed, 6=marked
+// generation_mode:  0=class_uniform, 1=per_student
+message PaperV2Insert {
+  string id = 1;
+  string school = 2;
+  optional string event = 3;
+  int32 subject = 4;
+  int32 grade = 5;
+  optional int32 stream = 6;
+  int32 type_ = 7;
+  string teacher = 8;
+  string name = 9;
+  int32 total_marks = 10;
+  int32 duration_minutes = 11;
+  int32 date = 12;
+  int32 status = 13;
+  optional string pdf_key = 14;
+  optional string ms_key = 15;
+  int32 generation_mode = 16;
+  optional string instructions = 17;
+  int64 created = 18;
+  int64 updated = 19;
+}
+
+// table 40 — paper_schedules
+// generation_status: 0=pending, 1=generating, 2=generated, 3=failed
+message PaperScheduleInsert {
+  string id = 1;
+  string event = 2;
+  int32 subject = 3;
+  int32 grade = 4;
+  optional int32 stream = 5;
+  int32 date = 6;
+  int32 start_time = 7;
+  int32 end_time = 8;
+  int32 duration_minutes = 9;
+  optional string invigilator = 10;
+  optional string paper = 11;
+  int32 generation_status = 12;
+  int64 reveal_at = 13;
+  int64 generate_at = 14;
+  int64 created = 15;
+}
+
+// table 41 — taught_topics
+// status: 0=not_started, 1=in_progress, 2=completed
+message TaughtTopicInsert {
+  string school = 1;
+  int32 subject = 2;
+  int32 grade = 3;
+  optional int32 stream = 4;
+  int32 topic = 5;
+  string taught_by = 6;
+  int32 status = 7;
+  optional int32 taught_date = 8;
+  int64 updated = 9;
 }
