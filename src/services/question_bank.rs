@@ -639,8 +639,19 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
             // Load paper
             let paper = papers_db::get_paper(conn, &req.paper_id)?.ok_or(Error::PaperNotFound)?;
 
+            info!(
+                "generate_paper: paper_id={} paper_total_marks={} n_allocations={}",
+                req.paper_id,
+                paper.total_marks,
+                req.topic_allocations.len(),
+            );
+
             let alloc_sum: i32 = req.topic_allocations.iter().map(|ta| ta.total_marks).sum();
             if alloc_sum != paper.total_marks as i32 {
+                error!(
+                    "generate_paper: alloc_sum ({}) != paper.total_marks ({}) — check failed",
+                    alloc_sum, paper.total_marks,
+                );
                 return Err(Error::NotEnoughQuestionsForAllocation);
             }
 
@@ -659,8 +670,19 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                 )?;
 
                 if selected.is_empty() {
+                    error!(
+                        "generate_paper: no questions found for topic_id={} alloc_marks={}",
+                        alloc.topic_id, alloc.total_marks,
+                    );
                     return Err(Error::NotEnoughQuestionsForAllocation);
                 }
+
+                info!(
+                    "generate_paper: topic_id={} alloc_marks={} candidates={}",
+                    alloc.topic_id,
+                    alloc.total_marks,
+                    selected.len(),
+                );
 
                 let mut remaining = alloc.total_marks as i16;
                 for q in &selected {
