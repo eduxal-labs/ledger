@@ -173,7 +173,7 @@ pub fn build_exam_paper_typst(input: &PaperPdfInput) -> String {
     doc.push_str(&format!("#align(center)[{}]\n", subject_line));
     if let Some(dur) = input.duration_minutes {
         doc.push_str(&format!(
-            "#align(center, text(size: 10pt))[Time Allowed: {} minutes]\n",
+            "#align(center, text(size: 10pt)[Time Allowed: {} minutes])\n",
             dur
         ));
     }
