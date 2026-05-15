@@ -512,27 +512,32 @@ async fn do_generate_per_student_paper(
 
 // ── Enqueue helpers ───────────────────────────────────────────────────────────
 
-/// Enqueue per-student generation for an Assessment paper.
-/// Spawns a background task that generates one PDF per enrolled student.
+/// Generate per-student PDFs for an Assessment paper.
+/// Waits for all student PDFs to complete before returning so the caller
+/// (e.g. the download flow) can rely on them being ready.
 pub async fn enqueue_assessment(paper_id: &str) {
     let paper_id = paper_id.to_string();
-    tokio::spawn(async move {
-        let students = CONN.with(|conn| {
-            let paper = papers_db::get_paper(conn, &paper_id)?.ok_or(Error::PaperNotFound)?;
-            papers_db::get_enrolled_students(conn, &paper.school, paper.grade, paper.stream)
-        });
-        match students {
-            Ok(list) => {
-                for student in list {
-                    let pid = paper_id.clone();
-                    tokio::spawn(async move {
-                        generate_per_student_paper(&pid, student).await;
-                    });
-                }
-            }
-            Err(e) => error!("enqueue_assessment: failed to load enrolled students: {e}"),
+    let students = match CONN.with(|conn| {
+        let paper = papers_db::get_paper(conn, &paper_id)?.ok_or(Error::PaperNotFound)?;
+        papers_db::get_enrolled_students(conn, &paper.school, paper.grade, paper.stream)
+    }) {
+        Ok(list) => list,
+        Err(e) => {
+            error!("enqueue_assessment: failed to load enrolled students: {e}");
+            return;
         }
-    });
+    };
+
+    let mut handles = Vec::with_capacity(students.len());
+    for student in students {
+        let pid = paper_id.clone();
+        handles.push(tokio::spawn(async move {
+            generate_per_student_paper(&pid, student).await;
+        }));
+    }
+    for handle in handles {
+        let _ = handle.await;
+    }
 }
 
 /// Enqueue per-student generation for an Assignment paper.
