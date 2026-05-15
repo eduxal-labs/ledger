@@ -706,13 +706,16 @@ fn query_paper_schedules(conn: &mut Conn, since: Option<i64>) -> Result<Vec<Snap
     )
 }
 
-const SQL_TAUGHT_TOPICS: &str = "SELECT school, subject, grade, stream, topic, taught_by, status, taught_date, updated FROM taught_topics";
+// Wrapped in a subquery that aliases `updated` AS `created` so the generic
+// build_sql WHERE clause (`created >= $1`) works even though taught_topics
+// has no `created` column — it only has `updated`.
+const SQL_TAUGHT_TOPICS: &str = "SELECT * FROM (SELECT school, subject, grade, stream, topic, taught_by, status, taught_date, updated, updated AS created FROM taught_topics)";
 
 fn query_taught_topics(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
     load_rows::<TaughtTopicRow, _>(
         conn,
         SQL_TAUGHT_TOPICS,
-        true, // has `updated` column
+        false, // taught_topics has no `created` column; the subquery aliases updated→created
         since,
         "taught_topics",
         |r| SnapshotRow {
