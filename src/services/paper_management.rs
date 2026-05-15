@@ -76,8 +76,13 @@ impl<C: Send + Sync + 'static> PaperManagement for PaperManagementServiceImpl<C>
         })?;
 
         let _ = changelog::LOG.with(|cell| {
-            cell.borrow_mut()
-                .append(&Record::new(user, 40, 0, 0))
+            cell.borrow_mut().append(&Record {
+                user: user.bytes(),
+                table: 40,
+                op: 0,
+                columns: 0,
+                created: now,
+            })
         });
         changelog::NOTIFY.notify_waiters();
 
@@ -96,9 +101,15 @@ impl<C: Send + Sync + 'static> PaperManagement for PaperManagementServiceImpl<C>
             pm_db::assign_invigilator(conn, &req.schedule_id, req.invigilator.as_deref())
         })?;
 
+        // paper_schedules has no `updated` column — force full snapshot.
         let _ = changelog::LOG.with(|cell| {
-            cell.borrow_mut()
-                .append(&Record::new(user, 40, 0, 0))
+            cell.borrow_mut().append(&Record {
+                user: user.bytes(),
+                table: 40,
+                op: 0,
+                columns: 0,
+                created: 0,
+            })
         });
         changelog::NOTIFY.notify_waiters();
 
@@ -147,9 +158,15 @@ impl<C: Send + Sync + 'static> PaperManagement for PaperManagementServiceImpl<C>
             pm_db::update_schedule(conn, &req.schedule_id, update)
         })?;
 
+        // paper_schedules has no `updated` column — force full snapshot.
         let _ = changelog::LOG.with(|cell| {
-            cell.borrow_mut()
-                .append(&Record::new(user, 40, 0, 0))
+            cell.borrow_mut().append(&Record {
+                user: user.bytes(),
+                table: 40,
+                op: 0,
+                columns: 0,
+                created: 0,
+            })
         });
         changelog::NOTIFY.notify_waiters();
 
@@ -192,8 +209,13 @@ impl<C: Send + Sync + 'static> PaperManagement for PaperManagementServiceImpl<C>
         })?;
 
         let _ = changelog::LOG.with(|cell| {
-            cell.borrow_mut()
-                .append(&Record::new(user, 41, 0, 0))
+            cell.borrow_mut().append(&Record {
+                user: user.bytes(),
+                table: 41,
+                op: 0,
+                columns: 0,
+                created: now,
+            })
         });
         changelog::NOTIFY.notify_waiters();
 

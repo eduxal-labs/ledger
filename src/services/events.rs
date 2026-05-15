@@ -61,8 +61,13 @@ impl<C: Send + Sync + 'static> EventService for EventServiceImpl<C> {
             events_db::insert_event(conn, &new_event)
         })?;
         let _ = changelog::LOG.with(|cell| {
-            cell.borrow_mut()
-                .append(&Record::new(user, 38, 0, 0))
+            cell.borrow_mut().append(&Record {
+                user: user.bytes(),
+                table: 38,
+                op: 0,
+                columns: 0,
+                created: now,
+            })
         });
         changelog::NOTIFY.notify_waiters();
         Ok(CreateEventResponse {
@@ -100,6 +105,7 @@ impl<C: Send + Sync + 'static> EventService for EventServiceImpl<C> {
         req: UpdateEventRequest,
     ) -> Result<UpdateEventResponse> {
         let user = token.user;
+        let now = chrono::Utc::now().timestamp();
         let event = CONN.with(|conn| {
             let update = EventUpdate {
                 name: req.name.clone(),
@@ -109,13 +115,18 @@ impl<C: Send + Sync + 'static> EventService for EventServiceImpl<C> {
                 start_date: req.start_date,
                 end_date: req.end_date,
                 status: req.status.and_then(|s| (s as i16).try_into().ok()),
-                updated: Some(chrono::Utc::now().timestamp()),
+                updated: Some(now),
             };
             events_db::update_event(conn, &req.event_id, update)
         })?;
         let _ = changelog::LOG.with(|cell| {
-            cell.borrow_mut()
-                .append(&Record::new(user, 38, 0, 0))
+            cell.borrow_mut().append(&Record {
+                user: user.bytes(),
+                table: 38,
+                op: 0,
+                columns: 0,
+                created: now,
+            })
         });
         changelog::NOTIFY.notify_waiters();
         Ok(UpdateEventResponse {

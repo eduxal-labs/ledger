@@ -87,10 +87,16 @@ impl<C: Send + Sync + 'static> PaperService for PaperServiceImpl<C> {
             }
             Ok(paper)
         })?;
-        // Write changelog record so sync clients receive the new paper
+        // Write changelog record so sync clients receive the new paper.
+        // Use the same timestamp as the row so snapshot_table_since finds it.
         let _ = changelog::LOG.with(|cell| {
-            cell.borrow_mut()
-                .append(&Record::new(user, 39, 0, 0))
+            cell.borrow_mut().append(&Record {
+                user: user.bytes(),
+                table: 39,
+                op: 0,
+                columns: 0,
+                created: now,
+            })
         });
         changelog::NOTIFY.notify_waiters();
         Ok(CreatePaperResponse {
@@ -134,6 +140,7 @@ impl<C: Send + Sync + 'static> PaperService for PaperServiceImpl<C> {
         req: UpdatePaperRequest,
     ) -> Result<UpdatePaperResponse> {
         let user = token.user;
+        let now = chrono::Utc::now().timestamp();
         let paper = CONN.with(|conn| {
             let existing =
                 papers_db::get_paper(conn, &req.paper_id)?.ok_or(Error::PaperNotFound)?;
@@ -147,14 +154,19 @@ impl<C: Send + Sync + 'static> PaperService for PaperServiceImpl<C> {
                 date: req.date,
                 instructions: req.instructions.map(Some),
                 generation_mode: req.generation_mode.and_then(|m| (m as i16).try_into().ok()),
-                updated: Some(chrono::Utc::now().timestamp()),
+                updated: Some(now),
                 ..Default::default()
             };
             papers_db::update_paper(conn, &req.paper_id, update)
         })?;
         let _ = changelog::LOG.with(|cell| {
-            cell.borrow_mut()
-                .append(&Record::new(user, 39, 0, 0))
+            cell.borrow_mut().append(&Record {
+                user: user.bytes(),
+                table: 39,
+                op: 0,
+                columns: 0,
+                created: now,
+            })
         });
         changelog::NOTIFY.notify_waiters();
         Ok(UpdatePaperResponse {
@@ -206,9 +218,15 @@ impl<C: Send + Sync + 'static> PaperService for PaperServiceImpl<C> {
                 .map_err(|_| Error::NotFound)?;
             papers_db::force_set_paper_status(conn, &req.paper_id, status)
         })?;
+        // Use created=0 because force_set_paper_status doesn't update timestamps.
         let _ = changelog::LOG.with(|cell| {
-            cell.borrow_mut()
-                .append(&Record::new(user, 39, 0, 0))
+            cell.borrow_mut().append(&Record {
+                user: user.bytes(),
+                table: 39,
+                op: 0,
+                columns: 0,
+                created: 0,
+            })
         });
         changelog::NOTIFY.notify_waiters();
         Ok(ForceSetPaperStatusResponse {
