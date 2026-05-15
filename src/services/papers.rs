@@ -233,4 +233,19 @@ impl<C: Send + Sync + 'static> PaperService for PaperServiceImpl<C> {
             paper: Some(paper_to_proto(&paper)),
         })
     }
+
+    async fn delete_paper(
+        &self,
+        _token: Token,
+        req: DeletePaperRequest,
+    ) -> Result<DeletePaperResponse> {
+        CONN.with(|conn| {
+            papers_db::delete_paper(conn, &req.paper_id)
+        })?;
+        let _ = changelog::LOG.with(|cell| {
+            cell.borrow_mut().append_delete(39, &req.paper_id)
+        });
+        changelog::NOTIFY.notify_waiters();
+        Ok(DeletePaperResponse {})
+    }
 }

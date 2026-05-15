@@ -63,6 +63,12 @@ pub trait PaperService: Sync + Send + 'static + Sized {
         token: Token,
         request: ForceSetPaperStatusRequest,
     ) -> impl Future<Output = Result<ForceSetPaperStatusResponse>> + Send;
+
+    fn delete_paper(
+        &self,
+        token: Token,
+        request: DeletePaperRequest,
+    ) -> impl Future<Output = Result<DeletePaperResponse>> + Send;
 }
 
 #[tonic::async_trait]
@@ -129,6 +135,15 @@ impl<T: PaperService> paper_service_server::PaperService for T {
         let token = extract_token(&request)?;
         let response =
             PaperService::force_set_paper_status(self, token, request.into_inner()).await?;
+        Ok(Response::new(response))
+    }
+
+    async fn delete_paper(
+        &self,
+        request: Request<DeletePaperRequest>,
+    ) -> std::result::Result<Response<DeletePaperResponse>, Status> {
+        let token = extract_token(&request)?;
+        let response = PaperService::delete_paper(self, token, request.into_inner()).await?;
         Ok(Response::new(response))
     }
 }

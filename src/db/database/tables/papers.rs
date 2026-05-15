@@ -273,3 +273,10 @@ pub fn get_enrolled_students(
 
     Ok(rows.into_iter().map(|r| r.student).collect())
 }
+
+pub fn delete_paper(conn: &mut SqliteConnection, paper_id: &str) -> Result<()> {
+    diesel::delete(papers::table.filter(papers::id.eq(paper_id)))
+        .execute(conn)
+        .map_err(Error::internal)?;
+    Ok(())
+}
