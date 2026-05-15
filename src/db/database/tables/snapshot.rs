@@ -687,7 +687,7 @@ fn query_papers_v2(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRo
     })
 }
 
-const SQL_PAPER_SCHEDULES: &str = "SELECT id, event, subject, grade, stream, date, start_time, end_time, duration_minutes, invigilator, paper, generation_status, reveal_at, generate_at, created FROM paper_schedules";
+const SQL_PAPER_SCHEDULES: &str = "SELECT * FROM (SELECT ps.id, ps.event, e.school, ps.subject, ps.grade, ps.stream, ps.date, ps.start_time, ps.end_time, ps.duration_minutes, ps.invigilator, ps.paper, ps.generation_status, ps.reveal_at, ps.generate_at, ps.created FROM paper_schedules ps JOIN events e ON e.id = ps.event)";
 
 fn query_paper_schedules(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
     load_rows::<PaperScheduleRow, _>(

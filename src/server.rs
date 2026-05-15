@@ -34,8 +34,9 @@ pub async fn start() -> Result<()> {
     //
     // This also ensures clients receive the corrected topic grade codes after the
     // 2026-04-15-000000-0004_fix_topic_grades migration updates them from 1–4 to 41–44.
-    for table in [31u8, 32u8] {
-        // 31 = SubjectCatalog, 32 = Topics
+    // Emit resync records so clients with non-zero cursors receive all rows.
+    // 31=SubjectCatalog, 32=Topics, 38=Events, 39=PapersV2, 40=PaperSchedules, 41=TaughtTopics
+    for table in [31u8, 32u8, 38u8, 39u8, 40u8, 41u8] {
         let record = Record {
             user: Id::system().bytes(),
             table,
@@ -47,7 +48,7 @@ pub async fn start() -> Result<()> {
             eprintln!("[STARTUP] Warning: failed to emit resync for table {table}: {e}");
         }
     }
-    tracing::info!("[STARTUP] Emitted subject-catalog + topics resync changelog records");
+    tracing::info!("[STARTUP] Emitted catalog + papers + events resync changelog records");
 
     tokio::spawn(crate::services::generation::run_generation_scheduler());
 

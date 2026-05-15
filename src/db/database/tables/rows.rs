@@ -2027,6 +2027,8 @@ pub struct PaperScheduleRow {
     pub id: String,
     #[diesel(sql_type = diesel::sql_types::Text)]
     pub event: String,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub school: String,
     #[diesel(sql_type = diesel::sql_types::Integer)]
     pub subject: i32,
     #[diesel(sql_type = diesel::sql_types::SmallInt)]
@@ -2060,7 +2062,7 @@ impl PaperScheduleRow {
         self.id.clone()
     }
     pub fn school_id(&self) -> Option<String> {
-        None
+        Some(self.school.clone())
     }
 }
 
