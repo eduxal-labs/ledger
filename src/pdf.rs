@@ -142,7 +142,9 @@ pub fn build_exam_paper_typst(input: &PaperPdfInput) -> String {
         "#align(center, text(weight: \"bold\", size: 14pt)[{}])\n",
         escape_typst(input.school_name)
     ));
-    if let Some(motto) = input.school_motto {
+    if let Some(motto) = input.school_motto
+        .filter(|m| !m.is_empty() && *m != "unknown" && *m != "null" && *m != "none")
+    {
         doc.push_str(&format!(
             "#align(center, text(style: \"italic\", size: 10pt)[{}])\n",
             escape_typst(motto)
@@ -183,7 +185,7 @@ pub fn build_exam_paper_typst(input: &PaperPdfInput) -> String {
     // Instructions
     if let Some(instrs) = input.instructions {
         doc.push_str("#block(stroke: 1pt, inset: 8pt, width: 100%)[\n");
-        doc.push_str("  *Instructions:* \\\\\n");
+        doc.push_str("  *Instructions:* \\\n");
         doc.push_str(&format!("  {}\n", escape_typst(instrs)));
         doc.push_str("]\n");
     }
@@ -394,9 +396,18 @@ pub fn build_student_exam_paper_typst(
     );
 
     // Insert after the instructions block (before the first question)
-    if let Some(pos) = base.rfind("#v(5mm)\n\n") {
-        let insert_at = pos + "#v(5mm)\n\n".len();
+    let marker = "#v(5mm)\n\n";
+    if let Some(pos) = base.find(marker) {
+        let insert_at = pos + marker.len();
         base.insert_str(insert_at, &student_block);
+    } else {
+        // Fallback: append before any content after the header area.
+        // This should not happen, but if it does the student info is
+        // still included rather than silently dropped.
+        tracing::warn!(
+            "build_student_exam_paper_typst: marker not found, appending student block at end"
+        );
+        base.push_str(&student_block);
     }
 
     base
