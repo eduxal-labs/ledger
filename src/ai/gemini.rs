@@ -2,8 +2,8 @@ use serde::Deserialize;
 use std::sync::Arc;
 use std::time::Instant;
 
-const MODEL: &str = "gemini-2.5-flash";
-const FALLBACK_MODEL: &str = "gemini-2.0-flash";
+const MODEL: &str = "gemini-3.1-flash-lite-preview";
+const FALLBACK_MODEL: &str = "gemini-2.5-flash-lite";
 
 /// Max concurrent Gemini API requests when marking multiple students.
 const MAX_CONCURRENT: usize = 4;
@@ -180,20 +180,35 @@ You will receive a marking scheme and ONE student's answer sheets. Mark ONLY thi
 
 ### Step 1 — Analyse the Marking Scheme
 - Read every page of the marking scheme carefully.
-- For each question/sub-question, identify: the mark allocation (e.g. M1, A1, B1, or just "1 mark"), the expected answer or acceptable range, and any special rubric instructions.
-- Determine the TOTAL marks for the paper by summing all individual mark allocations.
-- Note any follow-through (FT) annotations, alternative acceptable answers, or "Accept" notes.
+- For each question/sub-question, identify: the mark allocation (e.g. M1, A1, B1, or just "1 mark"), the expected answer or acceptable range, and the rubric criteria.
+- **The rubric criteria are your PRIMARY scoring tool.** Each criterion tells you exactly what to look for in the student's answer. Treat them as your checklist.
+- Determine the TOTAL marks for the paper by summing all individual question mark allocations.
+- Note any follow-through (FT) annotations, alternative acceptable answers ("Accept", "OR"), or required qualifiers ("must mention X").
 
-### Step 2 — Mark the Student
+### Step 2 — Mark the Student Using the Rubric
 - Go through EVERY question in the marking scheme order.
-- For each mark point, decide whether to award it based on the rules below.
-- Record the marks awarded per question and a brief justification.
-- Sum the per-question marks to get the student's total score.
+- **For each question, check the rubric criteria FIRST** before comparing against the model answer. The rubric tells you what specific elements earn marks.
+- Match each rubric criterion against the student's answer:
+  - **Full match**: the student's answer contains the exact concept/fact/step the criterion demands → award full marks for that criterion.
+  - **Partial match**: the student's answer is on the right track but incomplete or imprecise → award partial marks proportional to how much of the criterion was satisfied.
+  - **No match**: the criterion is not addressed at all → award 0 for that criterion.
+  - **OR criteria**: if the rubric says "Accept X OR Y", award the criterion if the student gives either.
+- Sum the awarded criterion marks to get the question score. **CAP the question score at the question's own allocated mark total** — rubric criteria marks are scoring guides, and their sum may exceed the question's maximum to provide marking flexibility.
+- Record a brief justification per question stating which criteria were met, which were missed, and why any marks were deducted.
+
+## Understanding Rubric Criteria Structure
+
+Rubric criteria come in several forms. Recognise them:
+
+1. **Point-by-point criteria** — each criterion is a distinct mark point. Award each independently based on whether the student's answer contains it.
+2. **Band descriptors** — criteria organised in bands (e.g. 0-2, 3-4, 5-6 marks). Place the student in the band that best matches their overall answer quality, then fine-tune within the band.
+3. **Negative criteria** — criteria that say "deduct 1 mark if missing/incorrect." Apply these as deductions from the question total, not as positive awards.
+4. **Compound criteria** — a single criterion that requires multiple elements (e.g. "correct formula AND substitution AND final answer"). Award proportionally — if 2 of 3 elements are present, award ~⅔ of the criterion's marks.
 
 ## Mark Types
 
-- **B marks** (standalone): Awarded for a correct result, fact, or statement. No working is required.
-- **M marks** (method): Awarded for a correct method, procedure, or approach — even if the numbers used are wrong (provided they come from the student's own earlier working). M marks reward the PROCESS, not the answer.
+- **B marks** (standalone): Awarded for a correct result, fact, or statement. No working is required. A B mark is earned if the rubric criterion for that fact/result is satisfied.
+- **M marks** (method): Awarded for a correct method, procedure, or approach — even if the numbers used are wrong (provided they come from the student's own earlier working). M marks reward the PROCESS, not the answer. Award the M mark if the rubric criterion describing the method is satisfied.
 - **A marks** (accuracy): Awarded for a correct final answer following correct method. An A mark CANNOT be awarded if the preceding M mark was not earned — UNLESS the rubric explicitly indicates otherwise.
 - **FT marks** (follow-through): Awarded when a student uses their own incorrect value from an earlier step and applies correct method/reasoning with it in subsequent steps.
 
@@ -212,6 +227,15 @@ This is the most important marking principle. Apply it rigorously:
    - The rubric explicitly states "No FT" for that mark.
 
 Example: If the marking scheme awards M1 for method, A1 for correct answer on a two-step problem, and the student makes an arithmetic slip in step 1 (losing A1) but applies perfectly correct method in step 2 using their wrong value — award the M1 for step 2 and the A1-FT if their final answer is consistent with their earlier error.
+
+## Partial Credit Guidelines
+
+When a student's answer partially satisfies a rubric criterion:
+- **Concept present but incomplete**: award 50-70% of the criterion's marks.
+- **Correct approach but execution flawed**: award the method portion, deduct the accuracy portion.
+- **Multiple criteria, some met and some not**: award only the met criteria; do not average across all criteria.
+- **Vague or imprecise language that still conveys the idea**: award 50% of the criterion's marks.
+- **Correct answer with no shown working**: award accuracy marks but NOT method marks (unless the rubric says working is not required).
 
 ## Benefit of the Doubt
 
@@ -251,26 +275,32 @@ Accept ANY mathematically, scientifically, or linguistically equivalent answer u
 
 For English, Kiswahili, and essay-based questions in any subject:
 - Mark according to the rubric's assessment criteria (content, language, organisation, etc.).
-- Award marks within the rubric's band descriptors.
+- Use the rubric's band descriptors as your primary reference — place the answer in the band that best fits, then fine-tune.
 - Do not penalise for dialect variations that are acceptable in the Kenyan curriculum context.
 
 ## Rubric Marks vs Question Marks (CRITICAL)
 
-Rubric criteria marks are GUIDELINES only, not a cap on what a student can earn. They may exceed a question's total allocated marks to provide variety in acceptable answers. The MAXIMUM marks a student can earn for any question is the question's own allocated marks — NOT the sum of rubric criteria marks.
+Rubric criteria marks are SCORING GUIDES, not a cap on what a student can earn. They may exceed a question's total allocated marks to provide variety in acceptable answers. The MAXIMUM marks a student can earn for any question is the question's own allocated marks — NOT the sum of rubric criteria marks.
 
-Example: A question worth 3 marks may have rubric criteria listing 8 possible mark points. A student who hits 3 of those points earns the full 3 marks. A student cannot earn more than 3 marks for this question, even if they satisfy every rubric criterion.
+Marking algorithm per question:
+1. Go through every rubric criterion. Award marks for each criterion the student satisfies.
+2. Sum the awarded criterion marks.
+3. Cap the total at the question's allocated marks (a student cannot exceed the question max).
+4. This means: if a question is worth 3 marks and the rubric has 8 criteria totalling 15 marks, the student gets min(sum of met criteria, 3).
+
+Example: A question worth 3 marks may have rubric criteria listing 8 possible mark points. A student who hits 3 of those points earns the full 3 marks. A student who hits only 2 criteria gets 2 marks. A student who somehow hits all 8 criteria still gets only 3 marks (the question cap).
 
 ## Output Format
 
 Return ONLY a JSON object with exactly one entry in the results array (for the single student you are marking):
 
-{"results": [{"adm": <integer>, "score": <number>, "total": <integer>, "breakdown": [{"q": "<question number>", "awarded": <number>, "out_of": <number>, "note": "<one-sentence justification>"}]}]}
+{"results": [{"adm": <integer>, "score": <number>, "total": <integer>, "breakdown": [{"q": "<question number>", "awarded": <number>, "out_of": <number>, "note": "<one-sentence justification: which rubric criteria were met, which were missed, follow-through or deductions applied>"}]}]}
 
 Rules:
 - Every question in the marking scheme MUST appear in the breakdown.
 - The sum of all "awarded" values MUST equal "score".
 - The sum of all "out_of" values MUST equal "total".
-- The "note" should be concise: what was awarded and why, especially noting follow-through or deductions."#;
+- The "note" must reference rubric criteria explicitly (e.g. "Met criteria 1-3 (definition, formula, substitution), missed criterion 4 (wrong final answer) → 3/4")."#;
 
 // -- Implementation --
 
@@ -341,7 +371,7 @@ impl GeminiClient {
         let mut parts = Vec::with_capacity(scheme_urls.len() + 1);
 
         parts.push(serde_json::json!({
-            "text": "## MARKING SCHEME\n\nThe following images contain the marking scheme for this paper. Study them carefully to identify every question, sub-question, mark allocation, expected answer, and any rubric notes (such as FT, Accept, OR, etc.). Determine the total marks for the paper by summing all QUESTION mark allocations. Note: rubric criteria marks are guides that may exceed a question's allocated marks — a question's max score is its own mark allocation, not the sum of its rubric criteria."
+            "text": "## MARKING SCHEME\n\nThe following images contain the marking scheme for this paper. Study them carefully to identify every question, sub-question, mark allocation, rubric criterion, expected answer, and any rubric notes (such as FT, Accept, OR, etc.). The rubric criteria are your PRIMARY scoring tool — they tell you exactly what to look for in the student's answer. Determine the total marks for the paper by summing all QUESTION mark allocations. Note: rubric criteria marks are scoring guides that may exceed a question's allocated marks to provide flexibility — always cap the awarded marks at the question's own mark allocation."
         }));
 
         for (i, url) in scheme_urls.iter().enumerate() {
@@ -382,14 +412,16 @@ impl GeminiClient {
 Mark student ADM {} against the marking scheme above.
 
 Remember:
+- Use the rubric criteria as your PRIMARY checklist for each question.
+- Match each criterion against the student's answer: full match → full marks for that criterion; partial match → proportional marks; no match → 0.
+- Sum the met criteria marks, then CAP at the question's own allocated marks.
 - Apply follow-through (FT) marking: only deduct at the point of error, not at every subsequent step.
 - Accept equivalent forms unless the rubric explicitly requires a specific form.
 - Give benefit of the doubt on ambiguous handwriting.
-- The total marks must be determined from the marking scheme (sum of all QUESTION mark allocations, NOT the sum of rubric criteria marks — rubric marks are guides that may exceed a question's allocated marks).
 
 Return ONLY valid JSON with exactly one result entry for this student:
 
-{{"results": [{{"adm": {}, "score": <marks_awarded>, "total": <total_marks_for_paper>, "breakdown": [{{"q": "<question number>", "awarded": <number>, "out_of": <number>, "note": "<one-sentence justification>"}}]}}]}}"#,
+{{"results": [{{"adm": {}, "score": <marks_awarded>, "total": <total_marks_for_paper>, "breakdown": [{{"q": "<question number>", "awarded": <number>, "out_of": <number>, "note": "<which rubric criteria were met/missed, and why>"}}]}}]}}"#,
             adm, adm
         );
         parts.push(serde_json::json!({ "text": final_instruction }));
@@ -560,14 +592,16 @@ Return ONLY valid JSON with exactly one result entry for this student:
 Mark student ADM {} against the marking scheme above.
 
 Remember:
+- Use the rubric criteria as your PRIMARY checklist for each question.
+- Match each criterion against the student's answer: full match → full marks for that criterion; partial match → proportional marks; no match → 0.
+- Sum the met criteria marks, then CAP at the question's own allocated marks.
 - Apply follow-through (FT) marking: only deduct at the point of error, not at every subsequent step.
 - Accept equivalent forms unless the rubric explicitly requires a specific form.
 - Give benefit of the doubt on ambiguous handwriting.
-- The total marks must be determined from the marking scheme (sum of all QUESTION mark allocations, NOT the sum of rubric criteria marks — rubric marks are guides that may exceed a question's allocated marks).
 
 Return ONLY valid JSON with exactly one result entry for this student:
 
-{{"results": [{{"adm": {}, "score": <marks_awarded>, "total": <total_marks_for_paper>, "breakdown": [{{"q": "<question number>", "awarded": <number>, "out_of": <number>, "note": "<one-sentence justification>"}}]}}]}}"#,
+{{"results": [{{"adm": {}, "score": <marks_awarded>, "total": <total_marks_for_paper>, "breakdown": [{{"q": "<question number>", "awarded": <number>, "out_of": <number>, "note": "<which rubric criteria were met/missed, and why>"}}]}}]}}"#,
             adm, adm
         );
         parts.push(serde_json::json!({ "text": final_instruction }));
@@ -582,7 +616,7 @@ Return ONLY valid JSON with exactly one result entry for this student:
                 "responseMimeType": "application/json",
                 "temperature": 0,
                 "thinkingConfig": {
-                    "thinkingLevel": "low"
+                    "thinkingLevel": "medium"
                 }
             }
         });
@@ -914,7 +948,7 @@ Return ONLY valid JSON with exactly one result entry for this student:
                 "responseMimeType": "application/json",
                 "temperature": 0,
                 "thinkingConfig": {
-                    "thinkingLevel": "low"
+                    "thinkingLevel": "medium"
                 }
             }
         });
@@ -1124,7 +1158,7 @@ Return ONLY valid JSON with exactly one result entry for this student:
 
         // Step C — Push the final instruction text part
         parts.push(serde_json::json!({
-            "text": "Mark every question listed above for this student. Find each question's answer in the student's answer sheets shown, then score it against its rubric criteria.\n\nReturn ONLY valid JSON:\n{\"results\": [\n  {\"question_id\": <integer>, \"score\": <number>, \"feedback\": \"<one-sentence justification>\"},\n  ...\n]}\n\nRules:\n- Every question_id listed above MUST appear exactly once in results.\n- score for each question MUST be >= 0 and MUST NOT exceed that question's total marks (the question's own allocated marks, NOT the sum of rubric criteria marks — rubric marks are guides only and may exceed the question's marks to provide variety).\n- Partial credit is allowed and expected for partially correct answers."
+            "text": "Mark every question listed above for this student. Find each question's answer in the student's answer sheets, then score it using its rubric criteria as your primary checklist:\n\n1. Go through each rubric criterion — full match → full marks for that criterion; partial match → proportional marks; no match → 0.\n2. Sum the awarded criterion marks.\n3. CAP at the question's own allocated marks (the question's max, NOT the sum of rubric criteria).\n\nReturn ONLY valid JSON:\n{\"results\": [\n  {\"question_id\": <integer>, \"score\": <number>, \"feedback\": \"<which rubric criteria met/missed and why>\"},\n  ...\n]}\n\nRules:\n- Every question_id listed above MUST appear exactly once in results.\n- score for each question MUST be >= 0 and MUST NOT exceed that question's total marks.\n- Partial credit is mandatory for partially correct answers — never give 0 unless nothing is correct."
         }));
 
         // Step D — Build the request body (cachedContent pattern)
@@ -1134,7 +1168,7 @@ Return ONLY valid JSON with exactly one result entry for this student:
             "generationConfig": {
                 "responseMimeType": "application/json",
                 "temperature": 0,
-                "thinkingConfig": { "thinkingLevel": "low" }
+                "thinkingConfig": { "thinkingLevel": "medium" }
             }
         });
 

@@ -336,7 +336,7 @@ async fn prepare(gemini: &GeminiClient, req: MarkRequest) -> PreparedRequest {
 
     let mut scheme_parts = Vec::with_capacity(req.scheme_get_urls.len() + 1);
     scheme_parts.push(serde_json::json!({
-        "text": "## MARKING SCHEME\n\nThe following images contain the marking scheme for this paper. Study them carefully to identify every question, sub-question, mark allocation, expected answer, and any rubric notes (such as FT, Accept, OR, etc.). Determine the total marks for the paper by summing all QUESTION mark allocations. Note: rubric criteria marks are guides that may exceed a question's allocated marks — a question's max score is its own mark allocation, not the sum of its rubric criteria."
+        "text": "## MARKING SCHEME\n\nThe following images contain the marking scheme for this paper. Study them carefully to identify every question, sub-question, mark allocation, rubric criterion, expected answer, and any rubric notes (such as FT, Accept, OR, etc.). The rubric criteria are your PRIMARY scoring tool — they tell you exactly what to look for in the student's answer. Determine the total marks for the paper by summing all QUESTION mark allocations. Note: rubric criteria marks are scoring guides that may exceed a question's allocated marks to provide flexibility — always cap the awarded marks at the question's own mark allocation."
     }));
 
     for (i, maybe_b64) in scheme_b64.iter().enumerate() {
