@@ -134,7 +134,7 @@ pub fn build_exam_paper_typst(input: &PaperPdfInput) -> String {
 
     // Page setup
     doc.push_str("#set page(paper: \"a4\", margin: (top: 20mm, bottom: 25mm, left: 20mm, right: 20mm), numbering: \"1\")\n");
-    doc.push_str("#set text(font: \"New Computer Modern\", size: 11pt)\n");
+    doc.push_str("#set text(font: \"New Computer Modern\", size: 9pt)\n");
     doc.push_str("#set par(justify: true)\n\n");
 
     // Header — clean centred layout with horizontal rules
@@ -261,10 +261,12 @@ fn render_answer_space(
 ) {
     match space_type {
         0 => {
-            // Lines
+            // Lines — add space before the first line so it doesn't sit on
+            // the question text, and use tighter inter-line spacing.
             let n = lines.unwrap_or(4);
+            doc.push_str("#v(3mm)\n");
             for _ in 0..n {
-                doc.push_str("#line(length: 100%)\n#v(5mm)\n");
+                doc.push_str("#line(length: 100%)\n#v(4mm)\n");
             }
         }
         1 | 2 | 3 | 4 => {
@@ -287,7 +289,7 @@ pub fn build_marking_scheme_typst(input: &PaperPdfInput) -> String {
     let mut doc = String::new();
 
     doc.push_str("#set page(paper: \"a4\", margin: (top: 20mm, bottom: 25mm, left: 20mm, right: 20mm), numbering: \"1\")\n");
-    doc.push_str("#set text(font: \"New Computer Modern\", size: 11pt)\n");
+    doc.push_str("#set text(font: \"New Computer Modern\", size: 9pt)\n");
     doc.push_str("#set par(justify: true)\n\n");
 
     // Header with MARKING SCHEME title
