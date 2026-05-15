@@ -1136,6 +1136,7 @@ async fn watch_loop(
                 _ = notify.notified() => {
                     info!(user_id = %current_user.id, "[SYNC] WATCH → woke up via notify");
                 },
+                _ = crate::db::changelog::NOTIFY.notified() => {},
                 _ = tokio::time::sleep(POLL_INTERVAL) => {},
             }
             continue;

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::db::changelog::{self, Record};
 use crate::db::database::CONN;
 use crate::db::database::tables::events as events_db;
 use crate::proto::services::event_service::*;
@@ -38,9 +39,10 @@ impl<C: Send + Sync + 'static> EventService for EventServiceImpl<C> {
 
     async fn create_event(
         &self,
-        _token: Token,
+        token: Token,
         req: CreateEventRequest,
     ) -> Result<CreateEventResponse> {
+        let user = token.user;
         let now = chrono::Utc::now().timestamp();
         let event = CONN.with(|conn| {
             let new_event = Event {
@@ -58,6 +60,11 @@ impl<C: Send + Sync + 'static> EventService for EventServiceImpl<C> {
             };
             events_db::insert_event(conn, &new_event)
         })?;
+        let _ = changelog::LOG.with(|cell| {
+            cell.borrow_mut()
+                .append(&Record::new(user, 38, 0, 0))
+        });
+        changelog::NOTIFY.notify_waiters();
         Ok(CreateEventResponse {
             event: Some(event_to_proto(&event)),
         })
@@ -89,9 +96,10 @@ impl<C: Send + Sync + 'static> EventService for EventServiceImpl<C> {
 
     async fn update_event(
         &self,
-        _token: Token,
+        token: Token,
         req: UpdateEventRequest,
     ) -> Result<UpdateEventResponse> {
+        let user = token.user;
         let event = CONN.with(|conn| {
             let update = EventUpdate {
                 name: req.name.clone(),
@@ -105,6 +113,11 @@ impl<C: Send + Sync + 'static> EventService for EventServiceImpl<C> {
             };
             events_db::update_event(conn, &req.event_id, update)
         })?;
+        let _ = changelog::LOG.with(|cell| {
+            cell.borrow_mut()
+                .append(&Record::new(user, 38, 0, 0))
+        });
+        changelog::NOTIFY.notify_waiters();
         Ok(UpdateEventResponse {
             event: Some(event_to_proto(&event)),
         })
@@ -118,6 +131,10 @@ impl<C: Send + Sync + 'static> EventService for EventServiceImpl<C> {
         CONN.with(|conn| {
             events_db::delete_event(conn, &req.event_id)
         })?;
+        let _ = changelog::LOG.with(|cell| {
+            cell.borrow_mut().append_delete(38, &req.event_id)
+        });
+        changelog::NOTIFY.notify_waiters();
         Ok(DeleteEventResponse {})
     }
 }

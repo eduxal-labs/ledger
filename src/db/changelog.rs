@@ -249,6 +249,12 @@ thread_local! {
     );
 }
 
+/// Global notifier for waking sync watch loops after direct gRPC writes.
+/// Service handlers (PaperService, EventService, etc.) call notify_waiters()
+/// after appending to the changelog so connected clients receive updates
+/// immediately instead of waiting for the 1-second poll interval.
+pub static NOTIFY: tokio::sync::Notify = tokio::sync::Notify::const_new();
+
 #[cfg(test)]
 mod tests {
     use super::*;

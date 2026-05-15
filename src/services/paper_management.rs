@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::config::storage::sign;
+use crate::db::changelog::{self, Record};
 use crate::db::database::CONN;
 use crate::db::database::tables::paper_management as pm_db;
 use crate::db::database::tables::papers as papers_db;
@@ -50,6 +51,7 @@ impl<C: Send + Sync + 'static> PaperManagement for PaperManagementServiceImpl<C>
         req: SchedulePaperRequest,
     ) -> Result<SchedulePaperResponse> {
         let _user_id = token.user.to_string();
+        let user = token.user;
         let now = chrono::Utc::now().timestamp();
 
         let schedule = CONN.with(|conn| {
@@ -73,6 +75,12 @@ impl<C: Send + Sync + 'static> PaperManagement for PaperManagementServiceImpl<C>
             pm_db::insert_schedule(conn, &new_schedule)
         })?;
 
+        let _ = changelog::LOG.with(|cell| {
+            cell.borrow_mut()
+                .append(&Record::new(user, 40, 0, 0))
+        });
+        changelog::NOTIFY.notify_waiters();
+
         Ok(SchedulePaperResponse {
             schedule_id: schedule.id.to_string(),
         })
@@ -80,12 +88,19 @@ impl<C: Send + Sync + 'static> PaperManagement for PaperManagementServiceImpl<C>
 
     async fn assign_invigilator(
         &self,
-        _token: Token,
+        token: Token,
         req: AssignInvigilatorRequest,
     ) -> Result<AssignInvigilatorResponse> {
+        let user = token.user;
         CONN.with(|conn| {
             pm_db::assign_invigilator(conn, &req.schedule_id, req.invigilator.as_deref())
         })?;
+
+        let _ = changelog::LOG.with(|cell| {
+            cell.borrow_mut()
+                .append(&Record::new(user, 40, 0, 0))
+        });
+        changelog::NOTIFY.notify_waiters();
 
         Ok(AssignInvigilatorResponse {})
     }
@@ -106,9 +121,10 @@ impl<C: Send + Sync + 'static> PaperManagement for PaperManagementServiceImpl<C>
 
     async fn update_schedule(
         &self,
-        _token: Token,
+        token: Token,
         req: UpdateScheduleRequest,
     ) -> Result<UpdateScheduleResponse> {
+        let user = token.user;
         let schedule = CONN.with(|conn| {
 
             let existing =
@@ -131,6 +147,12 @@ impl<C: Send + Sync + 'static> PaperManagement for PaperManagementServiceImpl<C>
             pm_db::update_schedule(conn, &req.schedule_id, update)
         })?;
 
+        let _ = changelog::LOG.with(|cell| {
+            cell.borrow_mut()
+                .append(&Record::new(user, 40, 0, 0))
+        });
+        changelog::NOTIFY.notify_waiters();
+
         Ok(UpdateScheduleResponse {
             schedule: Some(schedule_to_proto(&schedule)),
         })
@@ -142,6 +164,7 @@ impl<C: Send + Sync + 'static> PaperManagement for PaperManagementServiceImpl<C>
         req: SetTaughtTopicsRequest,
     ) -> Result<SetTaughtTopicsResponse> {
         let user_id = token.user.to_string();
+        let user = token.user;
         let now = chrono::Utc::now().timestamp();
 
         CONN.with(|conn| -> Result<()> {
@@ -167,6 +190,12 @@ impl<C: Send + Sync + 'static> PaperManagement for PaperManagementServiceImpl<C>
             }
             Ok(())
         })?;
+
+        let _ = changelog::LOG.with(|cell| {
+            cell.borrow_mut()
+                .append(&Record::new(user, 41, 0, 0))
+        });
+        changelog::NOTIFY.notify_waiters();
 
         Ok(SetTaughtTopicsResponse {})
     }

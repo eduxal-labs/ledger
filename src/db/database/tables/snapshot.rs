@@ -39,6 +39,10 @@ const TBL_STREAMS: i32 = 33;
 const TBL_MPESA: i32 = 34;
 const TBL_SCHEME_PAGES: i32 = 36;
 const TBL_ANSWER_PAGES: i32 = 37;
+const TBL_EVENTS: i32 = 38;
+const TBL_PAPERS_V2: i32 = 39;
+const TBL_PAPER_SCHEDULES: i32 = 40;
+const TBL_TAUGHT_TOPICS: i32 = 41;
 const TBL_ROLES: i32 = 26;
 const TBL_SCOPES: i32 = 27;
 const TBL_PLANS: i32 = 28;
@@ -106,6 +110,10 @@ fn snapshot_table_inner(
         TBL_DISCOUNTS => query_discounts(conn, since),
         TBL_SCHEME_PAGES => query_scheme_pages(conn, since),
         TBL_ANSWER_PAGES => query_answer_pages(conn, since),
+        TBL_EVENTS => query_events(conn, since),
+        TBL_PAPERS_V2 => query_papers_v2(conn, since),
+        TBL_PAPER_SCHEDULES => query_paper_schedules(conn, since),
+        TBL_TAUGHT_TOPICS => query_taught_topics(conn, since),
         _ => Ok(vec![]),
     }
 }
@@ -650,6 +658,68 @@ fn query_answer_pages(conn: &mut Conn, since: Option<i64>) -> Result<Vec<Snapsho
             school_id: parse_school_id(r.school_id()),
             insert_data: InsertData {
                 row: Some(insert_data::Row::AnswerPage(r.into())),
+            },
+        },
+    )
+}
+
+const SQL_EVENTS: &str = "SELECT id, school, name, type_, term, year, start_date, end_date, status, created, updated FROM events";
+
+fn query_events(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
+    load_rows::<EventRow, _>(conn, SQL_EVENTS, true, since, "events", |r| SnapshotRow {
+        row_key: r.row_key(),
+        school_id: parse_school_id(r.school_id().as_deref()),
+        insert_data: InsertData {
+            row: Some(insert_data::Row::Event(r.into())),
+        },
+    })
+}
+
+const SQL_PAPERS_V2: &str = "SELECT id, school, event, subject, grade, stream, type_, teacher, name, total_marks, duration_minutes, date, status, pdf_key, ms_key, generation_mode, instructions, created, updated FROM papers";
+
+fn query_papers_v2(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
+    load_rows::<PaperRowV2, _>(conn, SQL_PAPERS_V2, true, since, "papers", |r| SnapshotRow {
+        row_key: r.row_key(),
+        school_id: parse_school_id(r.school_id().as_deref()),
+        insert_data: InsertData {
+            row: Some(insert_data::Row::PaperV2(r.into())),
+        },
+    })
+}
+
+const SQL_PAPER_SCHEDULES: &str = "SELECT id, event, subject, grade, stream, date, start_time, end_time, duration_minutes, invigilator, paper, generation_status, reveal_at, generate_at, created FROM paper_schedules";
+
+fn query_paper_schedules(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
+    load_rows::<PaperScheduleRow, _>(
+        conn,
+        SQL_PAPER_SCHEDULES,
+        false, // no `updated` column
+        since,
+        "paper_schedules",
+        |r| SnapshotRow {
+            row_key: r.row_key(),
+            school_id: parse_school_id(r.school_id().as_deref()),
+            insert_data: InsertData {
+                row: Some(insert_data::Row::PaperSchedule(r.into())),
+            },
+        },
+    )
+}
+
+const SQL_TAUGHT_TOPICS: &str = "SELECT school, subject, grade, stream, topic, taught_by, status, taught_date, updated FROM taught_topics";
+
+fn query_taught_topics(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
+    load_rows::<TaughtTopicRow, _>(
+        conn,
+        SQL_TAUGHT_TOPICS,
+        true, // has `updated` column
+        since,
+        "taught_topics",
+        |r| SnapshotRow {
+            row_key: r.row_key(),
+            school_id: parse_school_id(r.school_id().as_deref()),
+            insert_data: InsertData {
+                row: Some(insert_data::Row::TaughtTopic(r.into())),
             },
         },
     )

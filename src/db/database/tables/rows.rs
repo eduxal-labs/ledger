@@ -1922,6 +1922,24 @@ impl EventRow {
     }
 }
 
+impl From<&EventRow> for EventInsert {
+    fn from(row: &EventRow) -> Self {
+        EventInsert {
+            id: row.id.clone(),
+            school: row.school.clone(),
+            name: row.name.clone(),
+            r#type: row.type_ as i32,
+            term: row.term as i32,
+            year: row.year,
+            start_date: row.start_date,
+            end_date: row.end_date,
+            status: row.status as i32,
+            created: row.created,
+            updated: row.updated,
+        }
+    }
+}
+
 // ── PaperRowV2 ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, diesel::QueryableByName)]
@@ -1952,6 +1970,14 @@ pub struct PaperRowV2 {
     pub date: i32,
     #[diesel(sql_type = diesel::sql_types::SmallInt)]
     pub status: i16,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+    pub pdf_key: Option<String>,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+    pub ms_key: Option<String>,
+    #[diesel(sql_type = diesel::sql_types::SmallInt)]
+    pub generation_mode: i16,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+    pub instructions: Option<String>,
     #[diesel(sql_type = diesel::sql_types::BigInt)]
     pub created: i64,
     #[diesel(sql_type = diesel::sql_types::BigInt)]
@@ -1964,6 +1990,32 @@ impl PaperRowV2 {
     }
     pub fn school_id(&self) -> Option<String> {
         Some(self.school.clone())
+    }
+}
+
+impl From<&PaperRowV2> for PaperV2Insert {
+    fn from(row: &PaperRowV2) -> Self {
+        PaperV2Insert {
+            id: row.id.clone(),
+            school: row.school.clone(),
+            event: row.event.clone(),
+            subject: row.subject,
+            grade: row.grade as i32,
+            stream: row.stream.map(|s| s as i32),
+            r#type: row.type_ as i32,
+            teacher: row.teacher.clone(),
+            name: row.name.clone(),
+            total_marks: row.total_marks as i32,
+            duration_minutes: row.duration_minutes as i32,
+            date: row.date,
+            status: row.status as i32,
+            pdf_key: row.pdf_key.clone(),
+            ms_key: row.ms_key.clone(),
+            generation_mode: row.generation_mode as i32,
+            instructions: row.instructions.clone(),
+            created: row.created,
+            updated: row.updated,
+        }
     }
 }
 
@@ -1983,6 +2035,16 @@ pub struct PaperScheduleRow {
     pub stream: Option<i16>,
     #[diesel(sql_type = diesel::sql_types::Integer)]
     pub date: i32,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    pub start_time: i32,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    pub end_time: i32,
+    #[diesel(sql_type = diesel::sql_types::SmallInt)]
+    pub duration_minutes: i16,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+    pub invigilator: Option<String>,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+    pub paper: Option<String>,
     #[diesel(sql_type = diesel::sql_types::SmallInt)]
     pub generation_status: i16,
     #[diesel(sql_type = diesel::sql_types::BigInt)]
@@ -1999,6 +2061,28 @@ impl PaperScheduleRow {
     }
     pub fn school_id(&self) -> Option<String> {
         None
+    }
+}
+
+impl From<&PaperScheduleRow> for PaperScheduleInsert {
+    fn from(row: &PaperScheduleRow) -> Self {
+        PaperScheduleInsert {
+            id: row.id.clone(),
+            event: row.event.clone(),
+            subject: row.subject,
+            grade: row.grade as i32,
+            stream: row.stream.map(|s| s as i32),
+            date: row.date,
+            start_time: row.start_time,
+            end_time: row.end_time,
+            duration_minutes: row.duration_minutes as i32,
+            invigilator: row.invigilator.clone(),
+            paper: row.paper.clone(),
+            generation_status: row.generation_status as i32,
+            reveal_at: row.reveal_at,
+            generate_at: row.generate_at,
+            created: row.created,
+        }
     }
 }
 
@@ -2039,6 +2123,22 @@ impl TaughtTopicRow {
     }
     pub fn school_id(&self) -> Option<String> {
         Some(self.school.clone())
+    }
+}
+
+impl From<&TaughtTopicRow> for TaughtTopicInsert {
+    fn from(row: &TaughtTopicRow) -> Self {
+        TaughtTopicInsert {
+            school: row.school.clone(),
+            subject: row.subject,
+            grade: row.grade as i32,
+            stream: row.stream.map(|s| s as i32),
+            topic: row.topic,
+            taught_by: row.taught_by.clone(),
+            status: row.status as i32,
+            taught_date: row.taught_date,
+            updated: row.updated,
+        }
     }
 }
 

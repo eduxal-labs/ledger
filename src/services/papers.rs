@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::config::storage::sign;
+use crate::db::changelog::{self, Record};
 use crate::db::database::CONN;
 use crate::db::database::tables::papers as papers_db;
 use crate::proto::services::paper_service::*;
@@ -52,6 +53,7 @@ impl<C: Send + Sync + 'static> PaperService for PaperServiceImpl<C> {
     ) -> Result<CreatePaperResponse> {
         let user_id = token.user.to_string();
         let now = chrono::Utc::now().timestamp();
+        let user = token.user;
         let paper = CONN.with(|conn| -> Result<Paper> {
             let new_paper = Paper {
                 id: Id::default(),
@@ -85,6 +87,12 @@ impl<C: Send + Sync + 'static> PaperService for PaperServiceImpl<C> {
             }
             Ok(paper)
         })?;
+        // Write changelog record so sync clients receive the new paper
+        let _ = changelog::LOG.with(|cell| {
+            cell.borrow_mut()
+                .append(&Record::new(user, 39, 0, 0))
+        });
+        changelog::NOTIFY.notify_waiters();
         Ok(CreatePaperResponse {
             paper: Some(paper_to_proto(&paper)),
         })
@@ -122,9 +130,10 @@ impl<C: Send + Sync + 'static> PaperService for PaperServiceImpl<C> {
 
     async fn update_paper(
         &self,
-        _token: Token,
+        token: Token,
         req: UpdatePaperRequest,
     ) -> Result<UpdatePaperResponse> {
+        let user = token.user;
         let paper = CONN.with(|conn| {
             let existing =
                 papers_db::get_paper(conn, &req.paper_id)?.ok_or(Error::PaperNotFound)?;
@@ -143,6 +152,11 @@ impl<C: Send + Sync + 'static> PaperService for PaperServiceImpl<C> {
             };
             papers_db::update_paper(conn, &req.paper_id, update)
         })?;
+        let _ = changelog::LOG.with(|cell| {
+            cell.borrow_mut()
+                .append(&Record::new(user, 39, 0, 0))
+        });
+        changelog::NOTIFY.notify_waiters();
         Ok(UpdatePaperResponse {
             paper: Some(paper_to_proto(&paper)),
         })
@@ -182,15 +196,21 @@ impl<C: Send + Sync + 'static> PaperService for PaperServiceImpl<C> {
 
     async fn force_set_paper_status(
         &self,
-        _token: Token,
+        token: Token,
         req: ForceSetPaperStatusRequest,
     ) -> Result<ForceSetPaperStatusResponse> {
+        let user = token.user;
         let paper = CONN.with(|conn| {
             let status: PaperStatus = (req.status as i16)
                 .try_into()
                 .map_err(|_| Error::NotFound)?;
             papers_db::force_set_paper_status(conn, &req.paper_id, status)
         })?;
+        let _ = changelog::LOG.with(|cell| {
+            cell.borrow_mut()
+                .append(&Record::new(user, 39, 0, 0))
+        });
+        changelog::NOTIFY.notify_waiters();
         Ok(ForceSetPaperStatusResponse {
             paper: Some(paper_to_proto(&paper)),
         })

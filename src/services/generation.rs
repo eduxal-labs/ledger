@@ -1,6 +1,7 @@
 #![allow(dead_code, unused_variables)]
 
 use crate::config::storage::sign;
+use crate::db::changelog;
 use crate::db::database::CONN;
 use crate::db::database::tables::{
     paper_management as pm_db, papers as papers_db, question_bank as qb,
@@ -158,16 +159,31 @@ pub async fn run_generation_scheduler() {
 
         match reveal_due {
             Ok(paper_ids) => {
-                for paper_id in paper_ids {
+                let system_user = Id::system();
+                let count = paper_ids.len();
+                for paper_id in &paper_ids {
                     if let Err(e) = CONN.with(|conn| {
                         papers_db::transition_paper_status(
                             conn,
-                            &paper_id,
+                            paper_id,
                             PaperStatus::Revealed,
                         )
                     }) {
                         error!("auto-reveal failed for paper {paper_id}: {e}");
+                    } else {
+                        let _ = changelog::LOG.with(|cell| {
+                            cell.borrow_mut().append(&changelog::Record {
+                                user: system_user.bytes(),
+                                table: 39,
+                                op: 0,
+                                columns: 0,
+                                created: 0,
+                            })
+                        });
                     }
+                }
+                if count > 0 {
+                    changelog::NOTIFY.notify_waiters();
                 }
             }
             Err(e) => error!("generation scheduler: reveal poll error: {e}"),
@@ -182,6 +198,7 @@ pub async fn run_generation_scheduler() {
 /// marks it as Generated or Failed depending on the outcome.
 async fn generate_exam_paper(schedule: PaperSchedule) {
     let schedule_id = schedule.id.to_string();
+    let system_user = Id::system();
 
     // Mark as Generating
     if let Err(e) = CONN.with(|conn| {
@@ -195,6 +212,16 @@ async fn generate_exam_paper(schedule: PaperSchedule) {
         error!("generate_exam_paper: failed to set Generating for {schedule_id}: {e}");
         return;
     }
+    let _ = changelog::LOG.with(|cell| {
+        cell.borrow_mut().append(&changelog::Record {
+            user: system_user.bytes(),
+            table: 40,
+            op: 0,
+            columns: 0,
+            created: 0,
+        })
+    });
+    changelog::NOTIFY.notify_waiters();
 
     match do_generate_exam_paper(&schedule).await {
         Ok(()) => {
@@ -210,6 +237,16 @@ async fn generate_exam_paper(schedule: PaperSchedule) {
                     Some(&e.to_string()),
                 )
             });
+            let _ = changelog::LOG.with(|cell| {
+                cell.borrow_mut().append(&changelog::Record {
+                    user: system_user.bytes(),
+                    table: 40,
+                    op: 0,
+                    columns: 0,
+                    created: 0,
+                })
+            });
+            changelog::NOTIFY.notify_waiters();
         }
     }
 }
@@ -401,6 +438,27 @@ async fn do_generate_exam_paper(
             None,
         )
     })?;
+
+    // 13. Write changelog entries so sync clients receive the new paper + schedule
+    let system_user = Id::system();
+    let _ = changelog::LOG.with(|cell| {
+        let mut log = cell.borrow_mut();
+        let _ = log.append(&changelog::Record {
+            user: system_user.bytes(),
+            table: 39,
+            op: 0,
+            columns: 0,
+            created: 0,
+        });
+        let _ = log.append(&changelog::Record {
+            user: system_user.bytes(),
+            table: 40,
+            op: 0,
+            columns: 0,
+            created: 0,
+        });
+    });
+    changelog::NOTIFY.notify_waiters();
 
     info!(
         "exam paper {paper_id_str} generated for schedule {schedule_id} \
