@@ -399,7 +399,7 @@ fn query_exams(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> 
     })
 }
 
-const SQL_PAPERS: &str = "SELECT school, exam, subject, paper, topic, \
+const SQL_PAPERS: &str = "SELECT school, event AS exam, subject, paper, topic, \
     invigilator, start, \"end\", status, grade, stream, created, updated, \
     time_allowed_minutes, instructions FROM papers";
 
@@ -414,7 +414,7 @@ fn query_papers(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>>
 }
 
 const SQL_GRADES: &str =
-    "SELECT school, exam, student, subject, paper, score, total, created, updated FROM grades";
+    "SELECT school, event AS exam, student, subject, paper, score, total, created, updated FROM grades";
 
 fn query_grades(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
     load_rows::<GradeRow, _>(conn, SQL_GRADES, true, since, "grades", |r| SnapshotRow {
@@ -624,7 +624,7 @@ fn query_mpesa(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> 
 }
 
 const SQL_SCHEME_PAGES: &str =
-    "SELECT school, exam, subject, paper, page, key, created FROM scheme_pages";
+    "SELECT school, event AS exam, subject, paper, page, key, created FROM scheme_pages";
 
 fn query_scheme_pages(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
     load_rows::<SchemePageRow, _>(
@@ -644,7 +644,7 @@ fn query_scheme_pages(conn: &mut Conn, since: Option<i64>) -> Result<Vec<Snapsho
 }
 
 const SQL_ANSWER_PAGES: &str =
-    "SELECT school, exam, student, subject, paper, page, key, created FROM answer_pages";
+    "SELECT school, event AS exam, student, subject, paper, page, key, created FROM answer_pages";
 
 fn query_answer_pages(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
     load_rows::<AnswerPageRow, _>(
