@@ -675,7 +675,7 @@ fn query_events(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>>
     })
 }
 
-const SQL_PAPERS_V2: &str = "SELECT id, school, event, subject, grade, stream, type_, teacher, name, total_marks, duration_minutes, date, status, pdf_key, ms_key, generation_mode, instructions, created, updated FROM papers";
+const SQL_PAPERS_V2: &str = "SELECT id, school, event, subject, grade, stream, type_, teacher, name, total_marks, duration_minutes, date, status, pdf_key, ms_key, generation_mode, instructions, created, updated FROM papers_v2";
 
 fn query_papers_v2(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
     load_rows::<PaperRowV2, _>(conn, SQL_PAPERS_V2, true, since, "papers", |r| SnapshotRow {
