@@ -90,9 +90,9 @@ fn snapshot_table_inner(
         TBL_ATTENDANCE => query_attendance(conn, since),
         TBL_TIMETABLE => query_timetable(conn, since),
         TBL_LESSONS => query_lessons(conn, since),
-        TBL_EXAMS => query_exams(conn, since),
-        TBL_PAPERS => query_papers(conn, since),
-        TBL_GRADES => query_grades(conn, since),
+        TBL_EXAMS => Ok(vec![]),
+        TBL_PAPERS => Ok(vec![]),
+        TBL_GRADES => Ok(vec![]),
         TBL_FEES => query_fees(conn, since),
         TBL_INVOICES => query_invoices(conn, since),
         TBL_PAYMENTS => query_payments(conn, since),
@@ -108,8 +108,8 @@ fn snapshot_table_inner(
         TBL_PLANS => query_plans(conn, since),
         TBL_SUBSCRIPTIONS => query_subscriptions(conn, since),
         TBL_DISCOUNTS => query_discounts(conn, since),
-        TBL_SCHEME_PAGES => query_scheme_pages(conn, since),
-        TBL_ANSWER_PAGES => query_answer_pages(conn, since),
+        TBL_SCHEME_PAGES => Ok(vec![]),
+        TBL_ANSWER_PAGES => Ok(vec![]),
         TBL_EVENTS => query_events(conn, since),
         TBL_PAPERS_V2 => query_papers_v2(conn, since),
         TBL_PAPER_SCHEDULES => query_paper_schedules(conn, since),
@@ -675,7 +675,7 @@ fn query_events(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>>
     })
 }
 
-const SQL_PAPERS_V2: &str = "SELECT id, school, event, subject, grade, stream, type_, teacher, name, total_marks, duration_minutes, date, status, pdf_key, ms_key, generation_mode, instructions, created, updated FROM papers_v2";
+const SQL_PAPERS_V2: &str = "SELECT id, school, event, subject, grade, stream, type_, teacher, name, total_marks, duration_minutes, date, status, pdf_key, ms_key, generation_mode, instructions, created, updated FROM papers";
 
 fn query_papers_v2(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
     load_rows::<PaperRowV2, _>(conn, SQL_PAPERS_V2, true, since, "papers", |r| SnapshotRow {
