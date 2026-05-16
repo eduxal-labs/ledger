@@ -485,7 +485,7 @@ pub fn update_paper(conn: &mut Conn, row_key: &str, row: &UpdatePaperPayload) ->
          time_allowed_minutes = COALESCE(?, time_allowed_minutes), \
          instructions = COALESCE(?, instructions), \
          updated = ? \
-         WHERE school = ? AND exam = ? AND subject = ? AND paper IS ? AND grade = ? AND stream IS ?",
+         WHERE school = ? AND event = ? AND subject = ? AND paper IS ? AND grade = ? AND stream IS ?",
     )
     .bind::<Nullable<Integer>, _>(row.topic)
     .bind::<Nullable<Text>, _>(row.invigilator.as_deref())
@@ -535,7 +535,7 @@ pub fn update_grade(conn: &mut Conn, row_key: &str, row: &UpdateGradePayload) ->
          score = COALESCE(?, score), \
          total = COALESCE(?, total), \
          updated = ? \
-         WHERE school = ? AND exam = ? AND student = ? AND subject = ? AND paper IS ?",
+         WHERE school = ? AND event = ? AND student = ? AND subject = ? AND paper IS ?",
     )
     .bind::<Nullable<Float>, _>(row.score)
     .bind::<Nullable<Integer>, _>(row.total)

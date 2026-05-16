@@ -293,7 +293,7 @@ pub fn delete_paper(conn: &mut Conn, row_key: &str) -> Result<()> {
     } else {
         Some(pk[5].parse().map_err(|e| Error::internal(e))?)
     };
-    sql_query("DELETE FROM papers WHERE school = ? AND exam = ? AND subject = ? AND paper IS ? AND grade = ? AND stream IS ?")
+    sql_query("DELETE FROM papers WHERE school = ? AND event = ? AND subject = ? AND paper IS ? AND grade = ? AND stream IS ?")
         .bind::<Text, _>(pk[0])
         .bind::<Text, _>(pk[1])
         .bind::<Integer, _>(subject)
@@ -317,7 +317,7 @@ pub fn delete_grade(conn: &mut Conn, row_key: &str) -> Result<()> {
         Some(pk[4].parse().map_err(|e| Error::internal(e))?)
     };
     sql_query(
-        "DELETE FROM grades WHERE school = ? AND exam = ? AND student = ? AND subject = ? AND paper IS ?",
+        "DELETE FROM grades WHERE school = ? AND event = ? AND student = ? AND subject = ? AND paper IS ?",
     )
     .bind::<Text, _>(pk[0])
     .bind::<Text, _>(pk[1])
@@ -507,7 +507,7 @@ pub fn delete_scheme_pages(
 ) -> Result<Vec<i16>> {
     let existing: Vec<DeletedPage> = sql_query(
         "SELECT page FROM scheme_pages \
-         WHERE school = ? AND exam = ? AND subject = ? AND paper IS ?",
+         WHERE school = ? AND event = ? AND subject = ? AND paper IS ?",
     )
     .bind::<Text, _>(school)
     .bind::<Text, _>(exam)
@@ -517,7 +517,7 @@ pub fn delete_scheme_pages(
 
     sql_query(
         "DELETE FROM scheme_pages \
-         WHERE school = ? AND exam = ? AND subject = ? AND paper IS ?",
+         WHERE school = ? AND event = ? AND subject = ? AND paper IS ?",
     )
     .bind::<Text, _>(school)
     .bind::<Text, _>(exam)
@@ -541,7 +541,7 @@ pub fn delete_answer_pages(
 ) -> Result<Vec<i16>> {
     let existing: Vec<DeletedPage> = sql_query(
         "SELECT page FROM answer_pages \
-         WHERE school = ? AND exam = ? AND student = ? AND subject = ? AND paper IS ?",
+         WHERE school = ? AND event = ? AND student = ? AND subject = ? AND paper IS ?",
     )
     .bind::<Text, _>(school)
     .bind::<Text, _>(exam)
@@ -552,7 +552,7 @@ pub fn delete_answer_pages(
 
     sql_query(
         "DELETE FROM answer_pages \
-         WHERE school = ? AND exam = ? AND student = ? AND subject = ? AND paper IS ?",
+         WHERE school = ? AND event = ? AND student = ? AND subject = ? AND paper IS ?",
     )
     .bind::<Text, _>(school)
     .bind::<Text, _>(exam)

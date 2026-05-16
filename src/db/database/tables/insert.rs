@@ -326,7 +326,7 @@ pub fn insert_paper(conn: &mut Conn, row: &PaperInsert) -> Result<()> {
 pub fn insert_grade(conn: &mut Conn, row: &GradeInsert) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     sql_query(
-        "INSERT INTO grades (school, exam, student, subject, paper, score, total, created, updated) \
+        "INSERT INTO grades (school, event, student, subject, paper, score, total, created, updated) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind::<Text, _>(&row.school)
@@ -610,7 +610,7 @@ pub fn insert_scheme_page(
     created: i64,
 ) -> Result<()> {
     sql_query(
-        "INSERT INTO scheme_pages (school, exam, subject, paper, page, key, created) \
+        "INSERT INTO scheme_pages (school, event, subject, paper, page, key, created) \
          VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
     .bind::<Text, _>(school)
@@ -636,7 +636,7 @@ pub fn insert_answer_page(
     created: i64,
 ) -> Result<()> {
     sql_query(
-        "INSERT INTO answer_pages (school, exam, student, subject, paper, page, key, created) \
+        "INSERT INTO answer_pages (school, event, student, subject, paper, page, key, created) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind::<Text, _>(school)

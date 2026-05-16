@@ -1304,7 +1304,7 @@ fn fetch_paper(
     sql_query(
         "SELECT school, exam, subject, paper, topic, invigilator, start, \"end\", status, grade, stream, created, updated, \
          time_allowed_minutes, instructions \
-         FROM papers WHERE school = ? AND exam = ? AND subject = ? AND paper IS ? AND grade = ? AND stream IS ?",
+         FROM papers WHERE school = ? AND event = ? AND subject = ? AND paper IS ? AND grade = ? AND stream IS ?",
     )
     .bind::<Text, _>(school)
     .bind::<Text, _>(exam)
@@ -1335,7 +1335,7 @@ fn fetch_grade(
 ) -> Result<GradeRow> {
     sql_query(
         "SELECT school, exam, student, subject, paper, score, total, created, updated \
-         FROM grades WHERE school = ? AND exam = ? AND student = ? AND subject = ? AND paper IS ?",
+         FROM grades WHERE school = ? AND event = ? AND student = ? AND subject = ? AND paper IS ?",
     )
     .bind::<Text, _>(school)
     .bind::<Text, _>(exam)
