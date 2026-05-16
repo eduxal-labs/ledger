@@ -1745,20 +1745,11 @@ pub fn execute_action(
         CREATE_LESSON => handle_create_lesson(conn, payload),
         DELETE_LESSON => handle_delete_lesson(conn, payload),
 
-        // Exams
-        CREATE_EXAM => handle_create_exam(conn, payload),
-        UPDATE_EXAM => handle_update_exam(conn, payload),
-        DELETE_EXAM => handle_delete_exam(conn, payload),
-
-        // Papers
-        CREATE_PAPER => handle_create_paper(conn, payload),
-        UPDATE_PAPER => handle_update_paper(conn, payload),
-        DELETE_PAPER => handle_delete_paper(conn, payload),
-
-        // Grades
-        MARK_GRADES => handle_mark_grades(conn, payload),
-        UPDATE_GRADE => handle_update_grade(conn, payload),
-        DELETE_GRADE => handle_delete_grade(conn, payload),
+        // Exams, Papers, Grades (Legacy offline sync deprecated in v2 schema)
+        36..=44 => {
+            tracing::warn!("ignoring legacy exam/paper/grade sync action");
+            Ok(ActionResult::empty())
+        }
 
         // Mastery
         UPDATE_MASTERY => handle_update_mastery(conn, payload),
