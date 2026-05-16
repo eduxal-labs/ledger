@@ -199,7 +199,7 @@ jobs:
 
           # ====== Start the Ledger service ======
           echo ">>> Starting ledger service..."
-          sudo systemctl start ledger
+          sudo systemctl restart ledger
 
           # ====== Health check — wait up to 5 seconds for the port ======
           echo ">>> Waiting for ledger to listen on :50051..."
