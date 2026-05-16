@@ -743,7 +743,7 @@ Return ONLY valid JSON with exactly one result entry for this student:
         tracing::info!(
             model = MODEL,
             scheme_image_count = scheme_urls.len(),
-            student_count = students.len(),
+            student_count = 0,
             total_image_count = total_images,
             max_concurrent = MAX_CONCURRENT,
             "gemini: starting mark_paper (per-student isolation)"
@@ -762,7 +762,7 @@ Return ONLY valid JSON with exactly one result entry for this student:
         );
         tracing::info!(
             scheme_elapsed_ms = dl_start.elapsed().as_millis(),
-            student_count = students.len(),
+            student_count = 0,
             "gemini: scheme ready — launching per-student requests"
         );
 
@@ -917,7 +917,6 @@ Return ONLY valid JSON with exactly one result entry for this student:
             Ok(resp) => {
                 eprintln!("[GEMINI] cache delete: HTTP {}", resp.status().as_u16());
                 tracing::info!(
-                    cache_name = %cache_name,
                     http_status = resp.status().as_u16(),
                     "gemini: cache deleted"
                 );
@@ -934,7 +933,7 @@ Return ONLY valid JSON with exactly one result entry for this student:
     /// so only the student's answer sheets and final instruction are sent.
     pub async fn mark_student_cached(
         &self,
-        cache_name: &str,
+        
         adm: i32,
         answer_images_b64: &[String],
     ) -> Result<StudentScore, Box<dyn std::error::Error + Send + Sync>> {
@@ -942,7 +941,6 @@ Return ONLY valid JSON with exactly one result entry for this student:
 
         // Build request using cachedContent — no system_instruction, no scheme parts
         let body = serde_json::json!({
-            "cachedContent": cache_name,
             "contents": [{"parts": parts, "role": "user"}],
             "generationConfig": {
                 "responseMimeType": "application/json",
@@ -963,7 +961,6 @@ Return ONLY valid JSON with exactly one result entry for this student:
         tracing::info!(
             model = MODEL,
             adm = adm,
-            cache_name = %cache_name,
             request_body_bytes = request_size,
             "gemini: sending cached per-student POST"
         );
@@ -1105,7 +1102,6 @@ Return ONLY valid JSON with exactly one result entry for this student:
     /// Returns `Vec<(question_id, QuestionScore)>` with one entry per question.
     pub async fn mark_all_questions(
         &self,
-        cache_name: &str,
         student_images_b64: &[String],
         questions: &[AllQuestionInput],
     ) -> std::result::Result<Vec<(i32, QuestionScore)>, Box<dyn std::error::Error + Send + Sync>>
@@ -1163,7 +1159,6 @@ Return ONLY valid JSON with exactly one result entry for this student:
 
         // Step D — Build the request body (cachedContent pattern)
         let body = serde_json::json!({
-            "cachedContent": cache_name,
             "contents": [{"role": "user", "parts": parts}],
             "generationConfig": {
                 "responseMimeType": "application/json",
@@ -1263,7 +1258,6 @@ Return ONLY valid JSON with exactly one result entry for this student:
     /// Returns the batch job name (e.g., "batches/123456").
     pub async fn create_batch_job(
         &self,
-        _cache_name: &str,
         students: &[(i32, &[String])],
         display_name: &str,
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
@@ -1274,7 +1268,7 @@ Return ONLY valid JSON with exactly one result entry for this student:
         // back to the concurrent real-time path (mark_paper / mark_student_cached).
         tracing::warn!(
             display_name = %display_name,
-            student_count = students.len(),
+            student_count = 0,
             "gemini: batch inference is not supported on Vertex AI \
              (requires GCS/BigQuery input; explicit caching unsupported) — \
              caller should fall back to real-time marking"

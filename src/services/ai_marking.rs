@@ -27,13 +27,13 @@ const QUEUE_CAPACITY: usize = 32;
 struct MarkRequest {
     paper_id: String,
     school: String, // kept for batch display name + logging
-    scheme_get_urls: Vec<String>,
+    
     students: Vec<(i32, Vec<String>)>, // (adm, [S3 GET URLs])
 }
 
 struct PreparedRequest {
     mark_req: MarkRequest,
-    cache_name: Option<String>,
+    
     student_images: Vec<(i32, Vec<String>)>, // (adm, [base64 images])
 }
 
@@ -66,18 +66,11 @@ impl<C: Send + Sync + 'static> AiMarking for AiMarkingService<C> {
 
         tracing::info!(
             paper_id = %paper_id,
-            scheme_count = req.scheme_count,
+            
             student_count = req.students.len(),
             "request_upload_urls: generating presigned PUT URLs"
         );
-
-        let scheme_urls: Vec<SignedUrl> = (0..req.scheme_count)
-            .map(|i| {
-                let key = format!("papers/{}/scheme/page_{}.jpg", paper_id, i);
-                let url = sign::url(&key, sign::PUT_TTL, true);
-                SignedUrl { key, url }
-            })
-            .collect();
+        let scheme_urls: Vec<SignedUrl> = Vec::new();
 
         let student_urls: Vec<StudentSignedUrls> = req
             .students
@@ -122,7 +115,7 @@ impl<C: Send + Sync + 'static> AiMarking for AiMarkingService<C> {
         );
 
         Ok(UploadUrlsResponse {
-            scheme_urls,
+            
             student_urls,
         })
     }
@@ -134,7 +127,7 @@ impl<C: Send + Sync + 'static> AiMarking for AiMarkingService<C> {
         tracing::info!(
             paper_id = %paper_id,
             total_marks = req.total_marks,
-            scheme_key_count = req.scheme_keys.len(),
+            
             student_count = student_count,
             "mark_paper: RPC received"
         );
@@ -147,12 +140,6 @@ impl<C: Send + Sync + 'static> AiMarking for AiMarkingService<C> {
                 .map(|p| p.school)
                 .unwrap_or_default()
         });
-
-        let scheme_get_urls: Vec<String> = req
-            .scheme_keys
-            .iter()
-            .map(|key| sign::url(key, sign::GET_TTL, false))
-            .collect();
 
         let students: Vec<(i32, Vec<String>)> = req
             .students
@@ -170,7 +157,7 @@ impl<C: Send + Sync + 'static> AiMarking for AiMarkingService<C> {
         let mark_req = MarkRequest {
             paper_id: paper_id.clone(),
             school: school.clone(),
-            scheme_get_urls,
+
             students,
         };
 
@@ -272,58 +259,33 @@ enum DownloadTag {
 }
 
 async fn prepare(gemini: &GeminiClient, req: MarkRequest) -> PreparedRequest {
-    let start = Instant::now();
-    tracing::info!(
-        paper_id = %req.paper_id,
-        scheme_images = req.scheme_get_urls.len(),
-        students = req.students.len(),
-        "ai_prepare: starting"
-    );
-
-    let mut download_handles = Vec::new();
-
-    for (i, url) in req.scheme_get_urls.iter().enumerate() {
-        let client = gemini.clone();
-        let url = url.clone();
-        download_handles.push(tokio::spawn(async move {
-            let result = client.download_b64(&url).await;
-            (DownloadTag::Scheme(i), result)
-        }));
-    }
-
+    let mut student_map: std::collections::HashMap<i32, Vec<Option<String>>> = std::collections::HashMap::new();
+    
+    let client = gemini.clone();
+    let mut join_set = tokio::task::JoinSet::new();
+    
     for (adm, urls) in &req.students {
+        let entry = student_map.entry(*adm).or_insert_with(|| vec![None; urls.len()]);
         for (j, url) in urls.iter().enumerate() {
-            let client = gemini.clone();
             let url = url.clone();
+            let client = client.clone();
             let adm = *adm;
-            download_handles.push(tokio::spawn(async move {
+            join_set.spawn(async move {
                 let result = client.download_b64(&url).await;
                 (DownloadTag::Student(adm, j), result)
-            }));
+            });
         }
     }
-
-    let mut scheme_b64: Vec<Option<String>> = vec![None; req.scheme_get_urls.len()];
-    let mut student_map: std::collections::HashMap<i32, Vec<Option<String>>> =
-        std::collections::HashMap::new();
-
-    for (adm, urls) in &req.students {
-        student_map.insert(*adm, vec![None; urls.len()]);
-    }
-
-    for handle in download_handles {
-        match handle.await {
+    
+    while let Some(res) = join_set.join_next().await {
+        match res {
             Ok((tag, Ok(b64))) => match tag {
-                DownloadTag::Scheme(i) => {
-                    scheme_b64[i] = Some(b64);
-                }
                 DownloadTag::Student(adm, j) => {
-                    if let Some(imgs) = student_map.get_mut(&adm) {
-                        if j < imgs.len() {
-                            imgs[j] = Some(b64);
-                        }
+                    if let Some(list) = student_map.get_mut(&adm) {
+                        list[j] = Some(b64);
                     }
                 }
+                _ => {}
             },
             Ok((tag, Err(e))) => {
                 tracing::error!(tag = ?tag, error = %e, "ai_prepare: image download failed");
@@ -334,47 +296,15 @@ async fn prepare(gemini: &GeminiClient, req: MarkRequest) -> PreparedRequest {
         }
     }
 
-    let mut scheme_parts = Vec::with_capacity(req.scheme_get_urls.len() + 1);
-    scheme_parts.push(serde_json::json!({
-        "text": "## MARKING SCHEME\n\nThe following images contain the marking scheme for this paper. Study them carefully to identify every question, sub-question, mark allocation, rubric criterion, expected answer, and any rubric notes (such as FT, Accept, OR, etc.). The rubric criteria are your PRIMARY scoring tool — they tell you exactly what to look for in the student's answer. Determine the total marks for the paper by summing all QUESTION mark allocations. Note: rubric criteria marks are scoring guides that may exceed a question's allocated marks to provide flexibility — always cap the awarded marks at the question's own mark allocation."
-    }));
+    let student_images: Vec<(i32, Vec<String>)> = req.students.iter().map(|(adm, _)| {
+        let imgs = student_map.remove(adm).unwrap_or_default().into_iter().flatten().collect();
+        (*adm, imgs)
+    }).collect();
 
-    for (i, maybe_b64) in scheme_b64.iter().enumerate() {
-        if let Some(b64) = maybe_b64 {
-            scheme_parts.push(serde_json::json!({
-                "inline_data": { "mime_type": "image/jpeg", "data": b64 }
-            }));
-        } else {
-            tracing::warn!(index = i, "ai_prepare: scheme image missing");
-        }
-    }
-
-    let cache_name = create_cache_with_retry(gemini, &scheme_parts).await;
-
-    let student_images: Vec<(i32, Vec<String>)> = req
-        .students
-        .iter()
-        .map(|(adm, _)| {
-            let imgs = student_map
-                .remove(adm)
-                .unwrap_or_default()
-                .into_iter()
-                .flatten()
-                .collect();
-            (*adm, imgs)
-        })
-        .collect();
-
-    tracing::info!(
-        paper_id = %req.paper_id,
-        elapsed_ms = start.elapsed().as_millis(),
-        cached = cache_name.is_some(),
-        "ai_prepare: complete"
-    );
+    tracing::info!(paper_id = %req.paper_id, student_count = student_images.len(), "ai_prepare: complete");
 
     PreparedRequest {
         mark_req: req,
-        cache_name,
         student_images,
     }
 }
@@ -406,7 +336,6 @@ async fn create_cache_with_retry(
 
 async fn mark_student_with_retry(
     gemini: &GeminiClient,
-    cache_name: &str,
     adm: i32,
     images: &[String],
 ) -> std::result::Result<crate::ai::gemini::StudentScore, Box<dyn std::error::Error + Send + Sync>>
@@ -417,7 +346,7 @@ async fn mark_student_with_retry(
         if delay_secs > 0 {
             tokio::time::sleep(std::time::Duration::from_secs(delay_secs)).await;
         }
-        match gemini.mark_student_cached(cache_name, adm, images).await {
+        match gemini.mark_student_cached(adm, images).await {
             Ok(score) => return Ok(score),
             Err(e) => {
                 tracing::warn!(adm, attempt = attempt + 1, error = %e, "student marking attempt failed");
@@ -430,7 +359,7 @@ async fn mark_student_with_retry(
 
 async fn mark_all_questions_with_retry(
     gemini: &GeminiClient,
-    cache_name: &str,
+    
     student_images: &[String],
     questions: &[AllQuestionInput],
 ) -> std::result::Result<Vec<(i32, QuestionScore)>, Box<dyn std::error::Error + Send + Sync>> {
@@ -441,7 +370,7 @@ async fn mark_all_questions_with_retry(
             tokio::time::sleep(std::time::Duration::from_secs(delay_secs)).await;
         }
         match gemini
-            .mark_all_questions(cache_name, student_images, questions)
+            .mark_all_questions(student_images, questions)
             .await
         {
             Ok(scores) => return Ok(scores),
@@ -460,7 +389,7 @@ async fn mark_all_questions_with_retry(
 
 async fn mark_students_realtime(
     gemini: &GeminiClient,
-    cache_name: &str,
+    
     student_images: &[(i32, Vec<String>)],
 ) -> (Vec<crate::ai::gemini::StudentScore>, Vec<i32>) {
     let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT));
@@ -471,10 +400,9 @@ async fn mark_students_realtime(
         let sem = Arc::clone(&semaphore);
         let adm = *adm;
         let images = images.clone();
-        let cn = cache_name.to_string();
-        let handle = tokio::spawn(async move {
+                let handle = tokio::spawn(async move {
             let _permit = sem.acquire().await.expect("semaphore closed");
-            mark_student_with_retry(&client, &cn, adm, &images).await
+            mark_student_with_retry(&client, adm, &images).await
         });
         handles.push((adm, handle));
     }
@@ -501,7 +429,7 @@ async fn mark_students_realtime(
 
 async fn mark_batch_with_fallback(
     gemini: &GeminiClient,
-    cache_name: &str,
+    
     student_images: &[(i32, Vec<String>)],
     paper_id: &str,
 ) -> Vec<crate::ai::gemini::StudentScore> {
@@ -513,7 +441,7 @@ async fn mark_batch_with_fallback(
         .collect();
 
     let batch_name = match gemini
-        .create_batch_job(cache_name, &students_ref, &display_name)
+        .create_batch_job(&students_ref, &display_name)
         .await
     {
         Ok(name) => name,
@@ -578,12 +506,6 @@ async fn mark_batch_with_fallback(
         tracing::warn!(batch_name = %batch_name, "ai_batch: timed out — cancelling");
         gemini.cancel_batch_job(&batch_name).await;
     }
-
-    let gemini_cleanup = gemini.clone();
-    let bn = batch_name.clone();
-    tokio::spawn(async move {
-        gemini_cleanup.delete_batch_job(&bn).await;
-    });
 
     scores
 }
@@ -731,32 +653,6 @@ async fn mark_and_write_per_question(
         );
     });
 
-    let cache_name = match prepared.cache_name {
-        Some(cn) => cn,
-        None => {
-            let scheme_parts = gemini
-                .build_scheme_parts(&prepared.mark_req.scheme_get_urls)
-                .await?;
-            match create_cache_with_retry(gemini, &scheme_parts).await {
-                Some(cn) => cn,
-                None => {
-                    CONN.with(|conn| {
-                        let _ = question_bank::update_marking_status(
-                            conn,
-                            &paper_id,
-                            6,
-                            "Cache creation failed",
-                            Some("Failed to create Gemini context cache after 3 attempts"),
-                            total_students as i32,
-                            0,
-                        );
-                    });
-                    return Err("Failed to create context cache for per-question marking".into());
-                }
-            }
-        }
-    };
-
     // 5. Mark all students
     let all_q_inputs: Vec<AllQuestionInput> = questions_data
         .iter()
@@ -777,11 +673,10 @@ async fn mark_and_write_per_question(
         let sem = Arc::clone(&semaphore);
         let adm = *adm;
         let images = images.clone();
-        let cn = cache_name.clone();
-        let qs = all_q_inputs.clone();
+                let qs = all_q_inputs.clone();
         let handle = tokio::spawn(async move {
             let _permit = sem.acquire().await.expect("semaphore closed");
-            mark_all_questions_with_retry(&client, &cn, &images, &qs).await
+            mark_all_questions_with_retry(&client, &images, &qs).await
         });
         handles.push((adm, handle));
     }
@@ -910,12 +805,6 @@ async fn mark_and_write_per_question(
         );
     });
 
-    let gemini_cleanup = gemini.clone();
-    let cn = cache_name.clone();
-    tokio::spawn(async move {
-        gemini_cleanup.delete_context_cache(&cn).await;
-    });
-
     tracing::info!(
         paper_id = %paper_id,
         students_marked = marked_count,
@@ -939,46 +828,29 @@ async fn mark_and_write(
     let task_start = Instant::now();
     let paper_id = &prepared.mark_req.paper_id;
     let student_count = prepared.student_images.len();
-    let cache_name = prepared.cache_name.as_deref();
-
+    
     tracing::info!(
         paper_id = %paper_id,
         student_count,
-        cached = cache_name.is_some(),
+        cached = false,
         "ai_mark: starting student marking"
     );
 
-    if cache_name.is_none() {
-        tracing::info!("ai_mark: no cache — falling back to non-cached mark_paper");
-        let scheme_urls = &prepared.mark_req.scheme_get_urls;
-        let students = &prepared.mark_req.students;
-        let scores = match gemini.mark_paper(scheme_urls, students).await {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!(error = %e, "ai_mark: fallback mark_paper failed");
-                return Err(e);
-            }
-        };
-        let count = write_grades_to_db(paper_id, &scores);
-        return Ok(count);
-    }
-
-    let cache_name_str = cache_name.unwrap();
-
+    
     let (scores, failed_adms) = if student_count > 1 {
         tracing::info!(student_count, "ai_mark: using batch API");
         let batch_scores =
-            mark_batch_with_fallback(gemini, cache_name_str, &prepared.student_images, paper_id)
+            mark_batch_with_fallback(gemini, &prepared.student_images, paper_id)
                 .await;
 
         if !batch_scores.is_empty() {
             (batch_scores, Vec::new())
         } else {
             tracing::warn!("ai_mark: batch failed — falling back to real-time");
-            mark_students_realtime(gemini, cache_name_str, &prepared.student_images).await
+            mark_students_realtime(gemini, &prepared.student_images).await
         }
     } else {
-        mark_students_realtime(gemini, cache_name_str, &prepared.student_images).await
+        mark_students_realtime(gemini, &prepared.student_images).await
     };
 
     if !failed_adms.is_empty() {
@@ -994,12 +866,6 @@ async fn mark_and_write(
     } else {
         0
     };
-
-    let gemini_cleanup = gemini.clone();
-    let cn = cache_name_str.to_string();
-    tokio::spawn(async move {
-        gemini_cleanup.delete_context_cache(&cn).await;
-    });
 
     tracing::info!(
         paper_id = %paper_id,

@@ -8,14 +8,12 @@ service AiMarking {
 
 message UploadUrlsRequest {
   string paper_id                         = 1;
-  int32 scheme_count                      = 2;
   repeated StudentSheetCount students     = 3;
 }
 
 message StudentSheetCount { int32 adm = 1; int32 count = 2; }
 
 message UploadUrlsResponse {
-  repeated SignedUrl scheme_urls           = 1;
   repeated StudentSignedUrls student_urls = 2;
 }
 
@@ -25,7 +23,6 @@ message StudentSignedUrls { int32 adm = 1; repeated SignedUrl urls = 2; }
 message MarkPaperRequest {
   string paper_id                         = 1;
   int32 total_marks                       = 2;
-  repeated string scheme_keys             = 3;
   repeated StudentMarkTarget students     = 4;
 }
 
