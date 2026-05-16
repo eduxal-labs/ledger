@@ -108,8 +108,8 @@ fn snapshot_table_inner(
         TBL_PLANS => query_plans(conn, since),
         TBL_SUBSCRIPTIONS => query_subscriptions(conn, since),
         TBL_DISCOUNTS => query_discounts(conn, since),
-        TBL_SCHEME_PAGES => Ok(vec![]),
-        TBL_ANSWER_PAGES => Ok(vec![]),
+        TBL_SCHEME_PAGES => query_scheme_pages(conn, since),
+        TBL_ANSWER_PAGES => query_answer_pages(conn, since),
         TBL_EVENTS => query_events(conn, since),
         TBL_PAPERS_V2 => query_papers_v2(conn, since),
         TBL_PAPER_SCHEDULES => query_paper_schedules(conn, since),
@@ -624,7 +624,7 @@ fn query_mpesa(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> 
 }
 
 const SQL_SCHEME_PAGES: &str =
-    "SELECT school, event AS exam, subject, paper, page, key, created FROM scheme_pages";
+    "SELECT p.school, IFNULL(p.event, '') AS exam, p.subject, CAST(NULL AS INTEGER) AS paper, a.page, a.key, a.created FROM scheme_pages a JOIN papers p ON a.paper = p.id";
 
 fn query_scheme_pages(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
     load_rows::<SchemePageRow, _>(
@@ -644,7 +644,7 @@ fn query_scheme_pages(conn: &mut Conn, since: Option<i64>) -> Result<Vec<Snapsho
 }
 
 const SQL_ANSWER_PAGES: &str =
-    "SELECT school, event AS exam, student, subject, paper, page, key, created FROM answer_pages";
+    "SELECT p.school, IFNULL(p.event, '') AS exam, a.student, p.subject, CAST(NULL AS INTEGER) AS paper, a.page, a.key, a.created FROM answer_pages a JOIN papers p ON a.paper = p.id";
 
 fn query_answer_pages(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
     load_rows::<AnswerPageRow, _>(
