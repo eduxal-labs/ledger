@@ -646,7 +646,7 @@ pub fn insert_answer_page(
     created: i64,
 ) -> Result<()> {
     sql_query(
-        "INSERT OR IGNORE INTO answer_pages (paper, student, page, key, created) \
+        "INSERT OR REPLACE INTO answer_pages (paper, student, page, key, created) \
          VALUES (?, ?, ?, ?, ?)",
     )
     .bind::<Text, _>(paper_id)

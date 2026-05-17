@@ -7,9 +7,10 @@ use crate::proto::services::ai_marking::*;
 use crate::types::error::{Error, Result};
 use crate::types::id::Id;
 use crate::types::token::Token;
-use diesel::sql_types::{Integer, Nullable, Text};
+use diesel::prelude::*;
 use diesel::sql_query;
 use diesel::RunQueryDsl;
+use diesel::sql_types::{Integer, Nullable, Text};
 use std::sync::Arc;
 
 /// If `paper_id` is a legacy composite key (contains `|`), resolve it to
@@ -127,6 +128,16 @@ struct PreparedRequest {
     student_images: Vec<(i32, Vec<String>)>, // (adm, [base64 images])
 }
 
+#[derive(QueryableByName)]
+struct PaperMeta {
+    #[diesel(sql_type = Text)]
+    school: String,
+    #[diesel(sql_type = Nullable<Text>)]
+    event: Option<String>,
+    #[diesel(sql_type = Integer)]
+    subject: i32,
+}
+
 // ---------------------------------------------------------------------------
 // Service struct
 // ---------------------------------------------------------------------------
@@ -179,22 +190,75 @@ impl<C: Send + Sync + 'static> AiMarking for AiMarkingService<C> {
             })
             .collect();
 
-        // Record scheme + answer page keys in DB
+        const TBL_ANSWER_PAGES: u8 = 37;
+        const OP_INSERT: u8 = 0;
+        const OP_DELETE: u8 = 2;
+
+        // Record scheme + answer page keys in DB.
+        // Delete old answer pages per student first so replaced sheets overwrite
+        // rather than accumulate stale rows.  Also write changelog entries so
+        // other clients learn about the deletions and insertions via watch.
         CONN.with(|conn| {
+            // Look up paper metadata for changelog row_keys.
+            let meta: Option<PaperMeta> = sql_query(
+                "SELECT school, event, subject FROM papers WHERE id = ?",
+            )
+            .bind::<Text, _>(&paper_id)
+            .load(conn)
+            .ok()
+            .and_then(|rows: Vec<PaperMeta>| rows.into_iter().next());
+            let school = meta.as_ref().map(|m| m.school.clone()).unwrap_or_default();
+            let exam = meta.as_ref().and_then(|m| m.event.clone()).unwrap_or_default();
+            let subject = meta.map(|m| m.subject).unwrap_or(0);
+            let log_user = Id::system();
+
             for (i, su) in scheme_urls.iter().enumerate() {
                 let _ = question_bank::insert_scheme_page(conn, &paper_id, i as i16, &su.key);
             }
             for stu in &req.students {
-                for (i, su) in student_urls
-                    .iter()
-                    .find(|x| x.adm == stu.adm)
-                    .map(|x| x.urls.iter().enumerate())
-                    .into_iter()
-                    .flatten()
-                {
-                    let _ = question_bank::insert_answer_page(
-                        conn, &paper_id, stu.adm, i as i16, &su.key,
+                // Query existing pages so we can log their deletion.
+                let old_pages: Vec<i16> =
+                    question_bank::get_answer_pages(conn, &paper_id, stu.adm)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|(page, _)| page)
+                        .collect();
+
+                // Delete old pages from DB.
+                let _ = question_bank::delete_answer_pages_for_student(
+                    conn, &paper_id, stu.adm,
+                );
+
+                // Log changelog deletes for each old page.
+                for page in &old_pages {
+                    let row_key = format!(
+                        "{}|{}|{}|{}||{}",
+                        school, exam, stu.adm, subject, page
                     );
+                    let _ = LOG.with(|cell| {
+                        cell.borrow_mut().append(
+                            &Record::new(log_user, TBL_ANSWER_PAGES, OP_DELETE, 0)
+                        )
+                    });
+                    let _ = LOG.with(|cell| {
+                        cell.borrow_mut().append_delete(TBL_ANSWER_PAGES, &row_key)
+                    });
+                }
+
+                // Insert new pages with current S3 keys.
+                let urls = student_urls.iter().find(|x| x.adm == stu.adm);
+                if let Some(su) = urls {
+                    for (i, signed) in su.urls.iter().enumerate() {
+                        let _ = question_bank::insert_answer_page(
+                            conn, &paper_id, stu.adm, i as i16, &signed.key,
+                        );
+                        // Log changelog insert for this page.
+                        let _ = LOG.with(|cell| {
+                            cell.borrow_mut().append(
+                                &Record::new(log_user, TBL_ANSWER_PAGES, OP_INSERT, 0)
+                            )
+                        });
+                    }
                 }
             }
         });

@@ -811,7 +811,20 @@ pub fn insert_scheme_page(
     Ok(())
 }
 
-/// Insert a student answer page (INSERT OR IGNORE for idempotency).
+/// Delete all answer pages for a student on a paper.
+pub fn delete_answer_pages_for_student(
+    conn: &mut SqliteConnection,
+    paper_id: &str,
+    student: i32,
+) -> Result<()> {
+    sql_query("DELETE FROM answer_pages WHERE paper = ? AND student = ?")
+        .bind::<Text, _>(paper_id)
+        .bind::<Integer, _>(student)
+        .execute(conn)?;
+    Ok(())
+}
+
+/// Insert a student answer page (INSERT OR REPLACE so re-uploads update the S3 key).
 pub fn insert_answer_page(
     conn: &mut SqliteConnection,
     paper_id: &str,
@@ -821,7 +834,7 @@ pub fn insert_answer_page(
 ) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     sql_query(
-        "INSERT OR IGNORE INTO answer_pages (paper, student, page, key, created) \
+        "INSERT OR REPLACE INTO answer_pages (paper, student, page, key, created) \
          VALUES (?, ?, ?, ?, ?)",
     )
     .bind::<Text, _>(paper_id)
