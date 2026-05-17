@@ -7,7 +7,97 @@ use crate::proto::services::ai_marking::*;
 use crate::types::error::{Error, Result};
 use crate::types::id::Id;
 use crate::types::token::Token;
+use diesel::sql_types::{Integer, Nullable, Text};
+use diesel::sql_query;
+use diesel::RunQueryDsl;
 use std::sync::Arc;
+
+/// If `paper_id` is a legacy composite key (contains `|`), resolve it to
+/// the new UUID paper ID by querying the papers table.  Otherwise return it
+/// unchanged.
+fn resolve_paper_id_if_legacy(paper_id: &str) -> String {
+    if !paper_id.contains('|') {
+        return paper_id.to_string();
+    }
+    let parts: Vec<&str> = paper_id.split('|').collect();
+    if parts.len() < 6 {
+        tracing::warn!(%paper_id, "unexpected legacy paper_id format");
+        return paper_id.to_string();
+    }
+    let school = parts[0];
+    let event = parts[1];
+    let subject: i32 = parts[2].parse().unwrap_or(0);
+    // paper number (parts[3]) and grade (parts[4]) and stream (parts[5]) are
+    // available but we primarily match on (school, event, subject).
+
+    let result = CONN.with(|conn| {
+        #[derive(diesel::QueryableByName)]
+        struct IdRow {
+            #[diesel(sql_type = Text)]
+            id: String,
+        }
+
+        // Strategy 1: exact event match
+        if !event.is_empty() {
+            let rows: Vec<IdRow> = sql_query(
+                "SELECT id FROM papers WHERE school = ? AND event = ? AND subject = ? ORDER BY created",
+            )
+            .bind::<Text, _>(school)
+            .bind::<Text, _>(event)
+            .bind::<Integer, _>(subject)
+            .load(conn)
+            .unwrap_or_default();
+            if let Some(row) = rows.into_iter().next() {
+                return Some(row.id);
+            }
+        }
+
+        // Strategy 2: event IS NULL
+        {
+            let rows: Vec<IdRow> = sql_query(
+                "SELECT id FROM papers WHERE school = ? AND event IS NULL AND subject = ? ORDER BY created",
+            )
+            .bind::<Text, _>(school)
+            .bind::<Integer, _>(subject)
+            .load(conn)
+            .unwrap_or_default();
+            if let Some(row) = rows.into_iter().next() {
+                return Some(row.id);
+            }
+        }
+
+        // Strategy 3: via paper_schedules
+        if !event.is_empty() {
+            let rows: Vec<IdRow> = sql_query(
+                "SELECT p.id FROM papers p \
+                 JOIN paper_schedules ps ON ps.paper = p.id \
+                 WHERE p.school = ? AND ps.event = ? AND p.subject = ? \
+                 ORDER BY p.created",
+            )
+            .bind::<Text, _>(school)
+            .bind::<Text, _>(event)
+            .bind::<Integer, _>(subject)
+            .load(conn)
+            .unwrap_or_default();
+            if let Some(row) = rows.into_iter().next() {
+                return Some(row.id);
+            }
+        }
+
+        None
+    });
+
+    match result {
+        Some(id) => {
+            tracing::info!(legacy = %paper_id, resolved = %id, "resolved legacy paper_id");
+            id
+        }
+        None => {
+            tracing::warn!(%paper_id, "could not resolve legacy paper_id to UUID, using as-is");
+            paper_id.to_string()
+        }
+    }
+}
 use std::time::Instant;
 use tokio::sync::mpsc;
 
@@ -62,11 +152,13 @@ impl<C: Send + Sync + 'static> AiMarking for AiMarkingService<C> {
         _token: Token,
         req: UploadUrlsRequest,
     ) -> Result<UploadUrlsResponse> {
-        let paper_id = &req.paper_id;
+        // Resolve legacy composite-format paper IDs (school|event|subject|paper|grade|stream)
+        // to the new UUID paper ID.  Old clients may still pass the composite format.
+        let paper_id = resolve_paper_id_if_legacy(&req.paper_id);
 
         tracing::info!(
             paper_id = %paper_id,
-            
+
             student_count = req.students.len(),
             "request_upload_urls: generating presigned PUT URLs"
         );
@@ -90,7 +182,7 @@ impl<C: Send + Sync + 'static> AiMarking for AiMarkingService<C> {
         // Record scheme + answer page keys in DB
         CONN.with(|conn| {
             for (i, su) in scheme_urls.iter().enumerate() {
-                let _ = question_bank::insert_scheme_page(conn, paper_id, i as i16, &su.key);
+                let _ = question_bank::insert_scheme_page(conn, &paper_id, i as i16, &su.key);
             }
             for stu in &req.students {
                 for (i, su) in student_urls
@@ -101,7 +193,7 @@ impl<C: Send + Sync + 'static> AiMarking for AiMarkingService<C> {
                     .flatten()
                 {
                     let _ = question_bank::insert_answer_page(
-                        conn, paper_id, stu.adm, i as i16, &su.key,
+                        conn, &paper_id, stu.adm, i as i16, &su.key,
                     );
                 }
             }
