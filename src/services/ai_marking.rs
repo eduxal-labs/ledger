@@ -213,7 +213,9 @@ impl<C: Send + Sync + 'static> AiMarking for AiMarkingService<C> {
     }
 
     async fn mark_paper(&self, _token: Token, req: MarkPaperRequest) -> Result<MarkPaperResponse> {
-        let paper_id = req.paper_id.clone();
+        // Resolve legacy composite-format paper IDs (school|event|subject|paper|grade|stream)
+        // to the new UUID paper ID — same as request_upload_urls does.
+        let paper_id = resolve_paper_id_if_legacy(&req.paper_id);
         let student_count = req.students.len();
 
         tracing::info!(
