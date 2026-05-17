@@ -903,10 +903,11 @@ pub struct GradeRow {
 
 impl GradeRow {
     pub fn row_key(&self) -> String {
-        self.paper
-            .as_deref()
-            .unwrap_or("")
-            .to_string()
+        format!(
+            "{}|{}",
+            self.paper.as_deref().unwrap_or(""),
+            self.student
+        )
     }
     pub fn school_id(&self) -> Option<&str> {
         Some(&self.school)
