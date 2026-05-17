@@ -655,34 +655,22 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                 return Err(Error::PaperMarksMismatch);
             }
 
-            // Keep paper.total_marks in sync with the last generation request.
-            if paper.total_marks as i32 != req.total_marks {
-                let _ = papers_db::update_paper(
-                    conn,
-                    &req.paper_id,
-                    crate::types::paper::PaperUpdate {
-                        total_marks: Some(req.total_marks as i16),
-                        updated: Some(chrono::Utc::now().timestamp()),
-                        ..Default::default()
-                    },
-                );
-            }
-
             // Clear existing class-wide questions
             question_bank::delete_paper_questions(conn, &req.paper_id, None)?;
 
             let mut all_questions: Vec<(i32, i16)> = Vec::new();
             let mut position: i16 = 0;
+            let mut actual_total_marks: i32 = 0;
 
             for alloc in &req.topic_allocations {
-                let selected = question_bank::select_questions_for_paper(
+                let candidates = question_bank::select_questions_for_paper(
                     conn,
                     alloc.topic_id,
                     &[],
                     None,
                 )?;
 
-                if selected.is_empty() {
+                if candidates.is_empty() {
                     error!(
                         "generate_paper: no questions found for topic_id={} alloc_marks={}",
                         alloc.topic_id, alloc.total_marks,
@@ -694,21 +682,49 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                     "generate_paper: topic_id={} alloc_marks={} candidates={}",
                     alloc.topic_id,
                     alloc.total_marks,
-                    selected.len(),
+                    candidates.len(),
                 );
 
-                let mut remaining = alloc.total_marks as i16;
-                for q in &selected {
-                    if remaining <= 0 {
-                        break;
-                    }
-                    all_questions.push((q.id.unwrap_or(0), position));
+                let (selected_ids, actual_sum) =
+                    question_bank::select_questions_for_marks(
+                        &candidates,
+                        alloc.total_marks as i16,
+                    );
+
+                info!(
+                    "generate_paper: topic_id={} requested={} actual={} selected={}",
+                    alloc.topic_id,
+                    alloc.total_marks,
+                    actual_sum,
+                    selected_ids.len(),
+                );
+
+                for id in &selected_ids {
+                    all_questions.push((*id, position));
                     position += 1;
-                    remaining -= q.marks;
                 }
+                actual_total_marks += actual_sum as i32;
             }
 
             question_bank::insert_paper_questions(conn, &req.paper_id, None, &all_questions)?;
+
+            // Update paper.total_marks to reflect the actual sum of selected
+            // questions, which may differ slightly from what the user requested.
+            if paper.total_marks as i32 != actual_total_marks {
+                info!(
+                    "generate_paper: updating paper total_marks from {} to {}",
+                    paper.total_marks, actual_total_marks,
+                );
+                let _ = papers_db::update_paper(
+                    conn,
+                    &req.paper_id,
+                    crate::types::paper::PaperUpdate {
+                        total_marks: Some(actual_total_marks as i16),
+                        updated: Some(chrono::Utc::now().timestamp()),
+                        ..Default::default()
+                    },
+                );
+            }
 
             // Transition to QuestionsSet
             let _ =

@@ -583,6 +583,167 @@ pub fn select_questions_for_paper(
     Ok(rows)
 }
 
+/// Select a subset of candidate questions whose marks sum as close as possible
+/// to `target_marks`. Returns (selected_question_ids, actual_sum).
+///
+/// Uses recursive backtracking to find an exact match. When no exact match
+/// exists, probes nearby targets (±1, ±2, …) up to a small tolerance, then
+/// falls back to a greedy selection.
+pub fn select_questions_for_marks(
+    candidates: &[QuestionRow],
+    target_marks: i16,
+) -> (Vec<i32>, i16) {
+    let items: Vec<(i32, i16)> = candidates
+        .iter()
+        .filter_map(|q| q.id.map(|id| (id, q.marks)))
+        .collect();
+
+    if items.is_empty() {
+        return (Vec::new(), 0);
+    }
+
+    // Try exact match first, then proximity fallback.
+    for delta in 0i16..=5i16 {
+        for &sign in &[1i16, -1i16] {
+            let t = target_marks + delta * sign;
+            if t <= 0 {
+                continue;
+            }
+            if let Some(selected) = subset_sum_exact(&items, t) {
+                return (selected, t);
+            }
+        }
+        // Also try the positive delta only (handles delta=0 and asymmetric).
+        if delta > 0 {
+            let t = target_marks + delta;
+            if let Some(selected) = subset_sum_exact(&items, t) {
+                return (selected, t);
+            }
+            let t2 = target_marks - delta;
+            if t2 > 0 {
+                if let Some(selected) = subset_sum_exact(&items, t2) {
+                    return (selected, t2);
+                }
+            }
+        }
+    }
+
+    // Fallback: greedy selection (closest to target without going under,
+    // or the closest sum overall).
+    let (ids, sum) = subset_sum_greedy(&items, target_marks);
+    (ids, sum)
+}
+
+/// Recursive depth-first search for an exact subset sum.
+/// Sorts items descending to prune early. Returns Some(ids) if exact sum found.
+fn subset_sum_exact(items: &[(i32, i16)], target: i16) -> Option<Vec<i32>> {
+    // Sort descending by marks for better pruning.
+    let mut sorted: Vec<(i32, i16)> = items.to_vec();
+    sorted.sort_by(|a, b| b.1.cmp(&a.1));
+
+    let suffixes: Vec<i32> = {
+        let mut s = vec![0i32; sorted.len() + 1];
+        for i in (0..sorted.len()).rev() {
+            s[i] = s[i + 1] + sorted[i].1 as i32;
+        }
+        s
+    };
+
+    let mut best: Option<Vec<i32>> = None;
+
+    fn dfs(
+        sorted: &[(i32, i16)],
+        suffixes: &[i32],
+        idx: usize,
+        current_sum: i16,
+        target: i16,
+        selected: &mut Vec<i32>,
+        best: &mut Option<Vec<i32>>,
+    ) {
+        if current_sum == target {
+            *best = Some(selected.clone());
+            return;
+        }
+        if idx >= sorted.len() || current_sum > target {
+            return;
+        }
+        // Prune: can't reach target even with all remaining items.
+        if current_sum as i32 + suffixes[idx] < target as i32 {
+            return;
+        }
+        // Already found a solution.
+        if best.is_some() {
+            return;
+        }
+
+        // Include item[idx]
+        let (id, marks) = sorted[idx];
+        if current_sum + marks <= target {
+            selected.push(id);
+            dfs(
+                sorted,
+                suffixes,
+                idx + 1,
+                current_sum + marks,
+                target,
+                selected,
+                best,
+            );
+            selected.pop();
+        }
+
+        // Skip item[idx]
+        dfs(
+            sorted,
+            suffixes,
+            idx + 1,
+            current_sum,
+            target,
+            selected,
+            best,
+        );
+    }
+
+    let mut selected = Vec::new();
+    dfs(&sorted, &suffixes, 0, 0, target, &mut selected, &mut best);
+    best
+}
+
+/// Greedy fallback: picks items in mark-descending order until reaching or
+/// exceeding target, then tries to trim the last item if it overshoots.
+fn subset_sum_greedy(items: &[(i32, i16)], target: i16) -> (Vec<i32>, i16) {
+    let mut sorted = items.to_vec();
+    sorted.sort_by(|a, b| b.1.cmp(&a.1));
+
+    let mut selected = Vec::new();
+    let mut sum: i16 = 0;
+
+    for &(id, marks) in &sorted {
+        if sum >= target {
+            break;
+        }
+        selected.push(id);
+        sum += marks;
+    }
+
+    // Try to remove the last item if we overshot and a closer sum exists
+    // without it.
+    if sum > target && selected.len() > 1 {
+        let last_marks = sorted
+            .iter()
+            .find(|(id, _)| *id == *selected.last().unwrap())
+            .map(|(_, m)| m)
+            .unwrap_or(&0);
+        let without_last = sum - last_marks;
+        if (without_last - target).abs() < (sum - target).abs() {
+            selected.pop();
+            sum = without_last;
+        }
+    }
+
+    (selected, sum)
+}
+
 // =========================================================================
 // Question Images
 // =========================================================================
