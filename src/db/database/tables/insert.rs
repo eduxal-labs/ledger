@@ -624,22 +624,16 @@ pub fn insert_mpesa(conn: &mut Conn, row: &MpesaInsert) -> Result<()> {
 
 pub fn insert_scheme_page(
     conn: &mut Conn,
-    school: &str,
-    exam: &str,
-    subject: i32,
-    paper: Option<i16>,
+    paper_id: &str,
     page: i16,
     key: &str,
     created: i64,
 ) -> Result<()> {
     sql_query(
-        "INSERT INTO scheme_pages (school, event, subject, paper, page, key, created) \
-         VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO scheme_pages (paper, page, key, created) \
+         VALUES (?, ?, ?, ?)",
     )
-    .bind::<Text, _>(school)
-    .bind::<Text, _>(exam)
-    .bind::<Integer, _>(subject)
-    .bind::<Nullable<SmallInt>, _>(paper)
+    .bind::<Text, _>(paper_id)
     .bind::<SmallInt, _>(page)
     .bind::<Text, _>(key)
     .bind::<BigInt, _>(created)
@@ -649,24 +643,18 @@ pub fn insert_scheme_page(
 
 pub fn insert_answer_page(
     conn: &mut Conn,
-    school: &str,
-    exam: &str,
+    paper_id: &str,
     student: i32,
-    subject: i32,
-    paper: Option<i16>,
     page: i16,
     key: &str,
     created: i64,
 ) -> Result<()> {
     sql_query(
-        "INSERT INTO answer_pages (school, event, student, subject, paper, page, key, created) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO answer_pages (paper, student, page, key, created) \
+         VALUES (?, ?, ?, ?, ?)",
     )
-    .bind::<Text, _>(school)
-    .bind::<Text, _>(exam)
+    .bind::<Text, _>(paper_id)
     .bind::<Integer, _>(student)
-    .bind::<Integer, _>(subject)
-    .bind::<Nullable<SmallInt>, _>(paper)
     .bind::<SmallInt, _>(page)
     .bind::<Text, _>(key)
     .bind::<BigInt, _>(created)

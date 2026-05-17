@@ -36,6 +36,49 @@ struct SubjectIdRow {
     id: i32,
 }
 
+#[derive(diesel::QueryableByName)]
+struct PaperIdRow {
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    id: String,
+}
+
+/// Map legacy (school, event, subject) to a paper_id UUID.
+///
+/// If `paper_number` is Some, it is used as a 1-based index into papers ordered
+/// by creation time.  Most subjects have a single paper per event, so the
+/// fallback (first row) is correct for the common case.
+fn resolve_paper_id(
+    conn: &mut Conn,
+    school: &str,
+    event: &str,
+    subject: i32,
+    paper_number: Option<i32>,
+) -> Result<String> {
+    use diesel::sql_types::{Integer, Text};
+    let rows: Vec<PaperIdRow> = sql_query(
+        "SELECT id FROM papers WHERE school = ? AND event = ? AND subject = ? ORDER BY created",
+    )
+    .bind::<Text, _>(school)
+    .bind::<Text, _>(event)
+    .bind::<Integer, _>(subject)
+    .load(conn)?;
+
+    if rows.is_empty() {
+        return Err(Error::Internal(format!(
+            "no paper for school={school} event={event} subject={subject}"
+        )));
+    }
+
+    if let Some(n) = paper_number {
+        let idx = (n as usize).saturating_sub(1);
+        if idx < rows.len() {
+            return Ok(rows[idx].id.clone());
+        }
+    }
+
+    Ok(rows[0].id.clone())
+}
+
 /// SyncAction integer values — must stay aligned with the client's
 /// `lib/database/tables/enums.dart` values.
 pub mod sync_action {
@@ -4413,13 +4456,14 @@ fn handle_upload_scheme(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult>
 
     let p: UploadSchemePayload = decode(payload)?;
     let log_user = Id::system();
-    let paper_i16 = p.paper.map(|v| v as i16);
     // Use 0 as the display sentinel when paper IS NULL (single-paper subject).
     let paper_display = p.paper.unwrap_or(0);
 
+    let paper_id = resolve_paper_id(conn, &p.school, &p.exam, p.subject, p.paper)?;
+
     // 1. Delete existing pages and log each one.
     let existing_pages =
-        delete::delete_scheme_pages(conn, &p.school, &p.exam, p.subject, paper_i16)?;
+        delete::delete_scheme_pages(conn, &paper_id)?;
     for page in &existing_pages {
         let row_key = format!(
             "{}|{}|{}|{}|{}",
@@ -4447,7 +4491,7 @@ fn handle_upload_scheme(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult>
         );
 
         insert::insert_scheme_page(
-            conn, &p.school, &p.exam, p.subject, paper_i16, page, &s3_key, now,
+            conn, &paper_id, page, &s3_key, now,
         )?;
         append_log(log_user, TBL_SCHEME_PAGES as u8, OP_INSERT, 0)?;
 
@@ -4498,10 +4542,11 @@ fn handle_upload_scheme(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult>
 fn handle_delete_scheme(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
     let p: DeleteSchemePayload = decode(payload)?;
     let log_user = Id::system();
-    let paper_i16 = p.paper.map(|v| v as i16);
+
+    let paper_id = resolve_paper_id(conn, &p.school, &p.exam, p.subject, p.paper)?;
 
     let existing_pages =
-        delete::delete_scheme_pages(conn, &p.school, &p.exam, p.subject, paper_i16)?;
+        delete::delete_scheme_pages(conn, &paper_id)?;
     let mut rows = Vec::new();
 
     for page in existing_pages {
@@ -4535,12 +4580,13 @@ fn handle_upload_answer_sheet(conn: &mut Conn, payload: &[u8]) -> Result<ActionR
 
     let p: UploadAnswerSheetPayload = decode(payload)?;
     let log_user = Id::system();
-    let paper_i16 = p.paper.map(|v| v as i16);
     let paper_display = p.paper.unwrap_or(0);
+
+    let paper_id = resolve_paper_id(conn, &p.school, &p.exam, p.subject, p.paper)?;
 
     // 1. Delete existing pages and log each one.
     let existing_pages =
-        delete::delete_answer_pages(conn, &p.school, &p.exam, p.student, p.subject, paper_i16)?;
+        delete::delete_answer_pages(conn, &paper_id, p.student)?;
     for page in &existing_pages {
         let row_key = format!(
             "{}|{}|{}|{}|{}|{}",
@@ -4569,7 +4615,7 @@ fn handle_upload_answer_sheet(conn: &mut Conn, payload: &[u8]) -> Result<ActionR
         );
 
         insert::insert_answer_page(
-            conn, &p.school, &p.exam, p.student, p.subject, paper_i16, page, &s3_key, now,
+            conn, &paper_id, p.student, page, &s3_key, now,
         )?;
         append_log(log_user, TBL_ANSWER_PAGES as u8, OP_INSERT, 0)?;
 
@@ -4622,10 +4668,11 @@ fn handle_upload_answer_sheet(conn: &mut Conn, payload: &[u8]) -> Result<ActionR
 fn handle_delete_answer_sheet(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
     let p: DeleteAnswerSheetPayload = decode(payload)?;
     let log_user = Id::system();
-    let paper_i16 = p.paper.map(|v| v as i16);
+
+    let paper_id = resolve_paper_id(conn, &p.school, &p.exam, p.subject, p.paper)?;
 
     let existing_pages =
-        delete::delete_answer_pages(conn, &p.school, &p.exam, p.student, p.subject, paper_i16)?;
+        delete::delete_answer_pages(conn, &paper_id, p.student)?;
     let mut rows = Vec::new();
 
     for page in existing_pages {
