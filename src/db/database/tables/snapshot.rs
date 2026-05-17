@@ -414,10 +414,12 @@ fn query_papers(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>>
 }
 
 const SQL_GRADES: &str =
-    "SELECT p.school, COALESCE(p.event, '') AS exam, g.student, p.subject, \
+    "SELECT * FROM (\
+     SELECT p.school, COALESCE(p.event, '') AS exam, g.student, p.subject, \
      g.paper AS paper, g.score, p.total_marks AS total, \
      g.created, g.updated \
-     FROM grades g JOIN papers p ON p.id = g.paper";
+     FROM grades g JOIN papers p ON p.id = g.paper\
+     )";
 
 fn query_grades(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
     load_rows::<GradeRow, _>(conn, SQL_GRADES, true, since, "grades", |r| SnapshotRow {
