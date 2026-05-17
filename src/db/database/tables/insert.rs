@@ -323,19 +323,15 @@ pub fn insert_paper(conn: &mut Conn, row: &PaperInsert) -> Result<()> {
     Ok(())
 }
 
-pub fn insert_grade(conn: &mut Conn, row: &GradeInsert) -> Result<()> {
+pub fn insert_grade(conn: &mut Conn, paper_id: &str, student: i32, score: f32) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     sql_query(
-        "INSERT INTO grades (school, event, student, subject, paper, score, total, created, updated) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR REPLACE INTO grades (paper, student, score, created, updated) \
+         VALUES (?, ?, ?, ?, ?)",
     )
-    .bind::<Text, _>(&row.school)
-    .bind::<Text, _>(&row.exam)
-    .bind::<Integer, _>(row.student)
-    .bind::<SmallInt, _>(row.subject as i16)
-    .bind::<Nullable<SmallInt>, _>(row.paper.map(|v| v as i16))
-    .bind::<Float, _>(row.score)
-    .bind::<Integer, _>(row.total)
+    .bind::<Text, _>(paper_id)
+    .bind::<Integer, _>(student)
+    .bind::<Float, _>(score)
     .bind::<BigInt, _>(now)
     .bind::<BigInt, _>(now)
     .execute(conn)?;

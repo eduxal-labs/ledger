@@ -889,8 +889,8 @@ pub struct GradeRow {
     pub student: i32,
     #[diesel(sql_type = Integer)]
     pub subject: i32,
-    #[diesel(sql_type = Nullable<SmallInt>)]
-    pub paper: Option<i16>,
+    #[diesel(sql_type = Nullable<Text>)]
+    pub paper: Option<String>,
     #[diesel(sql_type = Float)]
     pub score: f32,
     #[diesel(sql_type = Integer)]
@@ -903,14 +903,10 @@ pub struct GradeRow {
 
 impl GradeRow {
     pub fn row_key(&self) -> String {
-        format!(
-            "{}|{}|{}|{}|{}",
-            self.school,
-            self.exam,
-            self.student,
-            self.subject,
-            self.paper.map(|v| v.to_string()).unwrap_or_default()
-        )
+        self.paper
+            .as_deref()
+            .unwrap_or("")
+            .to_string()
     }
     pub fn school_id(&self) -> Option<&str> {
         Some(&self.school)
@@ -924,7 +920,7 @@ impl From<&GradeRow> for GradeInsert {
             exam: row.exam.clone(),
             student: row.student,
             subject: row.subject,
-            paper: row.paper.map(|v| v as i32),
+            paper: None, // old i32 paper number — not available in new schema
             score: row.score,
             total: row.total,
         }

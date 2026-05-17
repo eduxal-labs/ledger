@@ -304,26 +304,10 @@ pub fn delete_paper(conn: &mut Conn, row_key: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn delete_grade(conn: &mut Conn, row_key: &str) -> Result<()> {
-    let pk = pk_parts(row_key);
-    if pk.len() < 5 {
-        return Err(Error::Internal("invalid row key for grade: expected at least 5 key parts".into()));
-    }
-    let student: i32 = pk[2].parse().map_err(|e| Error::internal(e))?;
-    let subject: i32 = pk[3].parse().map_err(|e| Error::internal(e))?;
-    let paper: Option<i16> = if pk[4].is_empty() {
-        None
-    } else {
-        Some(pk[4].parse().map_err(|e| Error::internal(e))?)
-    };
-    sql_query(
-        "DELETE FROM grades WHERE school = ? AND event = ? AND student = ? AND subject = ? AND paper IS ?",
-    )
-    .bind::<Text, _>(pk[0])
-    .bind::<Text, _>(pk[1])
+pub fn delete_grade(conn: &mut Conn, paper_id: &str, student: i32) -> Result<()> {
+    sql_query("DELETE FROM grades WHERE paper = ? AND student = ?")
+    .bind::<Text, _>(paper_id)
     .bind::<Integer, _>(student)
-    .bind::<Integer, _>(subject)
-    .bind::<Nullable<SmallInt>, _>(paper)
     .execute(conn)?;
     Ok(())
 }

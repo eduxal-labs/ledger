@@ -510,41 +510,16 @@ pub fn update_paper(conn: &mut Conn, row_key: &str, row: &UpdatePaperPayload) ->
 // paper is nullable in PK
 // ---------------------------------------------------------------------------
 
-pub fn update_grade(conn: &mut Conn, row_key: &str, row: &UpdateGradePayload) -> Result<()> {
+pub fn update_grade(conn: &mut Conn, paper_id: &str, student: i32, score: Option<f32>) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
-    let parts: Vec<&str> = row_key.split('|').collect();
-    let school = parts[0];
-    let exam = parts[1];
-    let student = parts[2]
-        .parse::<i32>()
-        .map_err(|e| crate::types::error::Error::internal(e))?;
-    let subject = parts[3]
-        .parse::<i16>()
-        .map_err(|e| crate::types::error::Error::internal(e))?;
-    let paper: Option<i16> = if parts[4].is_empty() {
-        None
-    } else {
-        Some(
-            parts[4]
-                .parse::<i16>()
-                .map_err(|e| crate::types::error::Error::internal(e))?,
-        )
-    };
     sql_query(
-        "UPDATE grades SET \
-         score = COALESCE(?, score), \
-         total = COALESCE(?, total), \
-         updated = ? \
-         WHERE school = ? AND event = ? AND student = ? AND subject = ? AND paper IS ?",
+        "UPDATE grades SET score = COALESCE(?, score), updated = ? \
+         WHERE paper = ? AND student = ?",
     )
-    .bind::<Nullable<Float>, _>(row.score)
-    .bind::<Nullable<Integer>, _>(row.total)
+    .bind::<Nullable<Float>, _>(score)
     .bind::<BigInt, _>(now)
-    .bind::<Text, _>(school)
-    .bind::<Text, _>(exam)
+    .bind::<Text, _>(paper_id)
     .bind::<Integer, _>(student)
-    .bind::<SmallInt, _>(subject)
-    .bind::<Nullable<SmallInt>, _>(paper)
     .execute(conn)?;
     Ok(())
 }

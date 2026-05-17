@@ -1414,21 +1414,17 @@ fn fetch_paper(
 
 fn fetch_grade(
     conn: &mut Conn,
-    school: &str,
-    exam: &str,
+    paper_id: &str,
     student: i32,
-    subject: i32,
-    paper: Option<i16>,
 ) -> Result<GradeRow> {
     sql_query(
-        "SELECT school, event AS exam, student, subject, paper, score, total, created, updated \
-         FROM grades WHERE school = ? AND event = ? AND student = ? AND subject = ? AND paper IS ?",
+        "SELECT p.school, COALESCE(p.event, '') AS exam, g.student, p.subject, \
+         g.paper AS paper, g.score, p.total_marks AS total, g.created, g.updated \
+         FROM grades g JOIN papers p ON p.id = g.paper \
+         WHERE g.paper = ? AND g.student = ?",
     )
-    .bind::<Text, _>(school)
-    .bind::<Text, _>(exam)
+    .bind::<Text, _>(paper_id)
     .bind::<diesel::sql_types::Integer, _>(student)
-    .bind::<diesel::sql_types::Integer, _>(subject)
-    .bind::<diesel::sql_types::Nullable<diesel::sql_types::SmallInt>, _>(paper)
     .load::<GradeRow>(conn)
     .map_err(|e| {
         tracing::error!("fetch_grade failed: {e}");
@@ -1437,8 +1433,8 @@ fn fetch_grade(
     .into_iter()
     .next()
     .ok_or_else(|| {
-        tracing::error!("grade not found: {school}|{exam}|{student}|{subject}|{paper:?}");
-        Error::Internal("grade not found: {school}|{exam}|{student}|{subject}|{paper:?}".into())
+        tracing::error!("grade not found: {paper_id}|{student}");
+        Error::Internal("grade not found".into())
     })
 }
 
@@ -3287,56 +3283,18 @@ fn handle_mark_grades(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
     let log_user = Id::system();
     let mut rows = Vec::new();
 
-    let paper_i16 = p.paper.map(|v| v as i16);
+    let paper_id = resolve_paper_id(conn, &p.school, &p.exam, p.subject, p.paper)?;
 
     for rec in &p.records {
-        let grade_insert = GradeInsert {
-            school: p.school.clone(),
-            exam: p.exam.clone(),
-            student: rec.student,
-            subject: p.subject,
-            paper: p.paper,
-            score: rec.score,
-            total: rec.total,
-        };
-        let row_key = format!(
-            "{}|{}|{}|{}|{}",
-            p.school,
-            p.exam,
-            rec.student,
-            p.subject,
-            p.paper.map(|v| v.to_string()).unwrap_or_default()
-        );
-        // Upsert: try insert, on conflict update
-        match insert::insert_grade(conn, &grade_insert) {
+        // Upsert: insert or replace using new schema
+        match insert::insert_grade(conn, &paper_id, rec.student, rec.score) {
             Ok(()) => {
                 append_log(log_user, TBL_GRADES as u8, OP_INSERT, 0)?;
-            }
-            Err(Error::Conflict) => {
-                // Row exists — update score/total
-                let update_payload = UpdateGradePayload {
-                    school: p.school.clone(),
-                    exam: p.exam.clone(),
-                    student: rec.student,
-                    subject: p.subject,
-                    paper: p.paper,
-                    score: Some(rec.score),
-                    total: Some(rec.total),
-                };
-                update::update_grade(conn, &row_key, &update_payload)?;
-                append_log(log_user, TBL_GRADES as u8, OP_UPDATE, 0)?;
             }
             Err(e) => return Err(e),
         }
 
-        let row = fetch_grade(
-            conn,
-            &p.school,
-            &p.exam,
-            rec.student,
-            p.subject as i32,
-            paper_i16,
-        )?;
+        let row = fetch_grade(conn, &paper_id, rec.student)?;
         rows.push(upsert_row(
             TBL_GRADES,
             row.row_key(),
@@ -3352,26 +3310,12 @@ fn handle_mark_grades(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
 fn handle_update_grade(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
     let p: UpdateGradePayload = decode(payload)?;
     let log_user = Id::system();
-    let row_key = format!(
-        "{}|{}|{}|{}|{}",
-        p.school,
-        p.exam,
-        p.student,
-        p.subject,
-        p.paper.map(|v| v.to_string()).unwrap_or_default()
-    );
 
-    update::update_grade(conn, &row_key, &p)?;
+    let paper_id = resolve_paper_id(conn, &p.school, &p.exam, p.subject, p.paper)?;
+    update::update_grade(conn, &paper_id, p.student, p.score)?;
     append_log(log_user, TBL_GRADES as u8, OP_UPDATE, 0)?;
 
-    let row = fetch_grade(
-        conn,
-        &p.school,
-        &p.exam,
-        p.student,
-        p.subject as i32,
-        p.paper.map(|v| v as i16),
-    )?;
+    let row = fetch_grade(conn, &paper_id, p.student)?;
     Ok(ActionResult::with_rows(vec![upsert_row(
         TBL_GRADES,
         row.row_key(),
@@ -3384,16 +3328,11 @@ fn handle_update_grade(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> 
 fn handle_delete_grade(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
     let p: DeleteGradePayload = decode(payload)?;
     let log_user = Id::system();
-    let row_key = format!(
-        "{}|{}|{}|{}|{}",
-        p.school,
-        p.exam,
-        p.student,
-        p.subject,
-        p.paper.map(|v| v.to_string()).unwrap_or_default()
-    );
 
-    delete::delete_grade(conn, &row_key)?;
+    let paper_id = resolve_paper_id(conn, &p.school, &p.exam, p.subject, p.paper)?;
+    let row_key = paper_id.clone();
+
+    delete::delete_grade(conn, &paper_id, p.student)?;
     append_log(log_user, TBL_GRADES as u8, OP_DELETE, 0)?;
     append_delete_log(TBL_GRADES as u8, &row_key)?;
 

@@ -92,7 +92,7 @@ fn snapshot_table_inner(
         TBL_LESSONS => query_lessons(conn, since),
         TBL_EXAMS => Ok(vec![]),
         TBL_PAPERS => Ok(vec![]),
-        TBL_GRADES => Ok(vec![]),
+        TBL_GRADES => query_grades(conn, since),
         TBL_FEES => query_fees(conn, since),
         TBL_INVOICES => query_invoices(conn, since),
         TBL_PAYMENTS => query_payments(conn, since),
@@ -414,7 +414,10 @@ fn query_papers(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>>
 }
 
 const SQL_GRADES: &str =
-    "SELECT school, event AS exam, student, subject, paper, score, total, created, updated FROM grades";
+    "SELECT p.school, COALESCE(p.event, '') AS exam, g.student, p.subject, \
+     g.paper AS paper, g.score, p.total_marks AS total, \
+     g.created, g.updated \
+     FROM grades g JOIN papers p ON p.id = g.paper";
 
 fn query_grades(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
     load_rows::<GradeRow, _>(conn, SQL_GRADES, true, since, "grades", |r| SnapshotRow {
