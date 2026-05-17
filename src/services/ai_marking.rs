@@ -346,10 +346,34 @@ async fn mark_student_with_retry(
         if delay_secs > 0 {
             tokio::time::sleep(std::time::Duration::from_secs(delay_secs)).await;
         }
-        match gemini.mark_student_cached(adm, images).await {
+        match gemini.mark_student_uncached(adm, images).await {
             Ok(score) => return Ok(score),
             Err(e) => {
                 tracing::warn!(adm, attempt = attempt + 1, error = %e, "student marking attempt failed");
+                last_err = Some(e);
+            }
+        }
+    }
+    Err(last_err.unwrap())
+}
+
+async fn mark_student_cached_with_retry(
+    gemini: &GeminiClient,
+    cache_name: &str,
+    adm: i32,
+    images: &[String],
+) -> std::result::Result<crate::ai::gemini::StudentScore, Box<dyn std::error::Error + Send + Sync>>
+{
+    let delays = [0u64, 2, 4];
+    let mut last_err = None;
+    for (attempt, &delay_secs) in delays.iter().enumerate() {
+        if delay_secs > 0 {
+            tokio::time::sleep(std::time::Duration::from_secs(delay_secs)).await;
+        }
+        match gemini.mark_student_cached(cache_name, adm, images).await {
+            Ok(score) => return Ok(score),
+            Err(e) => {
+                tracing::warn!(adm, attempt = attempt + 1, error = %e, "student cached marking attempt failed");
                 last_err = Some(e);
             }
         }
@@ -389,7 +413,6 @@ async fn mark_all_questions_with_retry(
 
 async fn mark_students_realtime(
     gemini: &GeminiClient,
-    
     student_images: &[(i32, Vec<String>)],
 ) -> (Vec<crate::ai::gemini::StudentScore>, Vec<i32>) {
     let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT));
@@ -400,9 +423,50 @@ async fn mark_students_realtime(
         let sem = Arc::clone(&semaphore);
         let adm = *adm;
         let images = images.clone();
-                let handle = tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             let _permit = sem.acquire().await.expect("semaphore closed");
             mark_student_with_retry(&client, adm, &images).await
+        });
+        handles.push((adm, handle));
+    }
+
+    let mut scores = Vec::with_capacity(student_images.len());
+    let mut failed_adms = Vec::new();
+
+    for (adm, handle) in handles {
+        match handle.await {
+            Ok(Ok(score)) => scores.push(score),
+            Ok(Err(e)) => {
+                tracing::error!(adm, error = %e, "ai_mark: student failed after retries");
+                failed_adms.push(adm);
+            }
+            Err(e) => {
+                tracing::error!(adm, error = %e, "ai_mark: student task panicked");
+                failed_adms.push(adm);
+            }
+        }
+    }
+
+    (scores, failed_adms)
+}
+
+async fn mark_students_realtime_cached(
+    gemini: &GeminiClient,
+    cache_name: &str,
+    student_images: &[(i32, Vec<String>)],
+) -> (Vec<crate::ai::gemini::StudentScore>, Vec<i32>) {
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT));
+    let mut handles = Vec::with_capacity(student_images.len());
+
+    for (adm, images) in student_images {
+        let client = gemini.clone();
+        let sem = Arc::clone(&semaphore);
+        let adm = *adm;
+        let images = images.clone();
+        let cn = cache_name.to_string();
+        let handle = tokio::spawn(async move {
+            let _permit = sem.acquire().await.expect("semaphore closed");
+            mark_student_cached_with_retry(&client, &cn, adm, &images).await
         });
         handles.push((adm, handle));
     }
@@ -528,9 +592,9 @@ async fn route_marking(
     if has_paper_questions {
         tracing::info!(
             paper_id = %prepared.mark_req.paper_id,
-            "ai_worker: routing to per-question marking"
+            "ai_worker: routing to per-student cached marking"
         );
-        mark_and_write_per_question(gemini, prepared).await
+        mark_and_write_cached(gemini, prepared).await
     } else {
         mark_and_write(gemini, prepared).await
     }
@@ -783,6 +847,7 @@ async fn mark_and_write_per_question(
             score: total_score,
             total: total_paper_marks as i32,
             breakdown,
+            usage: None,
         });
     }
 
@@ -818,6 +883,166 @@ async fn mark_and_write_per_question(
 }
 
 // ---------------------------------------------------------------------------
+// Stage B: Per-student cached marking (papers with structured questions)
+// ---------------------------------------------------------------------------
+
+async fn mark_and_write_cached(
+    gemini: &GeminiClient,
+    prepared: PreparedRequest,
+) -> std::result::Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+    let task_start = Instant::now();
+    let paper_id = prepared.mark_req.paper_id.clone();
+    let total_students = prepared.student_images.len();
+
+    tracing::info!(
+        paper_id = %paper_id,
+        student_count = total_students,
+        "ai_cached: starting per-student cached marking"
+    );
+
+    // 1. Load paper questions
+    let paper_qs = match CONN.with(|conn| {
+        question_bank::get_paper_questions(conn, &paper_id, None)
+    }) {
+        Ok(pqs) => pqs,
+        Err(e) => return Err(format!("Failed to load paper questions: {:?}", e).into()),
+    };
+
+    if paper_qs.is_empty() {
+        return Err("No paper_questions found for cached marking".into());
+    }
+
+    // 2. Load question data: (q_num, q_text, marks, rubric_text, images_b64)
+    struct QData {
+        q_num: i32,
+        text: String,
+        marks: i16,
+        rubric: String,
+        images_b64: Vec<(String, Option<String>)>,
+    }
+
+    let mut questions_data: Vec<QData> = Vec::with_capacity(paper_qs.len());
+
+    for (idx, pq) in paper_qs.iter().enumerate() {
+        let q = match CONN.with(|conn| question_bank::get_question(conn, pq.question)) {
+            Ok(Some(q)) => q,
+            Ok(None) => {
+                tracing::warn!(question_id = pq.question, "ai_cached: question not found — skipping");
+                continue;
+            }
+            Err(e) => {
+                tracing::warn!(question_id = pq.question, error = ?e, "ai_cached: failed to load question");
+                continue;
+            }
+        };
+
+        let rubric = match CONN.with(|conn| question_bank::get_rubric_criteria(conn, pq.question)) {
+            Ok(r) => r,
+            Err(_) => Vec::new(),
+        };
+
+        let rubric_text: String = rubric
+            .iter()
+            .enumerate()
+            .map(|(j, r)| format!("{}. {} ({} marks)", j + 1, r.criterion, r.marks))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let images = match CONN.with(|conn| question_bank::get_question_images(conn, pq.question)) {
+            Ok(imgs) => imgs,
+            Err(_) => Vec::new(),
+        };
+
+        let mut imgs_b64: Vec<(String, Option<String>)> = Vec::new();
+        for img_row in &images {
+            let get_url = sign::url(&img_row.key, sign::GET_TTL, false);
+            match gemini.download_b64(&get_url).await {
+                Ok(b64) => imgs_b64.push((b64, img_row.caption.clone())),
+                Err(e) => {
+                    tracing::warn!(
+                        question = pq.question,
+                        key = %img_row.key,
+                        error = %e,
+                        "ai_cached: question image download failed — skipping image"
+                    );
+                }
+            }
+        }
+
+        questions_data.push(QData {
+            q_num: (idx + 1) as i32,
+            text: q.body.clone(),
+            marks: q.marks,
+            rubric: rubric_text,
+            images_b64: imgs_b64,
+        });
+    }
+
+    if questions_data.is_empty() {
+        return Err("No valid question data loaded for cached marking".into());
+    }
+
+    tracing::info!(
+        question_count = questions_data.len(),
+        "ai_cached: question data loaded"
+    );
+
+    // 3. Build cache parts from questions + rubrics
+    let cache_input: Vec<(i32, &str, i16, &str, &[(String, Option<String>)])> = questions_data
+        .iter()
+        .map(|qd| {
+            (qd.q_num, qd.text.as_str(), qd.marks, qd.rubric.as_str(), qd.images_b64.as_slice())
+        })
+        .collect();
+
+    let scheme_parts = GeminiClient::build_question_cache_parts(&cache_input);
+
+    // 4. Create context cache
+    let cache_name = match create_cache_with_retry(gemini, &scheme_parts).await {
+        Some(name) => {
+            tracing::info!(cache_name = %name, "ai_cached: context cache created");
+            name
+        }
+        None => {
+            return Err("Failed to create context cache after retries".into());
+        }
+    };
+
+    // 5. Mark all students against the cache
+    let (scores, failed_adms) =
+        mark_students_realtime_cached(gemini, &cache_name, &prepared.student_images).await;
+
+    // 6. Delete cache (best-effort, fire-and-forget)
+    gemini.delete_context_cache(&cache_name).await;
+
+    if !failed_adms.is_empty() {
+        tracing::warn!(
+            failed_count = failed_adms.len(),
+            total_count = total_students,
+            "ai_cached: some students failed"
+        );
+    }
+
+    // 7. Write grades + token usage to DB
+    let count = if !scores.is_empty() {
+        write_grades_to_db(&paper_id, &scores)
+    } else {
+        0
+    };
+
+    tracing::info!(
+        paper_id = %paper_id,
+        scored = scores.len(),
+        total = total_students,
+        grades_written = count,
+        elapsed_ms = task_start.elapsed().as_millis(),
+        "ai_cached: complete"
+    );
+
+    Ok(count)
+}
+
+// ---------------------------------------------------------------------------
 // Stage B: Mark all students + write grades (legacy whole-paper flow)
 // ---------------------------------------------------------------------------
 
@@ -828,7 +1053,7 @@ async fn mark_and_write(
     let task_start = Instant::now();
     let paper_id = &prepared.mark_req.paper_id;
     let student_count = prepared.student_images.len();
-    
+
     tracing::info!(
         paper_id = %paper_id,
         student_count,
@@ -836,7 +1061,7 @@ async fn mark_and_write(
         "ai_mark: starting student marking"
     );
 
-    
+
     let (scores, failed_adms) = if student_count > 1 {
         tracing::info!(student_count, "ai_mark: using batch API");
         let batch_scores =
@@ -895,11 +1120,19 @@ fn write_grades_to_db(paper_id: &str, scores: &[crate::ai::gemini::StudentScore]
         match result {
             Ok(()) => {
                 written += 1;
+
+                // Store token usage if available
+                if let Some(ref usage) = score.usage {
+                    let _ = CONN.with(|conn| {
+                        use crate::db::database::tables::insert::insert_ai_token_log;
+                        insert_ai_token_log(conn, paper_id, score.adm, usage)
+                    });
+                }
+
                 // Append changelog record for grade
                 let log_user = Id::system();
                 LOG.with(|cell| {
                     let mut log = cell.borrow_mut();
-                    // TBL_GRADES = 18 (from old constant, kept for changelog compatibility)
                     let record = Record::new(log_user, 18u8, 0u8, 0);
                     if let Err(e) = log.append(&record) {
                         tracing::error!(adm = score.adm, error = %e, "ai_write: grades changelog append failed");

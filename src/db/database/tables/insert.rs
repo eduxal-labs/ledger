@@ -462,6 +462,29 @@ pub fn insert_ai_usage(conn: &mut Conn, row: &AiUsageInsert) -> Result<()> {
     Ok(())
 }
 
+pub fn insert_ai_token_log(
+    conn: &mut Conn,
+    paper: &str,
+    student: i32,
+    usage: &crate::ai::gemini::TokenUsage,
+) -> Result<()> {
+    let now = chrono::Utc::now().timestamp();
+    sql_query(
+        "INSERT OR REPLACE INTO ai_token_log (paper, student, input_tokens, output_tokens, thinking_tokens, cached_tokens, total_tokens, created) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind::<Text, _>(paper)
+    .bind::<Integer, _>(student)
+    .bind::<Integer, _>(usage.input_tokens)
+    .bind::<Integer, _>(usage.output_tokens)
+    .bind::<Integer, _>(usage.thinking_tokens)
+    .bind::<Integer, _>(usage.cached_tokens)
+    .bind::<Integer, _>(usage.total_tokens)
+    .bind::<BigInt, _>(now)
+    .execute(conn)?;
+    Ok(())
+}
+
 pub fn insert_role(conn: &mut Conn, row: &RoleInsert) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     sql_query(

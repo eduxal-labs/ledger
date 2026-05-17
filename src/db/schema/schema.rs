@@ -14,6 +14,19 @@ diesel::table! {
 }
 
 diesel::table! {
+    ai_token_log (paper, student) {
+        paper -> Text,
+        student -> Integer,
+        input_tokens -> Integer,
+        output_tokens -> Integer,
+        thinking_tokens -> Integer,
+        cached_tokens -> Integer,
+        total_tokens -> Integer,
+        created -> BigInt,
+    }
+}
+
+diesel::table! {
     announcements (id) {
         id -> Text,
         school -> Text,
@@ -637,6 +650,7 @@ diesel::table! {
     }
 }
 
+diesel::joinable!(ai_token_log -> papers (paper));
 diesel::joinable!(aiusage -> schools (school));
 diesel::joinable!(announcements -> schools (school));
 diesel::joinable!(announcements -> users (author));
@@ -712,6 +726,7 @@ diesel::joinable!(timetable -> schools (school));
 diesel::joinable!(topics -> subjects (subject));
 
 diesel::allow_tables_to_appear_in_same_query!(
+    ai_token_log,
     aiusage,
     announcements,
     answer_pages,

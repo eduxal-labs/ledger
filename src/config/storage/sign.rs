@@ -121,7 +121,7 @@ fn hmac_sha256(key: &[u8], data: &str) -> Vec<u8> {
 /// - `expires_in` — seconds until URLs expire
 pub fn url(key: &str, ttl: u64, write: bool) -> String {
     let (method, content_type) = match write {
-        true => ("PUT", Some("image/*")),
+        true => ("PUT", None),
         false => ("GET", None),
     };
     presign(

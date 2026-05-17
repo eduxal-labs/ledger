@@ -8,11 +8,27 @@ const FALLBACK_MODEL: &str = "gemini-2.5-flash-lite";
 /// Max concurrent Gemini API requests when marking multiple students.
 const MAX_CONCURRENT: usize = 4;
 
+#[derive(Clone, Copy, PartialEq)]
+enum ApiProvider {
+    Vertex,
+    Studio,
+}
+
 #[derive(Clone)]
 pub struct GeminiClient {
     http: reqwest::Client,
     project_id: &'static str,
     location: &'static str,
+    api_provider: ApiProvider,
+}
+
+#[derive(Debug, Clone)]
+pub struct TokenUsage {
+    pub input_tokens: i32,
+    pub output_tokens: i32,
+    pub thinking_tokens: i32,
+    pub cached_tokens: i32,
+    pub total_tokens: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -22,6 +38,7 @@ pub struct StudentScore {
     pub score: f64,
     pub total: i32,
     pub breakdown: Vec<QuestionBreakdown>,
+    pub usage: Option<TokenUsage>,
 }
 
 #[derive(Debug, Clone)]
@@ -38,6 +55,34 @@ pub struct QuestionBreakdown {
 #[derive(Deserialize)]
 struct GeminiResponse {
     candidates: Vec<Candidate>,
+    #[serde(default)]
+    usage_metadata: Option<UsageMetadata>,
+}
+
+#[derive(Deserialize)]
+struct UsageMetadata {
+    #[serde(default)]
+    prompt_token_count: i32,
+    #[serde(default)]
+    candidates_token_count: i32,
+    #[serde(default)]
+    thoughts_token_count: i32,
+    #[serde(default, rename = "cachedContentTokenCount")]
+    cached_content_token_count: i32,
+    #[serde(default)]
+    total_token_count: i32,
+}
+
+impl UsageMetadata {
+    fn to_token_usage(&self) -> TokenUsage {
+        TokenUsage {
+            input_tokens: self.prompt_token_count,
+            output_tokens: self.candidates_token_count,
+            thinking_tokens: self.thoughts_token_count,
+            cached_tokens: self.cached_content_token_count,
+            total_tokens: self.total_token_count,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -307,48 +352,77 @@ Rules:
 impl GeminiClient {
     pub fn new() -> Self {
         use reqwest::header::{HeaderMap, HeaderValue};
+
+        // Detect API provider: "vertex" → Vertex AI, anything else → AI Studio.
+        // GEMINI_API_PROVIDER is a compile-time env var set via build.rs from .env.
+        let api_provider = match option_env!("GEMINI_API_PROVIDER") {
+            Some("vertex") => ApiProvider::Vertex,
+            _ => ApiProvider::Studio,
+        };
+
+        let api_key = match api_provider {
+            ApiProvider::Vertex => env!("GEMINI_API_KEY"),
+            ApiProvider::Studio => env!("GEMINI_STUDIO_API_KEY"),
+        };
+
         let mut default_headers = HeaderMap::new();
         default_headers.insert(
             "x-goog-api-key",
-            HeaderValue::from_static(env!("GEMINI_API_KEY")),
+            HeaderValue::from_static(api_key),
         );
         Self {
             http: reqwest::Client::builder()
                 .default_headers(default_headers)
                 .build()
                 .expect("failed to build reqwest client"),
-            project_id: env!("GEMINI_PROJECT_ID"),
-            location: env!("GEMINI_LOCATION"),
+            project_id: option_env!("GEMINI_PROJECT_ID").unwrap_or(""),
+            location: option_env!("GEMINI_LOCATION").unwrap_or(""),
+            api_provider,
         }
     }
 
-    /// Vertex AI generateContent endpoint for the given model.
+    /// Generate-content endpoint for the given model.
     fn generate_content_url(&self, model: &str) -> String {
-        format!(
-            "https://aiplatform.googleapis.com/v1/projects/{}/locations/{}/publishers/google/models/{}:generateContent",
-            self.project_id, self.location, model
-        )
+        match self.api_provider {
+            ApiProvider::Vertex => format!(
+                "https://aiplatform.googleapis.com/v1/projects/{}/locations/{}/publishers/google/models/{}:generateContent",
+                self.project_id, self.location, model
+            ),
+            ApiProvider::Studio => format!(
+                "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
+                model
+            ),
+        }
     }
 
-    /// Vertex AI cachedContents collection endpoint.
+    /// CachedContents collection endpoint.
     fn cache_base_url(&self) -> String {
-        format!(
-            "https://aiplatform.googleapis.com/v1/projects/{}/locations/{}/cachedContents",
-            self.project_id, self.location
-        )
+        match self.api_provider {
+            ApiProvider::Vertex => format!(
+                "https://aiplatform.googleapis.com/v1/projects/{}/locations/{}/cachedContents",
+                self.project_id, self.location
+            ),
+            ApiProvider::Studio => "https://generativelanguage.googleapis.com/v1beta/cachedContents".to_string(),
+        }
     }
 
-    /// Vertex AI URL for a specific resource (cachedContent or batch job) by its full resource name.
-    fn vertex_resource_url(&self, resource_name: &str) -> String {
-        format!("https://aiplatform.googleapis.com/v1/{}", resource_name)
+    /// URL for a specific resource (cachedContent or batch job) by its full resource name.
+    fn resource_url(&self, resource_name: &str) -> String {
+        match self.api_provider {
+            ApiProvider::Vertex => format!("https://aiplatform.googleapis.com/v1/{}", resource_name),
+            ApiProvider::Studio => format!("https://generativelanguage.googleapis.com/v1beta/{}", resource_name),
+        }
     }
 
-    /// Full Vertex AI model resource name (used in cache creation body).
+    /// Full model resource name (used in cache creation body).
     fn model_resource_name(&self, model: &str) -> String {
-        format!(
-            "projects/{}/locations/{}/publishers/google/models/{}",
-            self.project_id, self.location, model
-        )
+        match self.api_provider {
+            ApiProvider::Vertex => format!(
+                "projects/{}/locations/{}/publishers/google/models/{}",
+                self.project_id, self.location, model
+            ),
+            ApiProvider::Studio => format!("models/{}", model),
+        }
     }
 
     /// Download an image from a URL and return it as a base64-encoded string.
@@ -425,6 +499,46 @@ Return ONLY valid JSON with exactly one result entry for this student:
             adm, adm
         );
         parts.push(serde_json::json!({ "text": final_instruction }));
+
+        parts
+    }
+
+    /// Build content parts for a context cache from paper questions and rubrics.
+    ///
+    /// Each entry is `(question_num, question_text, marks, rubric_text, image_b64s)`.
+    /// The system instruction is added separately via `systemInstruction` in the
+    /// cache creation request, so this function only produces the user-facing
+    /// marking-scheme parts.
+    pub fn build_question_cache_parts(
+        questions: &[(i32, &str, i16, &str, &[(String, Option<String>)])],
+    ) -> Vec<serde_json::Value> {
+        let mut parts: Vec<serde_json::Value> = Vec::new();
+
+        // Header part — describes the scheme
+        parts.push(serde_json::json!({
+            "text": "## MARKING SCHEME\n\nThe following is the complete marking scheme for this paper. It lists every question with its text, total marks, and rubric criteria. Rubric criteria are your PRIMARY scoring tool — each one tells you exactly what to look for in the student's answer.\n\nMarking rules:\n- Match each rubric criterion against the student's answer: full match → full criterion marks; partial match → proportional marks; no match → 0.\n- Sum awarded criterion marks, then CAP at the question's own allocated marks.\n- Apply follow-through (FT) marking: only deduct at the point of error.\n- Accept equivalent forms unless the rubric explicitly requires a specific form.\n- Give benefit of the doubt on ambiguous handwriting."
+        }));
+
+        // One part per question — structured text
+        for (q_num, q_text, marks, rubric, images) in questions {
+            let mut text = format!(
+                "QUESTION {} ({} marks)\n\n{}\n\nRUBRIC:\n{}\n---",
+                q_num, marks, q_text, rubric
+            );
+            parts.push(serde_json::json!({ "text": text }));
+
+            // Inline question images (diagrams, passages, etc.)
+            for (b64, caption) in *images {
+                parts.push(serde_json::json!({
+                    "inline_data": { "mime_type": "image/jpeg", "data": b64 }
+                }));
+                if let Some(cap) = caption {
+                    parts.push(serde_json::json!({
+                        "text": format!("Image caption: {}", cap)
+                    }));
+                }
+            }
+        }
 
         parts
     }
@@ -716,6 +830,7 @@ Return ONLY valid JSON with exactly one result entry for this student:
             score: entry.score,
             total: entry.total,
             breakdown,
+            usage: None,
         })
     }
 
@@ -908,7 +1023,7 @@ Return ONLY valid JSON with exactly one result entry for this student:
 
     /// Delete a Gemini context cache (best-effort, fire-and-forget).
     pub async fn delete_context_cache(&self, cache_name: &str) {
-        let url = self.vertex_resource_url(cache_name);
+        let url = self.resource_url(cache_name);
 
         eprintln!("[GEMINI] deleting context cache: {}", cache_name);
         tracing::info!(cache_name = %cache_name, "gemini: deleting context cache");
@@ -928,12 +1043,95 @@ Return ONLY valid JSON with exactly one result entry for this student:
         }
     }
 
+    /// Mark a single student WITHOUT a context cache (legacy path).
+    /// Sends the full system instruction + student answer images in one request.
+    /// Used for papers that don't have structured question data.
+    pub async fn mark_student_uncached(
+        &self,
+        adm: i32,
+        answer_images_b64: &[String],
+    ) -> Result<StudentScore, Box<dyn std::error::Error + Send + Sync>> {
+        let parts = Self::build_student_parts(adm, answer_images_b64);
+
+        let body = serde_json::json!({
+            "system_instruction": {
+                "parts": [{"text": SYSTEM_INSTRUCTION}]
+            },
+            "contents": [{"parts": parts, "role": "user"}],
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "temperature": 0,
+                "thinkingConfig": {
+                    "thinkingLevel": "medium"
+                }
+            }
+        });
+
+        let label = format!("ADM {} (uncached)", adm);
+        let text = self.send_with_fallback(&body, &label).await?;
+
+        let gemini_resp: GeminiResponse = serde_json::from_str(&text).map_err(|e| {
+            tracing::error!(adm = adm, parse_error = %e, raw_response = %text, "gemini: failed to parse GeminiResponse (uncached)");
+            e
+        })?;
+
+        let usage = gemini_resp.usage_metadata.as_ref().map(|m| m.to_token_usage());
+
+        let result_text = gemini_resp
+            .candidates
+            .first()
+            .and_then(|c| c.content.parts.iter().find(|p| !p.thought && p.text.is_some()))
+            .and_then(|p| p.text.as_ref())
+            .ok_or_else(|| {
+                tracing::error!(adm = adm, raw_response = %text, "gemini: no text in uncached response");
+                format!("No text in Gemini uncached response for ADM {}", adm)
+            })?;
+
+        let marking: MarkingResult = serde_json::from_str(result_text).map_err(|e| {
+            tracing::error!(adm = adm, parse_error = %e, raw_result = %result_text, "gemini: failed to parse uncached MarkingResult");
+            e
+        })?;
+
+        let entry = marking.results.into_iter().next().ok_or_else(|| {
+            tracing::error!(adm = adm, "gemini: empty results array (uncached)");
+            format!("Gemini returned empty results for ADM {} (uncached)", adm)
+        })?;
+
+        tracing::info!(
+            adm = entry.adm,
+            score = entry.score,
+            total = entry.total,
+            "gemini: uncached student score summary"
+        );
+
+        let breakdown = entry
+            .breakdown
+            .into_iter()
+            .map(|b| {
+                let question = match b.q {
+                    serde_json::Value::String(s) => s,
+                    serde_json::Value::Number(n) => n.to_string(),
+                    other => other.to_string(),
+                };
+                QuestionBreakdown { question, awarded: b.awarded, out_of: b.out_of, note: b.note }
+            })
+            .collect();
+
+        Ok(StudentScore {
+            adm: entry.adm,
+            score: entry.score,
+            total: entry.total,
+            breakdown,
+            usage,
+        })
+    }
+
     /// Mark a single student using a pre-created context cache.
     /// The cache already contains the system instruction and scheme images,
     /// so only the student's answer sheets and final instruction are sent.
     pub async fn mark_student_cached(
         &self,
-        
+        cache_name: &str,
         adm: i32,
         answer_images_b64: &[String],
     ) -> Result<StudentScore, Box<dyn std::error::Error + Send + Sync>> {
@@ -941,6 +1139,7 @@ Return ONLY valid JSON with exactly one result entry for this student:
 
         // Build request using cachedContent — no system_instruction, no scheme parts
         let body = serde_json::json!({
+            "cachedContent": cache_name,
             "contents": [{"parts": parts, "role": "user"}],
             "generationConfig": {
                 "responseMimeType": "application/json",
@@ -1012,6 +1211,8 @@ Return ONLY valid JSON with exactly one result entry for this student:
             tracing::error!(adm = adm, parse_error = %e, raw_response = %text, "gemini: failed to parse GeminiResponse (cached)");
             e
         })?;
+
+        let usage = gemini_resp.usage_metadata.as_ref().map(|m| m.to_token_usage());
 
         let result_text = gemini_resp
             .candidates
@@ -1089,6 +1290,7 @@ Return ONLY valid JSON with exactly one result entry for this student:
             score: entry.score,
             total: entry.total,
             breakdown,
+            usage,
         })
     }
 
@@ -1292,7 +1494,7 @@ Return ONLY valid JSON with exactly one result entry for this student:
         &self,
         batch_name: &str,
     ) -> Result<BatchStatus, Box<dyn std::error::Error + Send + Sync>> {
-        let url = self.vertex_resource_url(batch_name);
+        let url = self.resource_url(batch_name);
 
         let response = self.http.get(&url).send().await?;
         let status = response.status();
@@ -1433,6 +1635,7 @@ Return ONLY valid JSON with exactly one result entry for this student:
                         score: entry.score,
                         total: entry.total,
                         breakdown,
+                        usage: None,
                     }));
                 }
 
@@ -1447,7 +1650,7 @@ Return ONLY valid JSON with exactly one result entry for this student:
 
     /// Cancel an ongoing batch job (best-effort).
     pub async fn cancel_batch_job(&self, batch_name: &str) {
-        let url = format!("{}:cancel", self.vertex_resource_url(batch_name));
+        let url = format!("{}:cancel", self.resource_url(batch_name));
 
         eprintln!("[GEMINI] cancelling batch job: {}", batch_name);
         tracing::info!(batch_name = %batch_name, "gemini: cancelling batch job");
@@ -1474,7 +1677,7 @@ Return ONLY valid JSON with exactly one result entry for this student:
 
     /// Delete a batch job (best-effort, fire-and-forget).
     pub async fn delete_batch_job(&self, batch_name: &str) {
-        let url = self.vertex_resource_url(batch_name);
+        let url = self.resource_url(batch_name);
 
         eprintln!("[GEMINI] deleting batch job: {}", batch_name);
         tracing::info!(batch_name = %batch_name, "gemini: deleting batch job");
