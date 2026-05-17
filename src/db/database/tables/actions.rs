@@ -44,9 +44,13 @@ struct PaperIdRow {
 
 /// Map legacy (school, event, subject) to a paper_id UUID.
 ///
-/// If `paper_number` is Some, it is used as a 1-based index into papers ordered
-/// by creation time.  Most subjects have a single paper per event, so the
-/// fallback (first row) is correct for the common case.
+/// Papers created via the RPC path may have `event IS NULL` even though the
+/// sync payload carries a non-empty `exam` (event) field.  We try the exact
+/// match first, then fall back to `event IS NULL` when the caller supplied an
+/// event string, and finally consult `paper_schedules`.
+///
+/// If `paper_number` is Some, it is used as a 1-based index into papers
+/// ordered by creation time.
 fn resolve_paper_id(
     conn: &mut Conn,
     school: &str,
@@ -54,29 +58,69 @@ fn resolve_paper_id(
     subject: i32,
     paper_number: Option<i32>,
 ) -> Result<String> {
-    use diesel::sql_types::{Integer, Text};
-    let rows: Vec<PaperIdRow> = sql_query(
-        "SELECT id FROM papers WHERE school = ? AND event = ? AND subject = ? ORDER BY created",
-    )
-    .bind::<Text, _>(school)
-    .bind::<Text, _>(event)
-    .bind::<Integer, _>(subject)
-    .load(conn)?;
+    use diesel::sql_types::{Integer, Nullable, Text};
 
-    if rows.is_empty() {
-        return Err(Error::Internal(format!(
-            "no paper for school={school} event={event} subject={subject}"
-        )));
+    // Helper to pick the right row from a list.
+    fn pick(rows: &[PaperIdRow], paper_number: Option<i32>) -> Option<String> {
+        if rows.is_empty() {
+            return None;
+        }
+        if let Some(n) = paper_number {
+            let idx = (n as usize).saturating_sub(1);
+            if idx < rows.len() {
+                return Some(rows[idx].id.clone());
+            }
+        }
+        Some(rows[0].id.clone())
     }
 
-    if let Some(n) = paper_number {
-        let idx = (n as usize).saturating_sub(1);
-        if idx < rows.len() {
-            return Ok(rows[idx].id.clone());
+    // 1. Exact match on (school, event, subject).
+    if !event.is_empty() {
+        let rows: Vec<PaperIdRow> = sql_query(
+            "SELECT id FROM papers WHERE school = ? AND event = ? AND subject = ? ORDER BY created",
+        )
+        .bind::<Text, _>(school)
+        .bind::<Text, _>(event)
+        .bind::<Integer, _>(subject)
+        .load(conn)?;
+        if let Some(id) = pick(&rows, paper_number) {
+            return Ok(id);
         }
     }
 
-    Ok(rows[0].id.clone())
+    // 2. Papers created without an event (event IS NULL).
+    {
+        let rows: Vec<PaperIdRow> = sql_query(
+            "SELECT id FROM papers WHERE school = ? AND event IS NULL AND subject = ? ORDER BY created",
+        )
+        .bind::<Text, _>(school)
+        .bind::<Integer, _>(subject)
+        .load(conn)?;
+        if let Some(id) = pick(&rows, paper_number) {
+            return Ok(id);
+        }
+    }
+
+    // 3. Look up via paper_schedules (event → paper FK).
+    if !event.is_empty() {
+        let rows: Vec<PaperIdRow> = sql_query(
+            "SELECT p.id FROM papers p \
+             JOIN paper_schedules ps ON ps.paper = p.id \
+             WHERE p.school = ? AND ps.event = ? AND p.subject = ? \
+             ORDER BY p.created",
+        )
+        .bind::<Text, _>(school)
+        .bind::<Text, _>(event)
+        .bind::<Integer, _>(subject)
+        .load(conn)?;
+        if let Some(id) = pick(&rows, paper_number) {
+            return Ok(id);
+        }
+    }
+
+    Err(Error::Internal(format!(
+        "no paper for school={school} event={event} subject={subject}"
+    )))
 }
 
 /// SyncAction integer values — must stay aligned with the client's
@@ -3115,39 +3159,65 @@ fn handle_delete_exam(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
 fn handle_create_paper(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult> {
     let p: CreatePaperPayload = decode(payload)?;
     let log_user = Id::system();
+    let now = chrono::Utc::now().timestamp();
 
-    let paper_insert = PaperInsert {
-        school: p.school.clone(),
-        exam: p.exam.clone(),
-        subject: p.subject,
-        paper: p.paper,
-        topic: p.topic,
-        invigilator: p.invigilator.clone(),
-        start: p.start,
-        end: p.end,
-        status: 0, // default status
-        grade: p.grade,
-        stream: p.stream,
-        time_allowed_minutes: p.time_allowed_minutes,
-        instructions: p.instructions.clone(),
-    };
-    insert::insert_paper(conn, &paper_insert)?;
+    // Generate a UUID paper_id — legacy payload doesn't carry one.
+    let paper_id = Id::default().to_string();
+
+    use diesel::sql_types::{BigInt, Integer, Nullable, SmallInt, Text};
+    sql_query(
+        "INSERT INTO papers (id, school, event, subject, grade, stream, type_, teacher, name, \
+         total_marks, duration_minutes, date, status, generation_mode, instructions, created, updated) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind::<Text, _>(&paper_id)
+    .bind::<Text, _>(&p.school)
+    .bind::<Text, _>(&p.exam) // event = legacy exam id
+    .bind::<Integer, _>(p.subject)
+    .bind::<SmallInt, _>(p.grade as i16)
+    .bind::<Nullable<SmallInt>, _>(p.stream.map(|v| v as i16))
+    .bind::<SmallInt, _>(0) // type_ = exam (default)
+    .bind::<Text, _>(&p.invigilator) // teacher = invigilator
+    .bind::<Text, _>(&format!("Paper {}", p.subject)) // name placeholder
+    .bind::<SmallInt, _>(p.time_allowed_minutes.unwrap_or(0) as i16) // total_marks fallback
+    .bind::<SmallInt, _>(p.time_allowed_minutes.unwrap_or(0) as i16) // duration_minutes
+    .bind::<Integer, _>(p.start as i32) // date = start
+    .bind::<SmallInt, _>(0) // status = draft
+    .bind::<SmallInt, _>(0) // generation_mode = class_uniform
+    .bind::<Nullable<Text>, _>(p.instructions.as_deref())
+    .bind::<BigInt, _>(now)
+    .bind::<BigInt, _>(now)
+    .execute(conn)?;
+
     append_log(log_user, TBL_PAPERS as u8, OP_INSERT, 0)?;
 
-    let row = fetch_paper(
-        conn,
-        &p.school,
-        &p.exam,
-        p.subject as i32,
-        p.paper.map(|v| v as i16),
-        p.grade as i16,
-        p.stream.map(|v| v as i16),
-    )?;
+    // Return the new-style PaperV2 row so sync broadcasts the right schema.
+    let row_key = paper_id.clone();
     Ok(ActionResult::with_rows(vec![upsert_row(
         TBL_PAPERS,
-        row.row_key(),
+        row_key,
         InsertData {
-            row: Some(insert_data::Row::Paper((&row).into())),
+            row: Some(insert_data::Row::PaperV2(PaperV2Insert {
+                id: paper_id,
+                school: p.school.clone(),
+                event: Some(p.exam.clone()),
+                subject: p.subject,
+                grade: p.grade,
+                stream: p.stream,
+                r#type: 0,
+                teacher: p.invigilator.clone(),
+                name: format!("Paper {}", p.subject),
+                total_marks: p.time_allowed_minutes.unwrap_or(0),
+                duration_minutes: p.time_allowed_minutes.unwrap_or(0),
+                date: p.start as i32,
+                status: 0,
+                pdf_key: None,
+                ms_key: None,
+                generation_mode: 0,
+                instructions: p.instructions.clone(),
+                created: now,
+                updated: now,
+            })),
         },
     )]))
 }
