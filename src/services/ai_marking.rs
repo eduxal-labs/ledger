@@ -712,22 +712,34 @@ async fn route_marking(
     gemini: &GeminiClient,
     prepared: PreparedRequest,
 ) -> std::result::Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+    let paper_id = prepared.mark_req.paper_id.clone();
     let has_paper_questions = CONN.with(|conn| {
-        match question_bank::get_paper_questions(conn, &prepared.mark_req.paper_id, None) {
+        match question_bank::get_paper_questions(conn, &paper_id, None) {
             Ok(pqs) => !pqs.is_empty(),
             Err(_) => false,
         }
     });
 
-    if has_paper_questions {
+    let result = if has_paper_questions {
         tracing::info!(
-            paper_id = %prepared.mark_req.paper_id,
+            paper_id = %paper_id,
             "ai_worker: routing to per-student cached marking"
         );
         mark_and_write_cached(gemini, prepared).await
     } else {
         mark_and_write(gemini, prepared).await
+    };
+
+    if let Err(e) = &result {
+        let msg = e.to_string();
+        CONN.with(|conn| {
+            let _ = question_bank::update_marking_status(
+                conn, &paper_id, 6, "Failed", Some(&msg), 0, 0,
+            );
+        });
     }
+
+    result
 }
 
 // ---------------------------------------------------------------------------
