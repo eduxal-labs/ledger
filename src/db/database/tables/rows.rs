@@ -904,9 +904,12 @@ pub struct GradeRow {
 impl GradeRow {
     pub fn row_key(&self) -> String {
         format!(
-            "{}|{}",
-            self.paper.as_deref().unwrap_or(""),
-            self.student
+            "{}|{}|{}|{}|{}",
+            self.school,
+            self.exam,
+            self.student,
+            self.subject,
+            "" // paper number — not available in new UUID schema, use empty for NULL
         )
     }
     pub fn school_id(&self) -> Option<&str> {

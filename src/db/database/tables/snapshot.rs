@@ -649,7 +649,11 @@ fn query_scheme_pages(conn: &mut Conn, since: Option<i64>) -> Result<Vec<Snapsho
 }
 
 const SQL_ANSWER_PAGES: &str =
-    "SELECT p.school, IFNULL(p.event, '') AS exam, a.student, p.subject, CAST(NULL AS INTEGER) AS paper, a.page, a.key, a.created FROM answer_pages a JOIN papers p ON a.paper = p.id";
+    "SELECT * FROM (\
+     SELECT p.school, IFNULL(p.event, '') AS exam, a.student, p.subject, \
+     CAST(NULL AS INTEGER) AS paper, a.page, a.key, a.created \
+     FROM answer_pages a JOIN papers p ON a.paper = p.id\
+     )";
 
 fn query_answer_pages(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
     load_rows::<AnswerPageRow, _>(
