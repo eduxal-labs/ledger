@@ -2,7 +2,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 use std::time::Instant;
 
-const MODEL: &str = "gemini-3.1-flash-lite-preview";
+const MODEL: &str = "gemma-4-31b-it";
 const FALLBACK_MODEL: &str = "gemini-2.5-flash-lite";
 
 /// Max concurrent Gemini API requests when marking multiple students.
