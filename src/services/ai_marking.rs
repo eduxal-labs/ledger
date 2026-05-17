@@ -1,3 +1,6 @@
+use diesel::sql_types::{Integer, Nullable, Text};
+use std::sync::Arc;
+
 use crate::ai::gemini::GeminiClient;
 use crate::config::storage::sign;
 use crate::db::changelog::{LOG, Record};
@@ -10,8 +13,6 @@ use crate::types::token::Token;
 use diesel::prelude::*;
 use diesel::sql_query;
 use diesel::RunQueryDsl;
-use diesel::sql_types::{Integer, Nullable, Text};
-use std::sync::Arc;
 
 /// If `paper_id` is a legacy composite key (contains `|`), resolve it to
 /// the new UUID paper ID by querying the papers table.  Otherwise return it
@@ -155,6 +156,7 @@ impl<C: Send + Sync + 'static> AiMarking for AiMarkingService<C> {
         let (tx, rx) = mpsc::channel::<MarkRequest>(QUEUE_CAPACITY);
         let client = GeminiClient::new();
         spawn_marking_worker(rx, client);
+        resume_incomplete_jobs(&tx);
         AiMarkingServer::new(Self { config, tx })
     }
 
@@ -404,6 +406,147 @@ fn spawn_marking_worker(rx: mpsc::Receiver<MarkRequest>, gemini: GeminiClient) {
 
         tracing::info!("ai_worker: marking worker stopped");
     });
+}
+
+/// Scan marking_queue for jobs left incomplete by a previous server shutdown
+/// and re-queue them for the worker to pick up.
+fn resume_incomplete_jobs(tx: &mpsc::Sender<MarkRequest>) {
+    #[derive(diesel::QueryableByName)]
+    struct IncompleteJob {
+        #[diesel(sql_type = Text)]
+        paper: String,
+    }
+
+    #[derive(diesel::QueryableByName)]
+    struct AnswerPageRow {
+        #[diesel(sql_type = Integer)]
+        student: i32,
+        #[diesel(sql_type = Text)]
+        key: String,
+    }
+
+    let requests: Vec<MarkRequest> = CONN.with(|conn| {
+        let jobs: Vec<IncompleteJob> = match sql_query(
+            "SELECT paper FROM marking_queue WHERE phase >= 1 AND phase <= 4",
+        )
+        .load(conn)
+        {
+            Ok(rows) => rows,
+            Err(e) => {
+                tracing::warn!(error = %e, "ai_resume: failed to query incomplete jobs");
+                return Vec::new();
+            }
+        };
+
+        if jobs.is_empty() {
+            return Vec::new();
+        }
+
+        tracing::info!(count = jobs.len(), "ai_resume: found incomplete marking jobs");
+
+        let mut out = Vec::with_capacity(jobs.len());
+
+        for job in &jobs {
+            let paper_id = &job.paper;
+
+            // Reset to phase 1 so old phase doesn't mislead.
+            let _ = question_bank::update_marking_status(
+                conn,
+                paper_id,
+                1,
+                "Resuming...",
+                None,
+                0,
+                0,
+            );
+
+            let school = papers_db::get_paper(conn, paper_id)
+                .ok()
+                .flatten()
+                .map(|p| p.school)
+                .unwrap_or_default();
+
+            let pages: Vec<AnswerPageRow> = match sql_query(
+                "SELECT student, key FROM answer_pages \
+                 WHERE paper = ? ORDER BY student, page",
+            )
+            .bind::<Text, _>(paper_id)
+            .load(conn)
+            {
+                Ok(rows) => rows,
+                Err(e) => {
+                    tracing::warn!(paper_id = %paper_id, error = %e,
+                        "ai_resume: failed to query answer pages");
+                    let _ = question_bank::update_marking_status(
+                        conn, paper_id, 6, "Failed",
+                        Some("Failed to load answer pages for resumption"),
+                        0, 0,
+                    );
+                    continue;
+                }
+            };
+
+            if pages.is_empty() {
+                tracing::warn!(paper_id = %paper_id,
+                    "ai_resume: no answer pages found — marking as failed");
+                let _ = question_bank::update_marking_status(
+                    conn, paper_id, 6, "No answer pages",
+                    Some("No answer pages found for this paper"),
+                    0, 0,
+                );
+                continue;
+            }
+
+            // Group keys by student, preserving page order.
+            let mut student_map: std::collections::BTreeMap<i32, Vec<String>> =
+                std::collections::BTreeMap::new();
+            for page in &pages {
+                let url = sign::url(&page.key, sign::GET_TTL, false);
+                student_map.entry(page.student).or_default().push(url);
+            }
+
+            let students: Vec<(i32, Vec<String>)> = student_map.into_iter().collect();
+            let student_count = students.len();
+
+            tracing::info!(
+                paper_id = %paper_id,
+                student_count,
+                "ai_resume: re-queuing marking job"
+            );
+
+            out.push(MarkRequest {
+                paper_id: paper_id.clone(),
+                school,
+                students,
+            });
+        }
+
+        out
+    });
+
+    for req in requests {
+        match tx.try_send(req) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(req)) => {
+                tracing::warn!(
+                    paper_id = %req.paper_id,
+                    "ai_resume: queue full — dropping resumed job"
+                );
+                // Mark as failed so the user can re-trigger manually.
+                CONN.with(|conn| {
+                    let _ = question_bank::update_marking_status(
+                        conn, &req.paper_id, 6, "Queue full",
+                        Some("Marking queue is full — please try again"),
+                        0, 0,
+                    );
+                });
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                tracing::error!("ai_resume: channel closed — aborting resume");
+                break;
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -884,18 +1027,10 @@ async fn mark_and_write_cached(
 
     let scheme_parts = GeminiClient::build_question_cache_parts(&cache_input);
 
-    // 4. Create context cache
-    let cache_name = match create_cache_with_retry(gemini, &scheme_parts).await {
-        Some(name) => {
-            tracing::info!(cache_name = %name, "ai_cached: context cache created");
-            name
-        }
-        None => {
-            return Err("Failed to create context cache after retries".into());
-        }
-    };
+    // 4. Create context cache — fall back to uncached marking if unsupported.
+    let maybe_cache = create_cache_with_retry(gemini, &scheme_parts).await;
 
-    // 5. Mark all students against the cache
+    // 5. Mark all students (cached if possible, otherwise uncached).
     CONN.with(|conn| {
         let _ = question_bank::update_marking_status(
             conn,
@@ -908,11 +1043,14 @@ async fn mark_and_write_cached(
         );
     });
 
-    let (scores, failed_adms) =
-        mark_students_realtime_cached(gemini, &cache_name, &prepared.student_images).await;
-
-    // 6. Delete cache (best-effort, fire-and-forget)
-    gemini.delete_context_cache(&cache_name).await;
+    let (scores, failed_adms) = if let Some(ref cache_name) = maybe_cache {
+        let result = mark_students_realtime_cached(gemini, cache_name, &prepared.student_images).await;
+        gemini.delete_context_cache(cache_name).await;
+        result
+    } else {
+        tracing::warn!(paper_id = %paper_id, "ai_cached: cache unavailable — falling back to uncached marking");
+        mark_students_realtime(gemini, &prepared.student_images).await
+    };
 
     if !failed_adms.is_empty() {
         tracing::warn!(
