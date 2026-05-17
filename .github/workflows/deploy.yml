@@ -124,29 +124,42 @@ jobs:
         run: ssh-keyscan -H "${{ vars.VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
 
       # -----------------------------------------------------------------------
-      # 7. Stop the running service, upload the new binary + configs
+      # 7. Upload new binary + configs to VPS (service still running)
       # -----------------------------------------------------------------------
       - name: Upload artifacts to VPS
         run: |
           VPS="${{ vars.VPS_USER }}@${{ vars.VPS_HOST }}"
-
-          # Gracefully stop the service before replacing the binary
-          ssh "$VPS" "sudo systemctl stop ledger 2>/dev/null || true"
-
-          # Upload binary and deployment configuration files
           scp target/release/ledger         "$VPS":/tmp/ledger-new
           scp deploy/ledger.service         "$VPS":/tmp/ledger.service
           scp deploy/Caddyfile              "$VPS":/tmp/Caddyfile
 
       # -----------------------------------------------------------------------
-      # 8. SSH into VPS: install binary, configure systemd + Caddy, start
+      # 8. Stop old → replace binary → start new (single atomic SSH session)
       # -----------------------------------------------------------------------
-      - name: Deploy on VPS
+      - name: Deploy on VPS (stop → replace → start)
         run: |
           ssh "${{ vars.VPS_USER }}@${{ vars.VPS_HOST }}" 'bash -s' << 'DEPLOY'
           set -euo pipefail
 
-          # ====== Service user and data directory (first deploy) ======
+          # ====== 0. Stop the running service ======
+          echo ">>> Stopping ledger service..."
+          sudo systemctl stop ledger 2>/dev/null || true
+
+          # Wait until port 50051 is free (old process fully gone)
+          for i in $(seq 1 20); do
+            if ! ss -tlnp | grep -q ':50051'; then
+              echo ">>> ledger stopped (port 50051 free)"
+              break
+            fi
+            if [ "$i" -eq 20 ]; then
+              echo "!!! ledger did not stop in time — force-killing"
+              sudo systemctl kill -s SIGKILL ledger 2>/dev/null || true
+              sleep 1
+            fi
+            sleep 0.5
+          done
+
+          # ====== 1. Service user and data directory (first deploy) ======
           if ! id ledger &>/dev/null; then
             echo ">>> Creating system user 'ledger'..."
             sudo useradd --system --no-create-home --shell /usr/sbin/nologin --home-dir /opt/ledger ledger
@@ -154,20 +167,21 @@ jobs:
           sudo mkdir -p /opt/ledger
           sudo chown ledger:ledger /opt/ledger
 
-          # ====== Install binary ======
-          echo ">>> Installing ledger binary..."
-          sudo mv /tmp/ledger-new /opt/ledger/ledger
-          sudo chmod 755 /opt/ledger/ledger
-          sudo chown root:root /opt/ledger/ledger
+          # ====== 2. Replace binary (atomic: rm old → cp new) ======
+          echo ">>> Replacing ledger binary..."
+          sudo rm -f /opt/ledger/ledger
+          sudo install -m 755 -o root -g root /tmp/ledger-new /opt/ledger/ledger
+          sudo rm -f /tmp/ledger-new
+          echo ">>> Binary SHA256: $(sha256sum /opt/ledger/ledger | cut -d' ' -f1)"
 
-          # ====== Install systemd service ======
+          # ====== 3. Install systemd service ======
           echo ">>> Installing systemd unit..."
           sudo mv /tmp/ledger.service /etc/systemd/system/ledger.service
           sudo chmod 644 /etc/systemd/system/ledger.service
           sudo systemctl daemon-reload
           sudo systemctl enable ledger
 
-          # ====== Install Caddy via official apt repo (first deploy) ======
+          # ====== 4. Install Caddy via official apt repo (first deploy) ======
           if ! command -v caddy &>/dev/null; then
             echo ">>> Installing Caddy..."
             sudo apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl
@@ -179,13 +193,12 @@ jobs:
             sudo apt-get install -y caddy
           fi
 
-          # ====== Configure Caddy ======
+          # ====== 5. Configure Caddy ======
           echo ">>> Updating Caddyfile..."
           sudo cp /tmp/Caddyfile /etc/caddy/Caddyfile
           sudo chown root:root /etc/caddy/Caddyfile
           sudo chmod 644 /etc/caddy/Caddyfile
 
-          # Validate the Caddyfile before applying
           if sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile; then
             sudo systemctl reload caddy 2>/dev/null || sudo systemctl restart caddy
           else
@@ -193,7 +206,7 @@ jobs:
             exit 1
           fi
 
-          # ====== Configure firewall (idempotent) ======
+          # ====== 6. Configure firewall (idempotent) ======
           if command -v ufw &>/dev/null; then
             echo ">>> Configuring firewall rules..."
             sudo ufw allow OpenSSH                        >/dev/null 2>&1 || true
@@ -203,18 +216,18 @@ jobs:
             echo "y" | sudo ufw enable                    >/dev/null 2>&1 || true
           fi
 
-          # ====== Start the Ledger service ======
+          # ====== 7. Start the new Ledger service ======
           echo ">>> Starting ledger service..."
-          sudo systemctl restart ledger
+          sudo systemctl start ledger
 
-          # ====== Health check — wait up to 5 seconds for the port ======
+          # ====== 8. Health check — wait up to 10 seconds for the port ======
           echo ">>> Waiting for ledger to listen on :50051..."
-          for i in $(seq 1 10); do
+          for i in $(seq 1 20); do
             if ss -tlnp | grep -q ':50051'; then
               echo ">>> ledger is UP on :50051"
               break
             fi
-            if [ "$i" -eq 10 ]; then
+            if [ "$i" -eq 20 ]; then
               echo "!!! ledger did not start in time — check: journalctl -u ledger"
               sudo journalctl -u ledger --no-pager -n 30
               exit 1
