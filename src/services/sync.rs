@@ -69,6 +69,7 @@ pub enum LogTable {
     PapersV2 = 39,
     PaperSchedules = 40,
     TaughtTopics = 41,
+    MarkingQueue = 42,
 }
 
 impl LogTable {
@@ -114,6 +115,7 @@ impl LogTable {
             39 => Some(Self::PapersV2),
             40 => Some(Self::PaperSchedules),
             41 => Some(Self::TaughtTopics),
+            42 => Some(Self::MarkingQueue),
             _ => None,
         }
     }
@@ -142,7 +144,7 @@ impl LogTable {
             Self::Announcements => Some(Resource::Announcements),
             Self::Roles | Self::Scopes => Some(Resource::Roles),
             Self::Plans | Self::Subscriptions | Self::Discounts => Some(Resource::Plans),
-            Self::AiUsage => Some(Resource::AI),
+            Self::AiUsage | Self::MarkingQueue => Some(Resource::AI),
             Self::Terms => Some(Resource::Schools),
             Self::SubjectCatalog | Self::Topics => Some(Resource::Subjects),
             Self::Streams | Self::Mpesa => Some(Resource::Schools),
@@ -161,7 +163,7 @@ impl LogTable {
                 None
             }
             // New tables: Events/PapersV2/PaperSchedules use id PKs; TaughtTopics has school as first key segment
-            Self::Events | Self::PapersV2 | Self::PaperSchedules => None,
+            Self::Events | Self::PapersV2 | Self::PaperSchedules | Self::MarkingQueue => None,
             Self::TaughtTopics => {
                 let first = row_key.split('|').next()?;
                 first.parse().ok()
@@ -641,6 +643,7 @@ const SNAPSHOT_TABLE_ORDER: &[i32] = &[
     29, 30, // subscriptions, discounts
     34, // mpesa
     38, 39, 40, 41, // events, papers_v2, paper_schedules, taught_topics
+    42, // marking_queue
 ];
 
 /// Returns the current byte length of the binary changelog (the cursor

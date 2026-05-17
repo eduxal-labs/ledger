@@ -14,7 +14,9 @@ use crate::db::schema::{
     answer_pages, marking_queue, paper_questions, part_rubric_criteria, question_grades,
     question_images, question_parts, questions, rubric_criteria, scheme_pages,
 };
+use crate::db::changelog::{LOG, Record};
 use crate::types::error::{Error, Result};
+use crate::types::id::Id;
 use crate::types::question::{
     AnswerSpaceType, BodyFormat, CognitiveLevel, PartRubricCriterion, Question, QuestionPart,
     QuestionType, QuestionUpdate, RubricCriterion,
@@ -520,6 +522,10 @@ pub fn update_marking_status(
     .bind::<BigInt, _>(now)
     .bind::<Text, _>(paper_id)
     .execute(conn)?;
+    let _ = LOG.with(|cell| {
+        cell.borrow_mut()
+            .append(&Record::new(Id::system(), 42, 0, 0))
+    });
     Ok(())
 }
 

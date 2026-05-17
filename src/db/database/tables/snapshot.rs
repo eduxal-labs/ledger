@@ -1,4 +1,4 @@
-use crate::proto::services::sync::{InsertData, insert_data};
+use crate::proto::services::sync::{InsertData, MarkingQueueInsert, insert_data};
 use crate::types::error::{Error, Result};
 use crate::types::id::Id;
 use diesel::RunQueryDsl;
@@ -43,6 +43,7 @@ const TBL_EVENTS: i32 = 38;
 const TBL_PAPERS_V2: i32 = 39;
 const TBL_PAPER_SCHEDULES: i32 = 40;
 const TBL_TAUGHT_TOPICS: i32 = 41;
+const TBL_MARKING_QUEUE: i32 = 42;
 const TBL_ROLES: i32 = 26;
 const TBL_SCOPES: i32 = 27;
 const TBL_PLANS: i32 = 28;
@@ -114,6 +115,7 @@ fn snapshot_table_inner(
         TBL_PAPERS_V2 => query_papers_v2(conn, since),
         TBL_PAPER_SCHEDULES => query_paper_schedules(conn, since),
         TBL_TAUGHT_TOPICS => query_taught_topics(conn, since),
+        TBL_MARKING_QUEUE => query_marking_queue(conn, since),
         _ => Ok(vec![]),
     }
 }
@@ -383,32 +385,6 @@ fn query_lessons(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>
         school_id: parse_school_id(r.school_id()),
         insert_data: InsertData {
             row: Some(insert_data::Row::Lesson(r.into())),
-        },
-    })
-}
-
-const SQL_EXAMS: &str = "SELECT id, school, name, year, term, personalized, \"type\", start, \"end\", teacher, created, updated FROM exams";
-
-fn query_exams(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
-    load_rows::<ExamRow, _>(conn, SQL_EXAMS, true, since, "exams", |r| SnapshotRow {
-        row_key: r.row_key(),
-        school_id: parse_school_id(r.school_id()),
-        insert_data: InsertData {
-            row: Some(insert_data::Row::Exam(r.into())),
-        },
-    })
-}
-
-const SQL_PAPERS: &str = "SELECT school, event AS exam, subject, paper, topic, \
-    invigilator, start, \"end\", status, grade, stream, created, updated, \
-    time_allowed_minutes, instructions FROM papers";
-
-fn query_papers(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
-    load_rows::<PaperRow, _>(conn, SQL_PAPERS, true, since, "papers", |r| SnapshotRow {
-        row_key: r.row_key(),
-        school_id: parse_school_id(r.school_id()),
-        insert_data: InsertData {
-            row: Some(insert_data::Row::Paper(r.into())),
         },
     })
 }
@@ -732,6 +708,66 @@ fn query_taught_topics(conn: &mut Conn, since: Option<i64>) -> Result<Vec<Snapsh
             school_id: parse_school_id(r.school_id().as_deref()),
             insert_data: InsertData {
                 row: Some(insert_data::Row::TaughtTopic(r.into())),
+            },
+        },
+    )
+}
+
+// Wrapped in a subquery that JOINs with papers so the generic build_sql
+// WHERE clause works on the top-level created/updated columns and school
+// is available for permission scoping.
+const SQL_MARKING_QUEUE: &str = "SELECT * FROM (\
+    SELECT mq.id, mq.paper, mq.phase, mq.progress, mq.error, \
+    mq.total_students, mq.marked_students, mq.created, mq.updated, p.school \
+    FROM marking_queue mq JOIN papers p ON p.id = mq.paper\
+    )";
+
+#[derive(Debug, Clone, diesel::QueryableByName)]
+struct MarkingQueueWithSchoolRow {
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    id: i32,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    paper: String,
+    #[diesel(sql_type = diesel::sql_types::SmallInt)]
+    phase: i16,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    progress: String,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+    error: Option<String>,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    total_students: i32,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    marked_students: i32,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    created: i64,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    updated: i64,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    school: String,
+}
+
+fn query_marking_queue(conn: &mut Conn, since: Option<i64>) -> Result<Vec<SnapshotRow>> {
+    load_rows::<MarkingQueueWithSchoolRow, _>(
+        conn,
+        SQL_MARKING_QUEUE,
+        true, // has both created and updated
+        since,
+        "marking_queue",
+        |r| SnapshotRow {
+            row_key: r.paper.clone(),
+            school_id: parse_school_id(Some(&r.school)),
+            insert_data: InsertData {
+                row: Some(insert_data::Row::MarkingQueue(MarkingQueueInsert {
+                    id: r.id,
+                    paper: r.paper.clone(),
+                    phase: r.phase as i32,
+                    progress: r.progress.clone(),
+                    error: r.error.clone(),
+                    total_students: r.total_students,
+                    marked_students: r.marked_students,
+                    created: r.created,
+                    updated: r.updated,
+                })),
             },
         },
     )

@@ -58,7 +58,7 @@ fn resolve_paper_id(
     subject: i32,
     paper_number: Option<i32>,
 ) -> Result<String> {
-    use diesel::sql_types::{Integer, Nullable, Text};
+    use diesel::sql_types::{Integer, Text};
 
     // Helper to pick the right row from a list.
     fn pick(rows: &[PaperIdRow], paper_number: Option<i32>) -> Option<String> {

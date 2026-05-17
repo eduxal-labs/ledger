@@ -969,6 +969,7 @@ message InsertData {
     PaperV2Insert paper_v2 = 39;
     PaperScheduleInsert paper_schedule = 40;
     TaughtTopicInsert taught_topic = 41;
+    MarkingQueueInsert marking_queue = 42;
   }
   reserved 25, 35;
 }
@@ -1400,5 +1401,19 @@ message TaughtTopicInsert {
   string taught_by = 6;
   int32 status = 7;
   optional int32 taught_date = 8;
+  int64 updated = 9;
+}
+
+// table 42 — marking_queue
+// phase: 0=queued, 1=downloading, 2=caching, 3=marking, 4=aggregating, 5=complete, 6=failed
+message MarkingQueueInsert {
+  int32 id = 1;
+  string paper = 2;
+  int32 phase = 3;
+  string progress = 4;
+  optional string error = 5;
+  int32 total_students = 6;
+  int32 marked_students = 7;
+  int64 created = 8;
   int64 updated = 9;
 }

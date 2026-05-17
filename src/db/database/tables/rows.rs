@@ -1885,6 +1885,31 @@ pub struct MarkingQueueRow {
     pub updated: i64,
 }
 
+impl MarkingQueueRow {
+    pub fn row_key(&self) -> String {
+        self.paper.clone()
+    }
+    pub fn school_id(&self) -> Option<&str> {
+        None // derived via JOIN in snapshot query
+    }
+}
+
+impl From<&MarkingQueueRow> for MarkingQueueInsert {
+    fn from(row: &MarkingQueueRow) -> Self {
+        MarkingQueueInsert {
+            id: row.id,
+            paper: row.paper.clone(),
+            phase: row.phase as i32,
+            progress: row.progress.clone(),
+            error: row.error.clone(),
+            total_students: row.total_students,
+            marked_students: row.marked_students,
+            created: row.created,
+            updated: row.updated,
+        }
+    }
+}
+
 // ── EventRow ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, diesel::QueryableByName)]
