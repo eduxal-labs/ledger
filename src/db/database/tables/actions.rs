@@ -4594,9 +4594,15 @@ fn handle_upload_answer_sheet(conn: &mut Conn, payload: &[u8]) -> Result<ActionR
     let paper_id = resolve_paper_id(conn, &p.school, &p.exam, p.subject, p.paper)?;
 
     // 1. Delete existing pages and log each one.
+    // Only log deletes for pages beyond the new range — pages 0..count will be
+    // overwritten by INSERTs below. If we logged deletes for overlapping pages,
+    // a receiving device would apply the INSERTs then immediately DELETE them.
     let existing_pages =
         delete::delete_answer_pages(conn, &paper_id, p.student)?;
     for page in &existing_pages {
+        if *page >= 0 && (*page as i32) < p.count {
+            continue;
+        }
         let row_key = format!(
             "{}|{}|{}|{}|{}|{}",
             p.school,

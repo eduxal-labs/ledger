@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use std::time::Instant;
 
-const MODEL: &str = "gemini-3.1-flash-lite-preview";
+const MODEL: &str = "gemini-2.5-flash";
 const FALLBACK_MODEL: &str = "gemini-2.5-flash-lite";
 
 #[derive(Clone, Copy, PartialEq)]
