@@ -1,8 +1,8 @@
 use serde::Deserialize;
 use std::time::Instant;
 
-const MODEL: &str = "gemini-2.5-flash";
-const FALLBACK_MODEL: &str = "gemini-2.5-flash-lite";
+const MODEL: &str = "gemini-3.1-pro-preview";
+const FALLBACK_MODEL: &str = "gemini-2.5-flash";
 
 #[derive(Clone, Copy, PartialEq)]
 enum ApiProvider {
