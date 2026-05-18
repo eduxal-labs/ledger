@@ -704,7 +704,7 @@ Return ONLY valid JSON with exactly one result entry for this student:
                 "responseMimeType": "application/json",
                 "temperature": 0,
                 "thinkingConfig": {
-                    "thinkingLevel": "high"
+                    "thinkingLevel": "medium"
                 }
             }
         });
@@ -787,7 +787,7 @@ Return ONLY valid JSON with exactly one result entry for this student:
                 "responseMimeType": "application/json",
                 "temperature": 0,
                 "thinkingConfig": {
-                    "thinkingLevel": "high"
+                    "thinkingLevel": "medium"
                 }
             }
         });

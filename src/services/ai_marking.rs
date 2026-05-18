@@ -687,6 +687,8 @@ async fn mark_student_cached_with_retry(
 async fn mark_students_realtime(
     gemini: &GeminiClient,
     student_images: &[(i32, Vec<String>)],
+    paper_id: &str,
+    total_students: usize,
 ) -> (Vec<crate::ai::gemini::StudentScore>, Vec<i32>) {
     let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT));
     let mut handles = Vec::with_capacity(student_images.len());
@@ -705,6 +707,7 @@ async fn mark_students_realtime(
 
     let mut scores = Vec::with_capacity(student_images.len());
     let mut failed_adms = Vec::new();
+    let mut completed: usize = 0;
 
     for (adm, handle) in handles {
         match handle.await {
@@ -718,6 +721,19 @@ async fn mark_students_realtime(
                 failed_adms.push(adm);
             }
         }
+        completed += 1;
+        let pid = paper_id.to_string();
+        CONN.with(|conn| {
+            let _ = question_bank::update_marking_status(
+                conn,
+                &pid,
+                3,
+                &format!("Marking {completed}/{total_students} students..."),
+                None,
+                total_students as i32,
+                completed as i32,
+            );
+        });
     }
 
     (scores, failed_adms)
@@ -727,6 +743,8 @@ async fn mark_students_realtime_cached(
     gemini: &GeminiClient,
     cache_name: &str,
     student_images: &[(i32, Vec<String>)],
+    paper_id: &str,
+    total_students: usize,
 ) -> (Vec<crate::ai::gemini::StudentScore>, Vec<i32>) {
     let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT));
     let mut handles = Vec::with_capacity(student_images.len());
@@ -746,6 +764,7 @@ async fn mark_students_realtime_cached(
 
     let mut scores = Vec::with_capacity(student_images.len());
     let mut failed_adms = Vec::new();
+    let mut completed: usize = 0;
 
     for (adm, handle) in handles {
         match handle.await {
@@ -759,6 +778,19 @@ async fn mark_students_realtime_cached(
                 failed_adms.push(adm);
             }
         }
+        completed += 1;
+        let pid = paper_id.to_string();
+        CONN.with(|conn| {
+            let _ = question_bank::update_marking_status(
+                conn,
+                &pid,
+                3,
+                &format!("Marking {completed}/{total_students} students..."),
+                None,
+                total_students as i32,
+                completed as i32,
+            );
+        });
     }
 
     (scores, failed_adms)
@@ -1044,12 +1076,12 @@ async fn mark_and_write_cached(
     });
 
     let (scores, failed_adms) = if let Some(ref cache_name) = maybe_cache {
-        let result = mark_students_realtime_cached(gemini, cache_name, &prepared.student_images).await;
+        let result = mark_students_realtime_cached(gemini, cache_name, &prepared.student_images, &paper_id, total_students).await;
         gemini.delete_context_cache(cache_name).await;
         result
     } else {
         tracing::warn!(paper_id = %paper_id, "ai_cached: cache unavailable — falling back to uncached marking");
-        mark_students_realtime(gemini, &prepared.student_images).await
+        mark_students_realtime(gemini, &prepared.student_images, &paper_id, total_students).await
     };
 
     if !failed_adms.is_empty() {
@@ -1161,10 +1193,10 @@ async fn mark_and_write(
             (batch_scores, Vec::new())
         } else {
             tracing::warn!("ai_mark: batch failed — falling back to real-time");
-            mark_students_realtime(gemini, &prepared.student_images).await
+            mark_students_realtime(gemini, &prepared.student_images, paper_id, student_count).await
         }
     } else {
-        mark_students_realtime(gemini, &prepared.student_images).await
+        mark_students_realtime(gemini, &prepared.student_images, paper_id, student_count).await
     };
 
     if !failed_adms.is_empty() {
