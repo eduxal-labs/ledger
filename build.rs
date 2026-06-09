@@ -6,6 +6,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     configure()
         .build_client(false)
         .compile_well_known_types(true)
+        .protoc_arg("--experimental_allow_proto3_optional")
         .extern_path(
             ".google.protobuf.Timestamp",
             "crate::proto::time::Timestamp",
