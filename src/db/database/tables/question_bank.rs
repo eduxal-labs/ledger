@@ -171,6 +171,82 @@ pub fn update_question(
     Ok(())
 }
 
+/// Edit a question on a paper.
+/// If the question is only associated with this paper, update it directly.
+/// If it is associated with other papers, duplicate it and update this paper to point to the new one.
+pub fn edit_paper_question(
+    conn: &mut SqliteConnection,
+    paper_id: &str,
+    qid: i32,
+    body: &str,
+    marks: i16,
+    rubric_tuples: &[(i16, String, i16, Option<i16>, bool)],
+    created_by: &str,
+) -> Result<i32> {
+    #[derive(diesel::QueryableByName)]
+    struct CountRow {
+        #[diesel(sql_type = BigInt)]
+        count: i64,
+    }
+
+    // 1. Check if the question is associated with any other paper
+    let count: i64 = diesel::sql_query(
+        "SELECT COUNT(*) as count FROM paper_questions WHERE question = ?"
+    )
+    .bind::<Integer, _>(qid)
+    .get_result::<CountRow>(conn)?
+    .count;
+
+    if count <= 1 {
+        // Only associated with this paper (or none), update directly
+        let changeset = QuestionUpdate {
+            body: Some(body.to_string()),
+            marks: Some(marks),
+            updated: Some(chrono::Utc::now().timestamp()),
+            ..Default::default()
+        };
+        update_question(conn, qid, changeset)?;
+
+        replace_rubric_criteria(conn, qid, rubric_tuples)?;
+        Ok(qid)
+    } else {
+        // Associated with other papers, duplicate/create new question
+        let existing = get_question(conn, qid)?
+            .ok_or_else(|| Error::NotFound)?;
+
+        let (new_qid, _) = find_or_insert_question(
+            conn,
+            existing.topic,
+            body,
+            existing.body_format,
+            existing.stimulus.as_deref(),
+            existing.type_,
+            existing.difficulty,
+            existing.cognitive_level,
+            marks,
+            existing.max_marks,
+            existing.answer_space_type,
+            existing.answer_lines,
+            existing.answer_box_height_mm,
+            existing.example_answer.as_deref(),
+            created_by,
+        )?;
+
+        insert_rubric_criteria(conn, new_qid, rubric_tuples)?;
+
+        // Update paper_questions to point to the new question
+        diesel::update(
+            paper_questions::table
+                .filter(paper_questions::paper.eq(paper_id))
+                .filter(paper_questions::question.eq(qid))
+        )
+        .set(paper_questions::question.eq(new_qid))
+        .execute(conn)?;
+
+        Ok(new_qid)
+    }
+}
+
 /// Delete a question by ID. Returns true if a row was actually deleted.
 pub fn delete_question(conn: &mut SqliteConnection, id: i32) -> Result<bool> {
     let affected = sql_query("DELETE FROM questions WHERE id = ?")

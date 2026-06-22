@@ -48,6 +48,12 @@ pub trait QuestionBank: Sync + Send + 'static + Sized {
         request: UpdateQuestionRequest,
     ) -> impl Future<Output = Result<UpdateQuestionResponse>> + Send;
 
+    fn edit_paper_question(
+        &self,
+        token: Token,
+        request: EditPaperQuestionRequest,
+    ) -> impl Future<Output = Result<EditPaperQuestionResponse>> + Send;
+
     fn delete_question(
         &self,
         token: Token,
@@ -148,6 +154,15 @@ impl<T: QuestionBank> question_bank_server::QuestionBank for T {
     ) -> std::result::Result<Response<UpdateQuestionResponse>, Status> {
         let token = extract_token(&request)?;
         let response = QuestionBank::update_question(self, token, request.into_inner()).await?;
+        Ok(Response::new(response))
+    }
+
+    async fn edit_paper_question(
+        &self,
+        request: Request<EditPaperQuestionRequest>,
+    ) -> std::result::Result<Response<EditPaperQuestionResponse>, Status> {
+        let token = extract_token(&request)?;
+        let response = QuestionBank::edit_paper_question(self, token, request.into_inner()).await?;
         Ok(Response::new(response))
     }
 

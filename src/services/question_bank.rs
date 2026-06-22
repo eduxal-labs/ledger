@@ -422,6 +422,44 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
         })
     }
 
+    // ── edit_paper_question ──────────────────────────────────────────────
+
+    async fn edit_paper_question(
+        &self,
+        token: Token,
+        req: EditPaperQuestionRequest,
+    ) -> Result<EditPaperQuestionResponse> {
+        let user_id = token.user.to_string();
+        let qid = req.question_id;
+        let paper_id = req.paper_id;
+        let body = req.body;
+        let marks = req.marks as i16;
+
+        let rubric_tuples = rubric_input_tuples(&req.rubric);
+
+        let target_qid = CONN.with(|conn| {
+            conn.transaction(|conn| {
+                question_bank::edit_paper_question(
+                    conn,
+                    &paper_id,
+                    qid,
+                    &body,
+                    marks,
+                    &rubric_tuples,
+                    &user_id,
+                )
+            })
+        })?;
+
+        let question = CONN.with(|conn| {
+            load_full_question(conn, target_qid)
+        })?;
+
+        Ok(EditPaperQuestionResponse {
+            question: Some(question),
+        })
+    }
+
     // ── delete_question ──────────────────────────────────────────────────
 
     async fn delete_question(

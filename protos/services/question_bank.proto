@@ -17,6 +17,7 @@ service QuestionBank {
   rpc RegenerateQuestion(RegenerateQuestionRequest) returns (RegenerateQuestionResponse);
   rpc ClearPaperQuestions(ClearPaperQuestionsRequest) returns (ClearPaperQuestionsResponse);
   rpc FinalizePaper(FinalizePaperRequest)         returns (FinalizePaperResponse);
+  rpc EditPaperQuestion(EditPaperQuestionRequest) returns (EditPaperQuestionResponse);
 
   // ── Marking ──────────────────────────────────────────────────
   rpc GetMarkingStatus(MarkingStatusRequest)      returns (MarkingStatusResponse);
@@ -244,3 +245,17 @@ message GetQuestionGradesRequest {
   int32 student   = 2;
 }
 message GetQuestionGradesResponse { repeated QuestionGrade grades = 1; }
+
+// ── Edit Paper Question ──────────────────────────────────────────────────────
+
+message EditPaperQuestionRequest {
+  string paper_id = 1;
+  int32 question_id = 2;
+  string body = 3;
+  int32 marks = 4;
+  repeated RubricCriterionInput rubric = 5;
+}
+
+message EditPaperQuestionResponse {
+  Question question = 1;
+}
