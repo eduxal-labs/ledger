@@ -254,6 +254,7 @@ message EditPaperQuestionRequest {
   string body = 3;
   int32 marks = 4;
   repeated RubricCriterionInput rubric = 5;
+  repeated QuestionPartInput parts = 6;
 }
 
 message EditPaperQuestionResponse {

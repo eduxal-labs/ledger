@@ -181,8 +181,11 @@ pub fn edit_paper_question(
     body: &str,
     marks: i16,
     rubric_tuples: &[(i16, String, i16, Option<i16>, bool)],
+    parts: &[QuestionPart],
     created_by: &str,
 ) -> Result<i32> {
+    use crate::db::schema::question_parts;
+
     #[derive(diesel::QueryableByName)]
     struct CountRow {
         #[diesel(sql_type = BigInt)]
@@ -208,6 +211,12 @@ pub fn edit_paper_question(
         update_question(conn, qid, changeset)?;
 
         replace_rubric_criteria(conn, qid, rubric_tuples)?;
+
+        // Replace question parts
+        diesel::delete(question_parts::table.filter(question_parts::question.eq(qid)))
+            .execute(conn)?;
+        insert_question_parts(conn, qid, parts)?;
+
         Ok(qid)
     } else {
         // Associated with other papers, duplicate/create new question
@@ -233,6 +242,7 @@ pub fn edit_paper_question(
         )?;
 
         insert_rubric_criteria(conn, new_qid, rubric_tuples)?;
+        insert_question_parts(conn, new_qid, parts)?;
 
         // Update paper_questions to point to the new question
         diesel::update(

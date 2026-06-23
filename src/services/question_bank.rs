@@ -437,6 +437,30 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
 
         let rubric_tuples = rubric_input_tuples(&req.rubric);
 
+        let parts: Vec<QuestionPart> = req
+            .parts
+            .iter()
+            .enumerate()
+            .map(|(i, p)| QuestionPart {
+                question: qid,
+                position: (i + 1) as i16,
+                label: p.label.clone(),
+                body: p.body.clone(),
+                body_format: (p.body_format as i16)
+                    .try_into()
+                    .unwrap_or(BodyFormat::Plain),
+                marks: p.marks as i16,
+                max_marks: p.max_marks.map(|m| m as i16),
+                answer_space_type: (p.answer_space_type as i16)
+                    .try_into()
+                    .unwrap_or(AnswerSpaceType::Lines),
+                answer_lines: p.answer_lines.map(|l| l as i16),
+                answer_box_height_mm: p.answer_box_height_mm.map(|h| h as i16),
+                example_answer: p.example_answer.clone(),
+                stimulus: p.stimulus.clone(),
+            })
+            .collect();
+
         let target_qid = CONN.with(|conn| {
             conn.transaction(|conn| {
                 question_bank::edit_paper_question(
@@ -446,6 +470,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                     &body,
                     marks,
                     &rubric_tuples,
+                    &parts,
                     &user_id,
                 )
             })
