@@ -45,6 +45,14 @@ message Question {
   repeated QuestionPart parts        = 16;
   int64 created                      = 17;
   int64 updated                      = 18;
+  repeated QuestionImage images      = 19;
+}
+
+message QuestionImage {
+  int32 context = 1;
+  string key = 2;
+  optional string caption = 3;
+  string get_url = 4;
 }
 
 message RubricCriterion {

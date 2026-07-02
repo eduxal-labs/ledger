@@ -1,7 +1,7 @@
 use crate::config::storage::sign;
 
 use crate::db::database::CONN;
-use crate::db::database::tables::rows::MarkingQueueRow;
+use crate::db::database::tables::rows::{MarkingQueueRow, QuestionImageRow};
 use crate::db::database::tables::{papers as papers_db, question_bank};
 use crate::pdf::{PaperPart, PaperPdfInput, PaperQuestion as PdfQuestion};
 use crate::proto::services::question_bank::*;
@@ -26,10 +26,20 @@ pub struct QuestionBankService<C> {
 // Helper: build a Question proto from a QuestionRow
 // ---------------------------------------------------------------------------
 
+fn proto_question_image(img: &QuestionImageRow) -> crate::proto::services::question_bank::QuestionImage {
+    crate::proto::services::question_bank::QuestionImage {
+        context: img.context as i32,
+        key: img.key.clone(),
+        caption: img.caption.clone(),
+        get_url: sign::url(&img.key, sign::GET_TTL, false),
+    }
+}
+
 fn build_question_proto(
     row: &crate::types::question::Question,
     rubric: &[RubricCriterion],
     parts: &[QuestionPart],
+    images: &[QuestionImageRow],
 ) -> Question {
     Question {
         id: row.id.unwrap_or(0),
@@ -50,6 +60,7 @@ fn build_question_proto(
         parts: parts.iter().map(|p| proto_question_part(p, &[])).collect(),
         created: row.created,
         updated: row.updated,
+        images: images.iter().map(|i| proto_question_image(i)).collect(),
     }
 }
 
@@ -96,7 +107,8 @@ fn load_full_question(conn: &mut diesel::SqliteConnection, id: i32) -> Result<Qu
     let row = question_bank::get_question(conn, id)?.ok_or(Error::NotFound)?;
     let rubric = question_bank::get_rubric_criteria(conn, id)?;
     let parts = question_bank::get_question_parts(conn, id)?;
-    Ok(build_question_proto(&row, &rubric, &parts))
+    let images = question_bank::get_question_images(conn, id)?;
+    Ok(build_question_proto(&row, &rubric, &parts, &images))
 }
 
 // QuestionRow is kept for list_questions which returns typed Question directly
@@ -861,7 +873,7 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                 conn,
                 req.topic_id,
                 &exclude,
-                None,
+                req.student.map(|s| (s, 5)),
             )?;
 
             let replacement = candidates
@@ -1149,7 +1161,8 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                 let id = row.id.unwrap_or(0);
                 let rubric = question_bank::get_rubric_criteria(conn, id)?;
                 let parts = question_bank::get_question_parts(conn, id)?;
-                questions.push(build_question_proto(&row, &rubric, &parts));
+                let images = question_bank::get_question_images(conn, id)?;
+                questions.push(build_question_proto(&row, &rubric, &parts, &images));
             }
 
             Ok::<_, Error>((questions, total))

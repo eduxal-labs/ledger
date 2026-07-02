@@ -632,6 +632,15 @@ pub fn get_marking_status(
 // =========================================================================
 
 /// Select random questions for paper generation.
+#[derive(diesel::QueryableByName)]
+struct PastPerformanceRow {
+    #[diesel(sql_type = Float)]
+    pub score: f32,
+    #[diesel(sql_type = SmallInt)]
+    pub marks: i16,
+}
+
+/// Select random questions for paper generation.
 ///
 /// - `exclude_ids`: question IDs to skip unconditionally.
 /// - `exclude_recent_student`: `(student_adm, last_n)` — also exclude questions
@@ -669,11 +678,47 @@ pub fn select_questions_for_paper(
         exclude_clause, student_clause
     );
 
-    let rows: Vec<QuestionRow> = sql_query(&sql)
+    let mut rows: Vec<QuestionRow> = sql_query(&sql)
         .bind::<Integer, _>(topic_id)
         .load(conn)?;
+
+    if let Some((student_adm, _)) = exclude_recent_student {
+        let past_grades: Vec<PastPerformanceRow> = diesel::sql_query(
+            "SELECT g.score, q.marks FROM question_grades g \
+             JOIN questions q ON g.question = q.id \
+             WHERE g.student = ? AND q.topic = ?"
+        )
+        .bind::<Integer, _>(student_adm)
+        .bind::<Integer, _>(topic_id)
+        .load(conn)?;
+
+        if !past_grades.is_empty() {
+            let mut total_score = 0.0f32;
+            let mut total_marks = 0i32;
+            for row in &past_grades {
+                total_score += row.score;
+                total_marks += row.marks as i32;
+            }
+
+            if total_marks > 0 {
+                let ratio = total_score / (total_marks as f32);
+                let is_preferred = |diff: i16| -> bool {
+                    if ratio < 0.50 {
+                        diff == 1 || diff == 2
+                    } else if ratio < 0.75 {
+                        diff == 3
+                    } else {
+                        diff == 4 || diff == 5
+                    }
+                };
+                rows.sort_by_key(|r| !is_preferred(r.difficulty));
+            }
+        }
+    }
+
     Ok(rows)
 }
+
 
 /// Select a subset of candidate questions whose marks sum as close as possible
 /// to `target_marks`. Returns (selected_question_ids, actual_sum).
