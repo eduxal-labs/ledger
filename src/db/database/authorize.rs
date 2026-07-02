@@ -1,10 +1,10 @@
 #![allow(dead_code)]
 
 use crate::db::database::traits::{Authorize, Load};
-use crate::db::schema::{owners, roles, schools, scopes, users};
+use crate::db::schema::{owners, roles, schools, scopes, teachers, users};
 use crate::types::error::{Error, Result};
 use crate::types::id::Id;
-use crate::types::role::{Organisation, Permissions, Role};
+use crate::types::role::{Action, Actions, Organisation, Permissions, Resource, Role};
 use crate::types::token::Token;
 use crate::types::user::{Level, Status, User};
 use diesel::{
@@ -131,7 +131,26 @@ impl Authorize for Conn {
                     roles.extend(system_roles);
                 }
 
-                let granted = aggregate_permissions(&roles);
+                let mut granted = aggregate_permissions(&roles);
+
+                let is_teacher: bool = teachers::table
+                    .filter(teachers::school.eq(school_id))
+                    .filter(teachers::user.eq(user.id))
+                    .filter(teachers::status.eq(0))
+                    .select(teachers::user)
+                    .first::<Id>(self)
+                    .optional()?
+                    .is_some();
+
+                if is_teacher {
+                    let read_action = Actions::from(Action::Read);
+                    granted[Resource::Grades] = granted[Resource::Grades] + read_action;
+                    granted[Resource::Exams] = granted[Resource::Exams] + read_action;
+                    granted[Resource::Students] = granted[Resource::Students] + read_action;
+                    granted[Resource::Teachers] = granted[Resource::Teachers] + read_action;
+                    granted[Resource::Staff] = granted[Resource::Staff] + read_action;
+                }
+
                 check_permissions(permissions, granted)
             }
         }
@@ -241,7 +260,26 @@ pub fn authorize_user(
                 roles.extend(system_roles);
             }
 
-            let granted = aggregate_permissions(&roles);
+            let mut granted = aggregate_permissions(&roles);
+
+            let is_teacher: bool = teachers::table
+                .filter(teachers::school.eq(school_id))
+                .filter(teachers::user.eq(user.id))
+                .filter(teachers::status.eq(0))
+                .select(teachers::user)
+                .first::<Id>(conn)
+                .optional()?
+                .is_some();
+
+            if is_teacher {
+                let read_action = Actions::from(Action::Read);
+                granted[Resource::Grades] = granted[Resource::Grades] + read_action;
+                granted[Resource::Exams] = granted[Resource::Exams] + read_action;
+                granted[Resource::Students] = granted[Resource::Students] + read_action;
+                granted[Resource::Teachers] = granted[Resource::Teachers] + read_action;
+                granted[Resource::Staff] = granted[Resource::Staff] + read_action;
+            }
+
             check_permissions(permissions, granted)
         }
     }
