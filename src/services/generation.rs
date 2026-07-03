@@ -61,6 +61,7 @@ fn load_pdf_questions(
             let q = qb::get_question(conn, pq.question)?.ok_or(Error::NotFound)?;
             let rubric = qb::get_rubric_criteria(conn, pq.question)?;
             let parts = qb::get_question_parts(conn, pq.question)?;
+            let images = qb::get_question_images(conn, pq.question)?;
 
             let pdf_parts: Vec<PaperPart> = parts
                 .iter()
@@ -82,6 +83,14 @@ fn load_pdf_questions(
                 .map(|r| (r.criterion.clone(), r.marks, r.required))
                 .collect();
 
+            let pdf_images: Vec<crate::pdf::PaperQuestionImage> = images
+                .iter()
+                .map(|img| crate::pdf::PaperQuestionImage {
+                    key: img.key.clone(),
+                    caption: img.caption.clone(),
+                })
+                .collect();
+
             result.push(PdfQuestion {
                 body: q.body.clone(),
                 body_format: q.body_format as u8,
@@ -95,11 +104,40 @@ fn load_pdf_questions(
                 rubric: rubric_data,
                 parts: pdf_parts,
                 section: pq.section.clone(),
+                images: pdf_images,
             });
         }
 
         Ok(result)
     })
+}
+
+async fn download_pdf_images(
+    questions: &[PdfQuestion],
+) -> std::collections::HashMap<String, Vec<u8>> {
+    let client = reqwest::Client::new();
+    let mut image_data = std::collections::HashMap::new();
+
+    for q in questions {
+        for img in &q.images {
+            if image_data.contains_key(&img.key) {
+                continue;
+            }
+            let get_url = sign::url(&img.key, sign::GET_TTL, false);
+            match client.get(&get_url).send().await {
+                Ok(resp) => {
+                    if resp.status().is_success() {
+                        if let Ok(bytes) = resp.bytes().await {
+                            image_data.insert(img.key.clone(), bytes.to_vec());
+                        }
+                    }
+                }
+                Err(_) => {}
+            }
+        }
+    }
+
+    image_data
 }
 
 /// Upload a PDF byte buffer to R2 at the given object key.
@@ -384,6 +422,7 @@ async fn do_generate_exam_paper(
 
     // 8. Load questions and build PDF structures
     let pdf_questions = load_pdf_questions(&paper_id_str, None)?;
+    let image_data = download_pdf_images(&pdf_questions).await;
 
     let pdf_input = PaperPdfInput {
         school_name: &school_name,
@@ -395,6 +434,7 @@ async fn do_generate_exam_paper(
         duration_minutes: Some(paper.duration_minutes),
         instructions: paper.instructions.as_deref(),
         questions: &pdf_questions,
+        image_data: &image_data,
     };
 
     let pdf_bytes = crate::pdf::generate_paper_pdf_typst(&pdf_input)
@@ -538,6 +578,7 @@ async fn do_generate_per_student_paper(
 
     // Build the PDF question list
     let pdf_questions = load_pdf_questions(paper_id, effective_student)?;
+    let image_data = download_pdf_images(&pdf_questions).await;
 
     let pdf_input = PaperPdfInput {
         school_name: &school_name,
@@ -549,6 +590,7 @@ async fn do_generate_per_student_paper(
         duration_minutes: Some(paper.duration_minutes),
         instructions: paper.instructions.as_deref(),
         questions: &pdf_questions,
+        image_data: &image_data,
     };
 
     // Generate personalised PDF with the actual student name

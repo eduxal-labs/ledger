@@ -15,6 +15,7 @@ pub struct PaperPdfInput<'a> {
     pub duration_minutes: Option<i16>,
     pub instructions: Option<&'a str>,
     pub questions: &'a [PaperQuestion],
+    pub image_data: &'a std::collections::HashMap<String, Vec<u8>>,
 }
 
 #[derive(Clone)]
@@ -31,6 +32,13 @@ pub struct PaperQuestion {
     pub rubric: Vec<(String, i16, bool)>, // (criterion, marks, required)
     pub parts: Vec<PaperPart>,
     pub section: Option<String>,
+    pub images: Vec<PaperQuestionImage>,
+}
+
+#[derive(Clone)]
+pub struct PaperQuestionImage {
+    pub key: String,
+    pub caption: Option<String>,
 }
 
 #[derive(Clone)]
@@ -44,6 +52,41 @@ pub struct PaperPart {
     pub answer_box_height_mm: Option<i16>,
     pub stimulus: Option<String>,
     pub rubric: Vec<(String, i16, bool)>,
+}
+
+// ── Helpers for detecting file format and paths ─────────────────────────────
+
+fn detect_image_extension(bytes: &[u8]) -> &'static str {
+    if bytes.len() >= 4 {
+        if bytes[0..4] == [0x89, 0x50, 0x4E, 0x47] {
+            return "png";
+        }
+        if bytes[0..2] == [0xFF, 0xD8] {
+            return "jpg";
+        }
+        if bytes[0..3] == [0x47, 0x49, 0x46] {
+            return "gif";
+        }
+    }
+    let s = String::from_utf8_lossy(bytes);
+    let trimmed = s.trim_start();
+    if trimmed.starts_with("<svg") || trimmed.starts_with("<?xml") {
+        return "svg";
+    }
+    "webp"
+}
+
+fn get_image_virtual_path(key: &str, image_data: &std::collections::HashMap<String, Vec<u8>>) -> String {
+    if let Some(bytes) = image_data.get(key) {
+        let ext = detect_image_extension(bytes);
+        if key.ends_with(".webp") {
+            format!("{}{}", &key[0..key.len() - 5], ext)
+        } else {
+            format!("{}.{}", key, ext)
+        }
+    } else {
+        key.to_string()
+    }
 }
 
 // ── Typst World implementation ───────────────────────────────────────────────
@@ -61,10 +104,11 @@ struct SingleDocWorld {
     book: LazyHash<FontBook>,
     fonts: Vec<Font>,
     main_id: FileId,
+    files: std::collections::HashMap<String, Vec<u8>>,
 }
 
 impl SingleDocWorld {
-    fn new(source: String) -> Self {
+    fn new(source: String, files: std::collections::HashMap<String, Vec<u8>>) -> Self {
         let fonts: Vec<Font> = typst_assets::fonts()
             .flat_map(|data| Font::iter(Bytes::new(data)))
             .collect();
@@ -75,6 +119,7 @@ impl SingleDocWorld {
             fonts,
             main_id: FileId::new(None, VirtualPath::new("main.typ")),
             source,
+            files,
         }
     }
 }
@@ -98,8 +143,13 @@ impl typst::World for SingleDocWorld {
         }
     }
 
-    fn file(&self, _id: FileId) -> std::result::Result<Bytes, FileError> {
-        Err(FileError::NotFound(std::path::PathBuf::from("<virtual>")))
+    fn file(&self, id: FileId) -> std::result::Result<Bytes, FileError> {
+        let path = id.vpath().as_rootless_path().to_string_lossy().to_string();
+        if let Some(bytes) = self.files.get(&path) {
+            Ok(Bytes::new(bytes.clone()))
+        } else {
+            Err(FileError::NotFound(std::path::PathBuf::from(path)))
+        }
     }
 
     fn font(&self, index: usize) -> Option<Font> {
@@ -111,8 +161,8 @@ impl typst::World for SingleDocWorld {
     }
 }
 
-fn compile_typst(source: String) -> Result<Vec<u8>> {
-    let world = SingleDocWorld::new(source.clone());
+fn compile_typst(source: String, files: std::collections::HashMap<String, Vec<u8>>) -> Result<Vec<u8>> {
+    let world = SingleDocWorld::new(source.clone(), files);
     let document: typst::layout::PagedDocument = typst::compile(&world).output.map_err(|errs| {
         let msgs: Vec<String> = errs.iter().map(|e| e.message.to_string()).collect();
         let msg = msgs.join("; ");
@@ -216,6 +266,26 @@ pub fn build_exam_paper_typst(input: &PaperPdfInput) -> String {
         // Stimulus
         if let Some(ref stim) = q.stimulus {
             render_stimulus(&mut doc, stim, "");
+        }
+
+        // Question images
+        for img in &q.images {
+            if input.image_data.contains_key(&img.key) {
+                let v_path = get_image_virtual_path(&img.key, input.image_data);
+                doc.push_str(&format!(
+                    "#align(center, block(width: 80%)[#image(\"{}\")])\n",
+                    v_path
+                ));
+                if let Some(ref cap) = img.caption {
+                    if !cap.is_empty() {
+                        doc.push_str(&format!(
+                            "#align(center, text(size: 8pt, style: \"italic\")[{}])\n",
+                            escape_typst(cap)
+                        ));
+                    }
+                }
+                doc.push_str("#v(2mm)\n");
+            }
         }
 
         // Parts
@@ -327,6 +397,26 @@ pub fn build_marking_scheme_typst(input: &PaperPdfInput) -> String {
             render_stimulus(&mut doc, stim, "");
         }
 
+        // Question images
+        for img in &q.images {
+            if input.image_data.contains_key(&img.key) {
+                let v_path = get_image_virtual_path(&img.key, input.image_data);
+                doc.push_str(&format!(
+                    "#align(center, block(width: 80%)[#image(\"{}\")])\n",
+                    v_path
+                ));
+                if let Some(ref cap) = img.caption {
+                    if !cap.is_empty() {
+                        doc.push_str(&format!(
+                            "#align(center, text(size: 8pt, style: \"italic\")[{}])\n",
+                            escape_typst(cap)
+                        ));
+                    }
+                }
+                doc.push_str("#v(2mm)\n");
+            }
+        }
+
         if let Some(cap) = q.max_marks {
             doc.push_str(&format!("_(Award any {} of the following)_\n\n", cap));
         }
@@ -420,7 +510,16 @@ pub fn build_student_exam_paper_typst(
 /// Generate an exam paper PDF.
 pub fn generate_paper_pdf_typst(input: &PaperPdfInput) -> std::result::Result<Vec<u8>, String> {
     let source = build_exam_paper_typst(input);
-    compile_typst(source).map_err(|e| e.to_string())
+    let mut files = std::collections::HashMap::new();
+    for q in input.questions {
+        for img in &q.images {
+            if let Some(bytes) = input.image_data.get(&img.key) {
+                let v_path = get_image_virtual_path(&img.key, input.image_data);
+                files.insert(v_path, bytes.clone());
+            }
+        }
+    }
+    compile_typst(source, files).map_err(|e| e.to_string())
 }
 
 /// Generate a marking scheme PDF.
@@ -428,7 +527,16 @@ pub fn generate_marking_scheme_pdf_typst(
     input: &PaperPdfInput,
 ) -> std::result::Result<Vec<u8>, String> {
     let source = build_marking_scheme_typst(input);
-    compile_typst(source).map_err(|e| e.to_string())
+    let mut files = std::collections::HashMap::new();
+    for q in input.questions {
+        for img in &q.images {
+            if let Some(bytes) = input.image_data.get(&img.key) {
+                let v_path = get_image_virtual_path(&img.key, input.image_data);
+                files.insert(v_path, bytes.clone());
+            }
+        }
+    }
+    compile_typst(source, files).map_err(|e| e.to_string())
 }
 
 /// Generate a named student paper PDF (with student name/adm pre-filled).
@@ -438,7 +546,16 @@ pub fn generate_student_paper_pdf(
     student_adm: i32,
 ) -> std::result::Result<Vec<u8>, String> {
     let source = build_student_exam_paper_typst(input, student_name, student_adm);
-    compile_typst(source).map_err(|e| e.to_string())
+    let mut files = std::collections::HashMap::new();
+    for q in input.questions {
+        for img in &q.images {
+            if let Some(bytes) = input.image_data.get(&img.key) {
+                let v_path = get_image_virtual_path(&img.key, input.image_data);
+                files.insert(v_path, bytes.clone());
+            }
+        }
+    }
+    compile_typst(source, files).map_err(|e| e.to_string())
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
