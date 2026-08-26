@@ -140,8 +140,12 @@ async fn download_pdf_images(
     image_data
 }
 
-/// Upload a PDF byte buffer to R2 at the given object key.
-async fn upload_to_r2(key: &str, bytes: Vec<u8>) -> Result<(), Box<dyn std::error::Error>> {
+/// Upload a byte buffer to R2 at the given object key with the given content type.
+async fn upload_to_r2_with_content_type(
+    key: &str,
+    bytes: Vec<u8>,
+    content_type: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let put_url = sign::presign(
         env!("R2_ACCOUNT_ID"),
         env!("R2_BUCKET"),
@@ -150,13 +154,13 @@ async fn upload_to_r2(key: &str, bytes: Vec<u8>) -> Result<(), Box<dyn std::erro
         "PUT",
         key,
         sign::PUT_TTL,
-        Some("application/pdf"),
+        Some(content_type),
     );
 
     let client = reqwest::Client::new();
     let resp = client
         .put(&put_url)
-        .header("Content-Type", "application/pdf")
+        .header("Content-Type", content_type)
         .body(bytes)
         .send()
         .await
@@ -167,6 +171,11 @@ async fn upload_to_r2(key: &str, bytes: Vec<u8>) -> Result<(), Box<dyn std::erro
     }
 
     Ok(())
+}
+
+/// Upload a PDF byte buffer to R2 at the given object key.
+async fn upload_to_r2(key: &str, bytes: Vec<u8>) -> Result<(), Box<dyn std::error::Error>> {
+    upload_to_r2_with_content_type(key, bytes, "application/pdf").await
 }
 
 // ── Public scheduler ──────────────────────────────────────────────────────────
@@ -441,12 +450,21 @@ async fn do_generate_exam_paper(
         .map_err(|e| format!("exam paper PDF generation failed: {e}"))?;
     let ms_bytes = crate::pdf::generate_marking_scheme_pdf_typst(&pdf_input)
         .map_err(|e| format!("marking scheme PDF generation failed: {e}"))?;
+    let docx_bytes = crate::docx::generate_paper_docx(&pdf_input)
+        .map_err(|e| format!("exam paper DOCX generation failed: {e}"))?;
 
-    // 9. Upload PDFs to R2
+    // 9. Upload PDFs and DOCX to R2
     let pdf_key = format!("papers/{paper_id_str}/paper.pdf");
     let ms_key = format!("papers/{paper_id_str}/marking_scheme.pdf");
+    let docx_key = format!("papers/{paper_id_str}/paper.docx");
     upload_to_r2(&pdf_key, pdf_bytes).await?;
     upload_to_r2(&ms_key, ms_bytes).await?;
+    upload_to_r2_with_content_type(
+        &docx_key,
+        docx_bytes,
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+    .await?;
 
     // 10. Store keys on paper and transition → Finalized
     CONN.with(|conn| {

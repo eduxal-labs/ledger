@@ -1,6 +1,7 @@
 mod ai;
 mod config;
 mod db;
+mod docx;
 mod pdf;
 mod proto;
 mod server;

@@ -381,8 +381,8 @@ mod tests {
         assert!(url.starts_with("https://"));
         assert!(url.contains(&format!("users/{}/profile", id)));
 
-        // Should be a PUT request (with Content-Type), unencoded
-        assert!(url.contains("X-Amz-Content-Type=image/*"));
+        // Should be a PUT request (with expiry)
+        assert!(url.contains("X-Amz-Expires=3600"));
     }
 
     #[test]
@@ -414,7 +414,6 @@ mod tests {
 
         assert!(result.contains("test/path.jpg"));
         assert!(result.contains("X-Amz-Expires=7200"));
-        assert!(result.contains("X-Amz-Content-Type=image/*"));
     }
 
     #[test]

@@ -8,6 +8,7 @@ service PaperService {
   rpc ListPapers(ListPapersRequest)                         returns (ListPapersResponse);
   rpc UpdatePaper(UpdatePaperRequest)                       returns (UpdatePaperResponse);
   rpc GetPaperPdfUrl(GetPaperPdfUrlRequest)                 returns (GetPaperPdfUrlResponse);
+  rpc GetPaperDocxUrl(GetPaperDocxUrlRequest)               returns (GetPaperDocxUrlResponse);
   rpc GetMarkingSchemeUrl(GetMarkingSchemeUrlRequest)       returns (GetMarkingSchemeUrlResponse);
   rpc ForceSetPaperStatus(ForceSetPaperStatusRequest)       returns (ForceSetPaperStatusResponse);
   rpc DeletePaper(DeletePaperRequest)                       returns (DeletePaperResponse);
@@ -56,6 +57,8 @@ message UpdatePaperResponse { paper.Paper paper = 1; }
 
 message GetPaperPdfUrlRequest       { string paper_id = 1; }
 message GetPaperPdfUrlResponse      { string url = 1; int64 expiry = 2; }
+message GetPaperDocxUrlRequest      { string paper_id = 1; }
+message GetPaperDocxUrlResponse     { string url = 1; int64 expiry = 2; }
 message GetMarkingSchemeUrlRequest  { string paper_id = 1; }
 message GetMarkingSchemeUrlResponse { string url = 1; int64 expiry = 2; }
 

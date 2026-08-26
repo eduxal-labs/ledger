@@ -52,6 +52,12 @@ pub trait PaperService: Sync + Send + 'static + Sized {
         request: GetPaperPdfUrlRequest,
     ) -> impl Future<Output = Result<GetPaperPdfUrlResponse>> + Send;
 
+    fn get_paper_docx_url(
+        &self,
+        token: Token,
+        request: GetPaperDocxUrlRequest,
+    ) -> impl Future<Output = Result<GetPaperDocxUrlResponse>> + Send;
+
     fn get_marking_scheme_url(
         &self,
         token: Token,
@@ -115,6 +121,15 @@ impl<T: PaperService> paper_service_server::PaperService for T {
     ) -> std::result::Result<Response<GetPaperPdfUrlResponse>, Status> {
         let token = extract_token(&request)?;
         let response = PaperService::get_paper_pdf_url(self, token, request.into_inner()).await?;
+        Ok(Response::new(response))
+    }
+
+    async fn get_paper_docx_url(
+        &self,
+        request: Request<GetPaperDocxUrlRequest>,
+    ) -> std::result::Result<Response<GetPaperDocxUrlResponse>, Status> {
+        let token = extract_token(&request)?;
+        let response = PaperService::get_paper_docx_url(self, token, request.into_inner()).await?;
         Ok(Response::new(response))
     }
 

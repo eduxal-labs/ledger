@@ -34,6 +34,7 @@ typst = "0.13"
 typst-pdf = "0.13"
 typst-assets = { version = "0.13", features = ["fonts"] }
 comemo = "0.4"
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
 
 [build-dependencies]
 tonic-prost-build = "0.14.5"

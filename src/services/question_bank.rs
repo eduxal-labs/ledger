@@ -1077,6 +1077,11 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
                 Error::internal(e)
             })?;
 
+        let docx_bytes = crate::docx::generate_paper_docx(&pdf_input).map_err(|e| {
+            error!("DOCX generation failed: {}", e);
+            Error::internal(e)
+        })?;
+
         // ── Phase 3: upload to R2 ────────────────────────────────────────
 
         let client = reqwest::Client::new();
@@ -1102,6 +1107,32 @@ impl<C: Send + Sync + 'static> QuestionBank for QuestionBankService<C> {
 
         if !resp.status().is_success() {
             let msg = format!("R2 PDF upload failed: HTTP {}", resp.status());
+            error!("{msg}");
+            return Err(Error::Internal(msg));
+        }
+
+        let docx_key = format!("papers/{}/paper.docx", &req.paper_id);
+        let docx_put_url = sign::presign(
+            env!("R2_ACCOUNT_ID"),
+            env!("R2_BUCKET"),
+            env!("R2_ACCESS_KEY_ID"),
+            env!("R2_SECRET_ACCESS_KEY"),
+            "PUT",
+            &docx_key,
+            sign::PUT_TTL,
+            Some("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        );
+
+        let docx_resp = client
+            .put(&docx_put_url)
+            .header("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+            .body(docx_bytes)
+            .send()
+            .await
+            .map_err(Error::internal)?;
+
+        if !docx_resp.status().is_success() {
+            let msg = format!("R2 DOCX upload failed: HTTP {}", docx_resp.status());
             error!("{msg}");
             return Err(Error::Internal(msg));
         }

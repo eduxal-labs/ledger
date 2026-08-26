@@ -190,6 +190,23 @@ impl<C: Send + Sync + 'static> PaperService for PaperServiceImpl<C> {
         Ok(GetPaperPdfUrlResponse { url, expiry })
     }
 
+    async fn get_paper_docx_url(
+        &self,
+        _token: Token,
+        req: GetPaperDocxUrlRequest,
+    ) -> Result<GetPaperDocxUrlResponse> {
+        let paper = CONN
+            .with(|conn| {
+                papers_db::get_paper(conn, &req.paper_id)
+            })?
+            .ok_or(Error::PaperNotFound)?;
+        let _ = paper.pdf_key.as_ref().ok_or(Error::Forbidden)?;
+        let docx_key = format!("papers/{}/paper.docx", &req.paper_id);
+        let url = sign::url(&docx_key, sign::GET_TTL, false);
+        let expiry = chrono::Utc::now().timestamp() + sign::GET_TTL as i64;
+        Ok(GetPaperDocxUrlResponse { url, expiry })
+    }
+
     async fn get_marking_scheme_url(
         &self,
         _token: Token,
