@@ -4130,11 +4130,12 @@ fn handle_create_subject(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult
     let p: CreateSubjectPayload = decode(payload)?;
     let log_user = Id::system();
     let now = chrono::Utc::now().timestamp();
+    let name_trimmed = p.name.trim();
 
     diesel::sql_query(
         "INSERT OR IGNORE INTO subjects (name, curriculum, created, updated) VALUES (?, ?, ?, ?)",
     )
-    .bind::<diesel::sql_types::Text, _>(&p.name)
+    .bind::<diesel::sql_types::Text, _>(name_trimmed)
     .bind::<diesel::sql_types::SmallInt, _>(p.curriculum as i16)
     .bind::<diesel::sql_types::BigInt, _>(now)
     .bind::<diesel::sql_types::BigInt, _>(now)
@@ -4146,11 +4147,11 @@ fn handle_create_subject(conn: &mut Conn, payload: &[u8]) -> Result<ActionResult
 
     append_log(log_user, TBL_SUBJECT_CATALOG as u8, OP_INSERT, 0)?;
 
-    // Fetch back by name+curriculum to get the assigned id
+    // Fetch back by name+curriculum (case-insensitive) to get the assigned/existing id
     let row = sql_query(
-        "SELECT id, name, curriculum, created, updated FROM subjects WHERE name = ? AND curriculum = ? ORDER BY id DESC LIMIT 1",
+        "SELECT id, name, curriculum, created, updated FROM subjects WHERE LOWER(TRIM(name)) = LOWER(?) AND curriculum = ? ORDER BY id DESC LIMIT 1",
     )
-    .bind::<diesel::sql_types::Text, _>(&p.name)
+    .bind::<diesel::sql_types::Text, _>(name_trimmed)
     .bind::<diesel::sql_types::SmallInt, _>(p.curriculum as i16)
     .load::<SubjectCatalogRow>(conn)
     .map_err(|e| { tracing::error!("fetch after insert_subject failed: {e}"); Error::internal(e) })?
